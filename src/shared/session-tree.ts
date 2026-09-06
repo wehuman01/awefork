@@ -17,6 +17,21 @@ export interface BuildTreeOptions {
 }
 
 /**
+ * Overlay awefork's fork lineage onto raw sessions: a session recorded as a
+ * fork gets origin "fork" and its parent id, even though the agent API reports
+ * it as a plain root session.
+ */
+export function enrichSessions(sessions: SessionSummary[], lineage: LineageMap): SessionSummary[] {
+  return sessions.map((session) => {
+    const record = lineage[session.id];
+    if (record) {
+      return { ...session, origin: "fork", parentSessionId: record.parentId };
+    }
+    return session;
+  });
+}
+
+/**
  * Build the display tree: group by directory, nest forks (and optionally
  * subagents) under their parent, newest first.
  *
@@ -30,17 +45,8 @@ export function buildSessionTree(
 ): SessionGroup[] {
   const nodeOf = new Map<string, SessionTreeNode>();
 
-  const enrich = (session: SessionSummary): SessionSummary => {
-    const record = lineage[session.id];
-    if (record) {
-      return { ...session, origin: "fork", parentSessionId: record.parentId };
-    }
-    return session;
-  };
-
   const nodes: SessionTreeNode[] = [];
-  for (const raw of sessions) {
-    const session = enrich(raw);
+  for (const session of enrichSessions(sessions, lineage)) {
     if (options.hideSubagents && session.origin === "subagent") continue;
     const node: SessionTreeNode = { session, children: [] };
     nodeOf.set(session.id, node);

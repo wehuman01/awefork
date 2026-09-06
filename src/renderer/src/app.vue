@@ -1,55 +1,29 @@
 <template>
   <div class="app">
-    <aside class="sidebar">
-      <header class="sidebar-header">
-        <span class="brand">awefork</span>
-        <span class="brand-sub">opencode sessions</span>
-      </header>
-      <SessionTree :groups="sessionGroups" :selected-id="store.selectedId" @select="selectSession" />
-    </aside>
-    <main class="content">
-      <div v-if="store.connectionError" class="banner banner-error">
-        {{ store.connectionError }}
-      </div>
-      <MessageList
-        v-if="store.selectedId"
-        :session="selectedSession"
-        :messages="store.messages"
-        :running="store.running"
-        :stream-text="store.streamText"
-        :error="store.messagesError"
-        @fork="forkAtMessage"
-      />
-      <div v-else-if="!store.connectionError" class="empty">Select a session</div>
-      <ChatInput
-        v-if="store.selectedId"
-        :running="store.running"
-        @send="sendPrompt"
-        @abort="abortRun"
-      />
-      <div v-if="store.actionError" class="banner banner-error" @click="dismissActionError">
-        {{ store.actionError }} (click to dismiss)
-      </div>
-    </main>
+    <TopBar />
+    <div class="shell">
+      <SideBar />
+      <SessionCanvas />
+      <BranchContext />
+    </div>
+    <div
+      v-if="store.actionError"
+      class="toast banner-error"
+      role="alert"
+      @click="dismissActionError"
+    >
+      {{ store.actionError }}（点击关闭）
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { onMounted } from "vue";
-import ChatInput from "./components/chat-input.vue";
-import MessageList from "./components/message-list.vue";
-import SessionTree from "./components/session-tree.vue";
-import {
-  abortRun,
-  dismissActionError,
-  forkAtMessage,
-  init,
-  selectedSession,
-  selectSession,
-  sendPrompt,
-  sessionGroups,
-  store,
-} from "./state";
+import BranchContext from "./components/branch-context.vue";
+import SessionCanvas from "./components/session-canvas.vue";
+import SideBar from "./components/side-bar.vue";
+import TopBar from "./components/top-bar.vue";
+import { dismissActionError, init, store } from "./state";
 
 onMounted(() => {
   void init();

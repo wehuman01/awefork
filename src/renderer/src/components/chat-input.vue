@@ -2,13 +2,16 @@
   <form class="chat-input" @submit.prevent="submit">
     <textarea
       v-model="text"
-      :placeholder="running ? 'Agent is running…' : 'Continue this branch…'"
+      :placeholder="running ? 'Agent is running…' : '继续这条分支…'"
       :disabled="running"
-      rows="3"
+      rows="2"
       @keydown.enter.exact.prevent="submit"
     ></textarea>
-    <button v-if="!running" type="submit" :disabled="!text.trim()">Send</button>
-    <button v-else type="button" class="abort" @click="$emit('abort')">Stop</button>
+    <div class="chat-input-foot">
+      <span class="hint">⏎ 发送</span>
+      <button v-if="!running" type="submit" class="send" :disabled="!text.trim()">发送 ➤</button>
+      <button v-else type="button" class="abort" @click="$emit('abort')">■ 停止</button>
+    </div>
   </form>
 </template>
 

@@ -1,26 +1,41 @@
 <template>
   <section class="message-list" ref="listEl">
-    <div v-if="error" class="banner banner-error">{{ error }}</div>
     <article v-for="message in messages" :key="message.id" class="message" :class="message.role">
       <template v-if="message.role === 'user'">
-        <div class="message-body user-body">
-          <p class="message-text">{{ message.text }}</p>
-          <button type="button" class="fork-button" title="Fork a new branch after this turn" @click="$emit('fork', message.id)">⎇ fork here</button>
+        <div class="message-row user-row">
+          <div class="user-body">
+            <p class="message-text">{{ message.text }}</p>
+            <button
+              type="button"
+              class="fork-button"
+              title="从这个回合长出新分支"
+              @click="$emit('fork', message.id)"
+            >
+              ⎇ 在这里分叉
+            </button>
+          </div>
+          <span class="avatar user">🍑</span>
         </div>
       </template>
       <template v-else>
-        <div class="message-body">
-          <p v-if="message.toolNames.length > 0" class="tool-row">
-            <span v-for="name in message.toolNames" :key="name" class="tool-chip">{{ name }}</span>
-          </p>
-          <p class="message-text pre-wrap">{{ message.text || "(no text output)" }}</p>
+        <div class="message-row">
+          <span class="avatar bot">✨</span>
+          <div class="message-body">
+            <p v-if="message.toolNames.length > 0" class="tool-row">
+              <span v-for="(name, i) in message.toolNames" :key="name" class="tool-chip" :class="{ lav: i % 2 === 1 }">{{ name }}</span>
+            </p>
+            <p class="message-text pre-wrap">{{ message.text || "(no text output)" }}</p>
+          </div>
         </div>
       </template>
     </article>
     <article v-if="running" class="message assistant">
-      <div class="message-body">
-        <p class="tool-row"><span class="tool-chip running">running…</span></p>
-        <p v-if="streamText" class="message-text pre-wrap stream">{{ streamText }}</p>
+      <div class="message-row">
+        <span class="avatar bot">✨</span>
+        <div class="message-body">
+          <p class="tool-row"><span class="tool-chip running">running…</span></p>
+          <p v-if="streamText" class="message-text pre-wrap stream">{{ streamText }}</p>
+        </div>
       </div>
     </article>
   </section>
