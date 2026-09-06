@@ -17,6 +17,8 @@ interface OcMessageInfo {
   id: string;
   sessionID: string;
   role: "user" | "assistant";
+  /** Present on assistant messages, e.g. "glm/glm-5.3-flash". */
+  modelID?: string;
   time: { created: number };
 }
 

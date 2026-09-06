@@ -21,7 +21,12 @@
         <div class="message-row">
           <span class="avatar bot">✨</span>
           <div class="message-body">
-            <p v-if="message.toolNames.length > 0" class="tool-row">
+            <p v-if="message.toolNames.length > 0 || message.modelId" class="tool-row">
+              <span
+                v-if="message.modelId"
+                class="tool-chip model"
+                :title="message.modelId"
+              >{{ shortModel(message.modelId) }}</span>
               <span v-for="(name, i) in message.toolNames" :key="name" class="tool-chip" :class="{ lav: i % 2 === 1 }">{{ name }}</span>
             </p>
             <p class="message-text pre-wrap">{{ message.text || "(no text output)" }}</p>
@@ -55,6 +60,11 @@ const props = defineProps<{
 }>();
 
 defineEmits<{ fork: [messageId: string] }>();
+
+/** "glm/glm-5.3-flash" → "glm-5.3-flash"; full id lives in the chip tooltip. */
+function shortModel(id: string): string {
+  return id.split("/").pop() || id;
+}
 
 const listEl = ref<HTMLElement | null>(null);
 

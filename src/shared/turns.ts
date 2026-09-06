@@ -14,6 +14,8 @@ export interface Turn {
   preview: string;
   /** Distinct tool names across the whole turn, first-seen order. */
   toolNames: string[];
+  /** Distinct models across the turn's assistant messages, first-seen order. */
+  modelIds: string[];
   /** Creation time of the user message. */
   createdAt: number;
 }
@@ -40,6 +42,7 @@ export function buildTurns(sessionId: string, messages: ChatMessage[]): Turn[] {
         title: title || "(empty prompt)",
         preview: "",
         toolNames: [...message.toolNames],
+        modelIds: [],
         createdAt: message.createdAt,
       };
       turns.push(current);
@@ -50,6 +53,9 @@ export function buildTurns(sessionId: string, messages: ChatMessage[]): Turn[] {
       current.preview = current.preview ? `${current.preview}\n${message.text}` : message.text;
     for (const name of message.toolNames) {
       if (!current.toolNames.includes(name)) current.toolNames.push(name);
+    }
+    if (message.modelId && !current.modelIds.includes(message.modelId)) {
+      current.modelIds.push(message.modelId);
     }
   }
 

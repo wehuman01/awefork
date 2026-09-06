@@ -16,7 +16,13 @@ import type { AgentEvent } from "../src/shared/types";
  */
 
 interface FakeMessage {
-  info: { id: string; sessionID: string; role: "user" | "assistant"; time: { created: number } };
+  info: {
+    id: string;
+    sessionID: string;
+    role: "user" | "assistant";
+    modelID?: string;
+    time: { created: number };
+  };
   parts: { type: string; text?: string; tool?: string }[];
 }
 
@@ -168,7 +174,13 @@ function baseState(): FakeState {
 
 function msg(id: string, role: "user" | "assistant", text: string): FakeMessage {
   return {
-    info: { id, sessionID: "s1", role, time: { created: id.charCodeAt(1) } },
+    info: {
+      id,
+      sessionID: "s1",
+      role,
+      modelID: role === "assistant" ? "glm/glm-5.3-flash" : undefined,
+      time: { created: id.charCodeAt(1) },
+    },
     parts: [{ type: "text", text }],
   };
 }
@@ -194,13 +206,19 @@ describe("opencode adapter", () => {
     expect(sessions.find((s) => s.id === "s1")).toMatchObject({ origin: "root" });
   });
 
-  it("maps messages to text and tool names", async () => {
+  it("maps messages to text, tool names, and model id", async () => {
     const state = baseState();
     state.messages.s1?.[1]?.parts.push({ type: "tool", tool: "bash" });
     const { adapter } = await newAdapter(state);
     const messages = await adapter.messages("s1");
-    expect(messages[0]).toMatchObject({ id: "u1", role: "user", text: "first question" });
+    expect(messages[0]).toMatchObject({
+      id: "u1",
+      role: "user",
+      text: "first question",
+      modelId: null,
+    });
     expect(messages[1]?.toolNames).toEqual(["bash"]);
+    expect(messages[1]?.modelId).toBe("glm/glm-5.3-flash");
   });
 
   it("fork at a user message keeps that full turn (exclusive cut at next user message)", async () => {

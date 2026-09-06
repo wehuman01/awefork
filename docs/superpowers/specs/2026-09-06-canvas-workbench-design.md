@@ -68,8 +68,10 @@ SVG edges; the project keeps a single runtime dependency (vue).
   prefix (leading turns whose ids already exist in the parent; position
   fallback `forkTurnIndex + 1` when ids don't match). A branch with no new
   turns renders as a dashed "stub" node so it stays visible and selectable.
-- Node footer uses only data the adapter actually provides (time, tools);
-  no invented token/model readouts.
+- Node footer uses only data the adapter actually provides (time, tools,
+  per-turn model ids reported by the agent backend — first model + "+N" when
+  a turn mixed several, agent name when none is reported); no invented
+  token readouts.
 
 ## State (renderer/state.ts)
 

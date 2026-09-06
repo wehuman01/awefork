@@ -1067,6 +1067,11 @@ textarea {
   color: #7a66d6;
 }
 
+.tool-chip.model {
+  background: var(--primary-soft);
+  color: var(--primary-deep);
+}
+
 .stream {
   color: var(--ink-soft);
 }

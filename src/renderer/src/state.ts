@@ -336,6 +336,7 @@ export async function sendPrompt(text: string): Promise<void> {
         role: "user",
         text,
         toolNames: [],
+        modelId: null,
         createdAt: Date.now(),
       },
     ],

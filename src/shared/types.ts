@@ -35,6 +35,8 @@ export interface ChatMessage {
   text: string;
   /** Distinct tool names invoked in this message, in first-seen order. */
   toolNames: string[];
+  /** Model that produced this message (e.g. "glm/glm-5.3-flash"); null for user messages or when the backend reports none. */
+  modelId: string | null;
   createdAt: number;
 }
 

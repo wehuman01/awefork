@@ -55,6 +55,7 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
             .filter(Boolean),
         ),
       ],
+      modelId: m.info.modelID ?? null,
       createdAt: m.info.time.created,
     }));
 

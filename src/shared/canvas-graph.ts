@@ -32,6 +32,8 @@ export interface TurnNode {
   title: string;
   preview: string;
   toolNames: string[];
+  /** Distinct models used by the turn's replies; empty for stubs. */
+  modelIds: string[];
   createdAt: number;
   col: number;
   row: number;
@@ -160,6 +162,7 @@ export function buildTurnGraph(options: BuildGraphOptions): TurnGraph {
         title: session.title || "空会话",
         preview: "",
         toolNames: [],
+        modelIds: [],
         createdAt: session.createdAt,
       });
       connect(sourceNodeId, stub.id, edgeKind);
@@ -175,6 +178,7 @@ export function buildTurnGraph(options: BuildGraphOptions): TurnGraph {
         title: turn.title,
         preview: turn.preview,
         toolNames: turn.toolNames,
+        modelIds: turn.modelIds,
         createdAt: turn.createdAt,
       });
       nodeByMessage.set(turn.messageId, node.id);

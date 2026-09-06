@@ -67,7 +67,10 @@
           <div class="turn-foot">
             <span v-if="store.running[node.sessionId]" class="running-flag">○ 运行中…</span>
             <span v-else>{{ node.toolNames.length > 0 ? `${node.toolNames.length} 个工具` : "无工具调用" }}</span>
-            <span class="model">opencode</span>
+            <span
+              class="model"
+              :title="node.modelIds.length > 1 ? node.modelIds.join('\n') : undefined"
+            >{{ modelLabel(node.modelIds) }}</span>
           </div>
         </template>
         <template v-else>
@@ -338,6 +341,18 @@ watch(
 );
 
 // ── formatting ──────────────────────────────────────────────────────
+
+/** "glm/glm-5.3-flash" → "glm-5.3-flash"; provider prefix lives in the tooltip. */
+function shortModel(id: string): string {
+  return id.split("/").pop() || id;
+}
+
+/** Foot label: first model, "+N" when a turn mixed several; agent name when none reported. */
+function modelLabel(models: string[]): string {
+  const [first, ...rest] = models;
+  if (!first) return "opencode";
+  return rest.length === 0 ? shortModel(first) : `${shortModel(first)} +${rest.length}`;
+}
 
 function relativeTime(timestamp: number): string {
   const diff = Date.now() - timestamp;

@@ -22,6 +22,7 @@ function chain(...pairs: [string, string][]): ChatMessage[] {
       role: "user" as const,
       text: `prompt ${userId}`,
       toolNames: [],
+      modelId: null,
       createdAt: i * 10,
     },
     {
@@ -29,6 +30,7 @@ function chain(...pairs: [string, string][]): ChatMessage[] {
       role: "assistant" as const,
       text: `reply ${assistantId}`,
       toolNames: [],
+      modelId: `fake/model-${i + 1}`,
       createdAt: i * 10 + 5,
     },
   ]);
@@ -57,6 +59,11 @@ describe("buildTurnGraph", () => {
     ]);
     expect(graph.nodes.map((n) => n.col)).toEqual([0, 1, 2]);
     expect(graph.nodes.every((n) => n.row === 0)).toBe(true);
+    expect(graph.nodes.map((n) => n.modelIds)).toEqual([
+      ["fake/model-1"],
+      ["fake/model-2"],
+      ["fake/model-3"],
+    ]);
   });
 
   it("grows a fork from the forked turn with a dashed edge and skips the inherited prefix", () => {
