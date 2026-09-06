@@ -4,7 +4,11 @@
   <p>A desktop workbench that turns AI coding-agent sessions into a tree: pick any past turn, branch from it, and keep exploring in parallel.</p>
   <p>
     <strong>English</strong> ·
-    <a href="./README_cn.md">简体中文</a>
+    <a href="./README_cn.md">简体中文</a> ·
+    <a href="https://www.webioinfo.top/">Webioinfo</a>
+  </p>
+  <p>
+    <a href="https://ko-fi.com/mugpeng"><img src="https://img.shields.io/badge/Ko--fi-Buy%20me%20a%20coffee-FF5E5B?style=flat-square&logo=ko-fi&logoColor=white" alt="Ko-fi"></a>
   </p>
   <p>
     <img src="https://img.shields.io/badge/version-0.1.0-7C3AED?style=flat-square" alt="Version">
@@ -82,6 +86,20 @@ Lineage is stored by awefork because opencode's fork API copies messages without
 
 The core is the `AgentAdapter` protocol (`src/shared/types.ts`): listSessions / messages / fork / prompt / abort / subscribe. opencode is the first implementation. Planned next: pi (JSONL with `parentId`), Claude Code (JSONL with `parentUuid` + `--resume`), Codex.
 
+## Support
+
+If awefork helps you, consider supporting its development:
+
+- ⭐ Star the repo — it helps others find it.
+- ☕ [Ko-fi](https://ko-fi.com/mugpeng) — buy me a coffee.
+- 💬 WeChat — scan the QR code below.
+
+<p align="center">
+  <img src="assets/images/wechat-pay.jpg" alt="WeChat Pay" width="240">
+</p>
+
+> awefork is free and open source. Sponsors keep it maintained — thank you.
+
 ## Development
 
 ```bash
@@ -91,3 +109,30 @@ npm test            # vitest (fake opencode server, no real agent needed)
 ```
 
 See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for architecture and design constraints.
+
+- [Contributing](./docs/CONTRIBUTING.md)
+- [Changelog](./docs/CHANGELOG.md)
+
+## Awesome Ecosystem
+
+awefork is part of a growing family of "awesome" tools — CLI-first, local-first, and operable by AI agents.
+
+### CLI Tools
+
+- **[aweskill](https://aweskill.webioinfo.top/)** — CLI-first skill package manager supporting 47+ AI coding agents.
+- **[aweswitch](https://github.com/Webioinfo01/aweswitch)** — Agent profile switcher for Claude Code, Codex, and OpenCode.
+- **[awerouter](https://github.com/mugpeng/awerouter)** — Smart router that splits requests between Flash and Pro models using structural signals, cutting unnecessary model spend.
+- **[aweshelf](https://github.com/Webioinfo01/aweshelf)** — Bookmark, categorize, and restore AI coding sessions; pairs with aweswitch to save profiles and launch with one command.
+- **[aweshare](https://github.com/wehuman01/aweshare)** — Share local Ollama/vLLM backends, domestic coding plans, or authorized OpenAI/Anthropic subscriptions through a self-hosted hub — a sharing economy for tokens.
+- **[awewarm](https://github.com/wehuman01/awewarm)** — Subscription window warmer that keeps AI coding-plan windows active, for local setups and through a remote hub server.
+- **[awescholar](https://github.com/Webioinfo01/awescholar)** — AI-agent-operable scientific literature discovery and curation.
+
+### Desktop Apps
+
+- **[awefork](https://github.com/wehuman01/awefork)** — this project. Turns AI coding-agent sessions into a tree: fork any turn, keep every branch. Pairs with aweswitch — launch a session with a profile, then explore and fork its history here.
+- **[awedot](https://awedot.wehuman.top/)** — A floating orb at your screen edge keeps track of the current AI session: bookmark it in one click, resume anytime, and pair with aweswitch to pin the agent's config (e.g., relaunch with the GLM model).
+
+### Project Collections
+
+- **[Awesome AI Meets Biology](https://github.com/Webioinfo01/Awesome-AI-Meets-Biology)** — A curated survey of AI applications in biology, bioinformatics, and biomedical research. Powered by awescholar.
+- **[Awesome AI Virtual Tumor](https://github.com/Webioinfo01/Awesome-AI-Virtual-Tumor)** — A curated collection of state-of-the-art AI systems for virtual tumor modeling and simulation: static models, dynamic models, agents, benchmarks, and reviews.
