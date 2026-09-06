@@ -48,6 +48,7 @@ export async function ensureOpencodeServer(port: number): Promise<EnsureServerRe
   const child = spawn("opencode", ["serve", "--port", String(port), "--hostname", "127.0.0.1"], {
     stdio: "ignore",
     detached: false,
+    cwd: homedir(),
     env: buildSpawnEnv(process.env),
   });
   child.on("error", (error) => {
