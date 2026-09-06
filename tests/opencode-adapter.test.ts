@@ -20,16 +20,21 @@ interface FakeMessage {
   parts: { type: string; text?: string; tool?: string }[];
 }
 
+interface FakeSession {
+  id: string;
+  title: string;
+  directory: string;
+  parentID?: string;
+  project?: string;
+  time: { created: number; updated: number };
+}
+
 interface FakeState {
-  sessions: {
-    id: string;
-    title: string;
-    directory: string;
-    parentID?: string;
-    time: { created: number; updated: number };
-  }[];
+  sessions: FakeSession[];
   messages: Record<string, FakeMessage[]>;
   forkCalls: { sessionId: string; cutMessageId: string | null }[];
+  projects: { id: string; worktree: string }[];
+  currentProject: string;
 }
 
 function startFakeServer(state: FakeState): Promise<{ server: Server; baseUrl: string }> {
@@ -46,7 +51,16 @@ function startFakeServer(state: FakeState): Promise<{ server: Server; baseUrl: s
       res.setHeader("content-type", "application/json");
 
       if (method === "GET" && url.pathname === "/session") {
-        res.end(JSON.stringify(state.sessions));
+        const directory = url.searchParams.get("directory");
+        const limit = Number(url.searchParams.get("limit") ?? 100);
+        const list = directory
+          ? state.sessions.filter((s) => s.directory === directory)
+          : state.sessions.filter((s) => (s.project ?? "global") === state.currentProject);
+        res.end(JSON.stringify(list.slice(0, limit)));
+        return;
+      }
+      if (method === "GET" && url.pathname === "/project") {
+        res.end(JSON.stringify(state.projects));
         return;
       }
       if (method === "GET" && url.pathname === "/event") {
@@ -147,6 +161,8 @@ function baseState(): FakeState {
       ],
     },
     forkCalls: [],
+    projects: [{ id: "global", worktree: "/" }],
+    currentProject: "global",
   };
 }
 
@@ -240,5 +256,44 @@ describe("opencode adapter", () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
     unsubscribe();
     expect(events).toContainEqual({ type: "session.idle", sessionId: "s1" });
+  });
+
+  it("lists sessions across all projects, not just the server's current project", async () => {
+    const state = baseState();
+    state.projects.push({ id: "pd", worktree: "/other" });
+    state.sessions.push({
+      id: "s-other",
+      title: "other project",
+      directory: "/other",
+      project: "pd",
+      time: { created: 3, updated: 30 },
+    });
+    const { adapter } = await newAdapter(state);
+    const sessions = await adapter.listSessions();
+    expect(sessions.map((s) => s.id)).toEqual(["s-other", "s1-sub", "s1"]);
+  });
+
+  it("fetches more than the server's default page size of 100", async () => {
+    const state = baseState();
+    for (let i = 0; i < 120; i++) {
+      state.sessions.push({
+        id: `bulk-${i}`,
+        title: `bulk ${i}`,
+        directory: "/repo",
+        time: { created: i, updated: i },
+      });
+    }
+    const { adapter } = await newAdapter(state);
+    const sessions = await adapter.listSessions();
+    expect(sessions).toHaveLength(122);
+  });
+
+  it("dedupes sessions reachable from both the current project and a directory query", async () => {
+    const state = baseState();
+    state.currentProject = "pd";
+    state.projects.push({ id: "pd", worktree: "/repo" });
+    const { adapter } = await newAdapter(state);
+    const sessions = await adapter.listSessions();
+    expect(sessions.filter((s) => s.id === "s1")).toHaveLength(1);
   });
 });

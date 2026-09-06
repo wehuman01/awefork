@@ -32,6 +32,11 @@ export interface OcMessage {
   parts: OcPart[];
 }
 
+export interface OcProject {
+  id: string;
+  worktree: string;
+}
+
 export class OpencodeApiError extends Error {
   constructor(
     readonly status: number,
@@ -43,7 +48,13 @@ export class OpencodeApiError extends Error {
 }
 
 export interface OpencodeClient {
-  listSessions(): Promise<OcSession[]>;
+  /**
+   * GET /session is scoped to the server's current project (resolved from its
+   * cwd) and pages at 100. `directory` switches scope to any directory's
+   * sessions regardless of project.
+   */
+  listSessions(directory?: string): Promise<OcSession[]>;
+  listProjects(): Promise<OcProject[]>;
   messages(sessionId: string): Promise<OcMessage[]>;
   /** Cut point is exclusive: the new session keeps messages strictly before it. */
   fork(sessionId: string, cutMessageId: string | null): Promise<OcSession>;
@@ -77,7 +88,12 @@ export function createOpencodeClient(baseUrl: string): OpencodeClient {
   }
 
   return {
-    listSessions: () => request<OcSession[]>("/session"),
+    listSessions: (directory?: string) => {
+      const query = new URLSearchParams({ limit: "1000" });
+      if (directory) query.set("directory", directory);
+      return request<OcSession[]>(`/session?${query.toString()}`);
+    },
+    listProjects: () => request<OcProject[]>("/project"),
     messages: (id) => request<OcMessage[]>(`/session/${id}/message`),
     fork: (id, cutMessageId) =>
       request<OcSession>(`/session/${id}/fork`, {

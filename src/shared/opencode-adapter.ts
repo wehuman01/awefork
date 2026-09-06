@@ -76,7 +76,15 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
     kind: "opencode",
 
     async listSessions() {
-      return (await client.listSessions()).map(mapSession);
+      const [current, projects] = await Promise.all([client.listSessions(), client.listProjects()]);
+      const byId = new Map(current.map((s) => [s.id, s]));
+      const otherWorktrees = projects.filter((p) => p.id !== "global" && p.worktree);
+      for (const project of otherWorktrees) {
+        for (const session of await client.listSessions(project.worktree)) {
+          byId.set(session.id, session);
+        }
+      }
+      return [...byId.values()].map(mapSession).sort((a, b) => b.updatedAt - a.updatedAt);
     },
 
     async messages(sessionId) {
