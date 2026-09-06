@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Non-linear session workbench for AI coding agents — fork any turn, keep every branch",
+  "license": "MPL-2.0",
   "main": "out/main/index.js",
   "engines": {
     "node": ">=22.0.0"
