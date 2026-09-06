@@ -1,0 +1,31 @@
+{
+  "name": "awefork",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Non-linear session workbench for AI coding agents — fork any turn, keep every branch",
+  "main": "out/main/index.js",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && vue-tsc --noEmit -p tsconfig.web.json",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "vue": "^3.5.42"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.3.4",
+    "@vitejs/plugin-vue": "^6.0.8",
+    "electron": "^44.1.1",
+    "electron-vite": "^5.0.0",
+    "typescript": "~5.8.3",
+    "vitest": "^4.1.11",
+    "vue-tsc": "^3.3.11"
+  }
+}
