@@ -2,7 +2,15 @@ import { computed, reactive, readonly } from "vue";
 import { buildTurnGraph, type TurnGraph, type TurnNode } from "../../shared/canvas-graph";
 import { selectCanvasSessions } from "../../shared/canvas-scope";
 import { buildSessionTree, enrichSessions, type SessionGroup } from "../../shared/session-tree";
-import type { AgentEvent, ChatMessage, ForkRecord, SessionSummary } from "../../shared/types";
+import { buildTurns, type Turn } from "../../shared/turns";
+import type {
+  AgentEvent,
+  ChatMessage,
+  ForkRecord,
+  ModelChoice,
+  ModelOption,
+  SessionSummary,
+} from "../../shared/types";
 
 interface DraftState {
   /** Canvas node the composer is attached to. */
@@ -12,6 +20,8 @@ interface DraftState {
   /** User message to fork after; null = continue the session as-is. */
   atMessageId: string | null;
   text: string;
+  /** Model to run the prompt with; null = the agent's configured default. */
+  model: ModelChoice | null;
 }
 
 interface AppState {
@@ -22,10 +32,16 @@ interface AppState {
   pins: string[];
   selectedDirectory: string | null;
   selectedId: string | null;
+  /**
+   * Turn node id shown in the right pane. null = follow the session's latest
+   * turn (used when selecting a session or while a new turn streams in).
+   */
   selectedTurnId: string | null;
   messagesBySession: Record<string, ChatMessage[]>;
   loadingMessages: boolean;
   messagesError: string | null;
+  /** Model catalog from the agent's provider config; loaded on first draft. */
+  models: ModelOption[];
   /** sessionId → true while an agent run is in flight. */
   running: Record<string, boolean>;
   /** Live stream text of the selected session only. */
@@ -47,6 +63,7 @@ const state = reactive<AppState>({
   messagesBySession: {},
   loadingMessages: false,
   messagesError: null,
+  models: [],
   running: {},
   streamText: "",
   actionError: null,
@@ -113,9 +130,48 @@ export const selectedSession = computed<SessionSummary | null>(
   () => state.sessions.find((s) => s.id === state.selectedId) ?? null,
 );
 
-export const selectedMessages = computed<ChatMessage[]>(
-  () => state.messagesBySession[state.selectedId ?? ""] ?? [],
+const selectedTurns = computed<Turn[]>(() =>
+  state.selectedId
+    ? buildTurns(state.selectedId, state.messagesBySession[state.selectedId] ?? [])
+    : [],
 );
+
+/** The turn the right pane is locked to; falls back to the session's latest. */
+export const paneTurn = computed<{ turn: Turn; index: number; total: number } | null>(() => {
+  const turns = selectedTurns.value;
+  if (turns.length === 0) return null;
+  if (state.selectedTurnId) {
+    const messageId = state.selectedTurnId.slice(state.selectedTurnId.indexOf(":") + 1);
+    const index = turns.findIndex((t) => t.messageId === messageId);
+    const turn = index >= 0 ? turns[index] : undefined;
+    if (turn) return { turn, index, total: turns.length };
+  }
+  const last = turns[turns.length - 1];
+  return last ? { turn: last, index: turns.length - 1, total: turns.length } : null;
+});
+
+/** True when the pane shows the latest turn — typing continues the session. */
+export const paneAtLatest = computed(() => {
+  const pane = paneTurn.value;
+  return !pane || pane.index === pane.total - 1;
+});
+
+/** Messages of the pane's turn: from its user prompt up to the next one. */
+export const paneMessages = computed<ChatMessage[]>(() => {
+  const messages = state.messagesBySession[state.selectedId ?? ""] ?? [];
+  const turn = paneTurn.value?.turn;
+  if (!turn) return messages;
+  const start = messages.findIndex((m) => m.id === turn.messageId);
+  if (start === -1) return messages;
+  let end = messages.length;
+  for (let i = start + 1; i < messages.length; i += 1) {
+    if (messages[i]?.role === "user") {
+      end = i;
+      break;
+    }
+  }
+  return messages.slice(start, end);
+});
 
 const activeStreamSessions = new Set<string>();
 const streamBuffers = new Map<string, string>();
@@ -280,11 +336,14 @@ export async function togglePin(sessionId: string): Promise<void> {
 }
 
 export function openDraft(node: TurnNode): void {
+  void ensureModels();
   state.draft = {
     nodeId: node.id,
     sessionId: node.sessionId,
     atMessageId: node.messageId,
     text: "",
+    // Preselect the model that wrote the turn being forked from, when known.
+    model: node.kind === "turn" ? node.model : null,
   };
 }
 
@@ -292,14 +351,31 @@ export function setDraftText(text: string): void {
   if (state.draft) state.draft.text = text;
 }
 
+export function setDraftModel(model: ModelChoice | null): void {
+  if (state.draft) state.draft.model = model;
+}
+
 export function dismissDraft(): void {
   state.draft = null;
+}
+
+let modelsRequested = false;
+
+async function ensureModels(): Promise<void> {
+  if (modelsRequested) return;
+  modelsRequested = true;
+  try {
+    state.models = await window.awefork.models();
+  } catch (error) {
+    state.actionError = error instanceof Error ? error.message : String(error);
+  }
 }
 
 /**
  * Send the draft: on a turn node this forks the session at that turn AND
  * fires the prompt on the new branch; on a stub node it simply continues the
- * (so far turn-less) branch.
+ * (so far turn-less) branch. Either way the app lands IN the target session
+ * with the pane following its newest turn.
  */
 export async function sendDraft(): Promise<void> {
   const draft = state.draft;
@@ -310,15 +386,32 @@ export async function sendDraft(): Promise<void> {
       const forked = await window.awefork.fork(draft.sessionId, draft.atMessageId);
       await refreshSessions();
       await selectSession(forked.id, { focus: true });
-      await window.awefork.prompt(forked.id, draft.text.trim());
+      await window.awefork.prompt(forked.id, draft.text.trim(), draft.model);
     } else {
-      await window.awefork.prompt(draft.sessionId, draft.text.trim());
       await selectSession(draft.sessionId, { focus: true });
+      await window.awefork.prompt(draft.sessionId, draft.text.trim(), draft.model);
     }
     state.draft = null;
   } catch (error) {
     state.actionError = error instanceof Error ? error.message : String(error);
   }
+}
+
+/**
+ * Send from the right-pane composer. On the latest turn (or a turn-less
+ * session) this continues the session; on an older turn it branches: fork at
+ * that turn, land in the new session, and prompt there.
+ */
+export async function sendPanePrompt(text: string): Promise<void> {
+  if (!state.selectedId || !text.trim()) return;
+  if (!paneAtLatest.value) {
+    const messageId = state.selectedTurnId?.slice(state.selectedTurnId.indexOf(":") + 1) ?? null;
+    if (messageId) {
+      await forkAtMessage(messageId);
+      if (!state.selectedId) return;
+    }
+  }
+  await sendPrompt(text);
 }
 
 export async function sendPrompt(text: string): Promise<void> {
@@ -337,12 +430,13 @@ export async function sendPrompt(text: string): Promise<void> {
         text,
         toolNames: [],
         modelId: null,
+        providerId: null,
         createdAt: Date.now(),
       },
     ],
   };
   try {
-    await window.awefork.prompt(sessionId, text);
+    await window.awefork.prompt(sessionId, text, null);
   } catch (error) {
     activeStreamSessions.delete(sessionId);
     const { [sessionId]: stopped, ...rest } = state.running;

@@ -4,6 +4,7 @@
  * Talked to over fetch so it works in the Electron main process with no
  * SDK dependency and can be tested against a fake server.
  */
+import type { ModelChoice, ModelOption } from "./types.js";
 
 export interface OcSession {
   id: string;
@@ -13,12 +14,23 @@ export interface OcSession {
   time: { created: number; updated: number };
 }
 
+/** Shape of GET /config/providers — only the fields awefork reads. */
+interface OcProviderList {
+  providers?: {
+    id: string;
+    name?: string;
+    models?: Record<string, { id?: string; name?: string }>;
+  }[];
+}
+
 interface OcMessageInfo {
   id: string;
   sessionID: string;
   role: "user" | "assistant";
   /** Present on assistant messages, e.g. "glm/glm-5.3-flash". */
   modelID?: string;
+  /** Provider that served the model, e.g. "oc-awerouter". */
+  providerID?: string;
   time: { created: number };
 }
 
@@ -58,9 +70,10 @@ export interface OpencodeClient {
   listSessions(directory?: string): Promise<OcSession[]>;
   listProjects(): Promise<OcProject[]>;
   messages(sessionId: string): Promise<OcMessage[]>;
+  listModels(): Promise<ModelOption[]>;
   /** Cut point is exclusive: the new session keeps messages strictly before it. */
   fork(sessionId: string, cutMessageId: string | null): Promise<OcSession>;
-  promptAsync(sessionId: string, text: string): Promise<void>;
+  promptAsync(sessionId: string, text: string, model?: ModelChoice | null): Promise<void>;
   abort(sessionId: string): Promise<void>;
 }
 
@@ -97,17 +110,37 @@ export function createOpencodeClient(baseUrl: string): OpencodeClient {
     },
     listProjects: () => request<OcProject[]>("/project"),
     messages: (id) => request<OcMessage[]>(`/session/${id}/message`),
+    listModels: async () => {
+      // Read only ids and names — the response also carries provider secrets.
+      const list = await request<OcProviderList>("/config/providers");
+      const options: ModelOption[] = [];
+      for (const provider of list.providers ?? []) {
+        for (const [key, model] of Object.entries(provider.models ?? {})) {
+          const id = model.id || key;
+          options.push({
+            providerId: provider.id,
+            providerName: provider.name || provider.id,
+            modelId: id,
+            modelName: model.name || id,
+          });
+        }
+      }
+      return options.filter((o) => o.modelId);
+    },
     fork: (id, cutMessageId) =>
       request<OcSession>(`/session/${id}/fork`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(cutMessageId ? { messageID: cutMessageId } : {}),
       }),
-    promptAsync: async (id, text) => {
+    promptAsync: async (id, text, model) => {
       await request(`/session/${id}/prompt_async`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ parts: [{ type: "text", text }] }),
+        body: JSON.stringify({
+          parts: [{ type: "text", text }],
+          ...(model ? { model: { providerID: model.providerId, modelID: model.modelId } } : {}),
+        }),
       });
     },
     abort: (id) => request(`/session/${id}/abort`, { method: "POST" }),

@@ -5,7 +5,7 @@
       <div class="ctx-headings">
         <div class="ctx-title">分支上下文</div>
         <div class="ctx-sub" :title="selectedSession?.title ?? ''">
-          {{ selectedSession?.title || "在画布上选一个节点" }}
+          <template v-if="turnMeta">{{ turnMeta }} · </template>{{ selectedSession?.title || "在画布上选一个节点" }}
         </div>
       </div>
       <span v-if="isRunning" class="ctx-running">○ 运行中</span>
@@ -16,7 +16,7 @@
     <MessageList
       v-if="selectedSession"
       :session="selectedSession"
-      :messages="selectedMessages"
+      :messages="paneMessages"
       :running="isRunning"
       :stream-text="store.streamText"
       :error="null"
@@ -29,6 +29,7 @@
     <ChatInput
       v-if="selectedSession"
       :running="isRunning"
+      :at-latest="paneAtLatest"
       @send="send"
       @abort="abort"
     />
@@ -40,9 +41,11 @@ import { computed } from "vue";
 import {
   abortRun,
   forkAtMessage,
-  selectedMessages,
+  paneAtLatest,
+  paneMessages,
+  paneTurn,
   selectedSession,
-  sendPrompt,
+  sendPanePrompt,
   store,
 } from "../state";
 import ChatInput from "./chat-input.vue";
@@ -53,12 +56,17 @@ const isRunning = computed(() => {
   return id != null && Boolean(store.running[id]);
 });
 
+const turnMeta = computed(() => {
+  const pane = paneTurn.value;
+  return pane ? `回合 ${pane.index + 1}/${pane.total}` : null;
+});
+
 function forkAt(messageId: string): void {
   void forkAtMessage(messageId);
 }
 
 function send(text: string): void {
-  void sendPrompt(text);
+  void sendPanePrompt(text);
 }
 
 function abort(): void {

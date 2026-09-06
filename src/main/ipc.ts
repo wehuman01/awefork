@@ -1,15 +1,16 @@
 import { type IpcMainInvokeEvent, ipcMain } from "electron";
 import { readLineage } from "../shared/lineage-store.js";
 import { readPins, writePins } from "../shared/pins-store.js";
-import type { AgentAdapter, AgentEvent } from "../shared/types";
+import type { AgentAdapter, AgentEvent, ModelChoice } from "../shared/types";
 
 /**
  * IPC surface (all invoke-channels, prefixed awefork:):
  *   ready      -> { ok, error? }          adapter status after startup
  *   sessions   -> SessionSummary[]        sessions + lineage merged
  *   messages   -> ChatMessage[]           flat message list of a session
+ *   models     -> ModelOption[]           models offered by the agent config
  *   fork       -> SessionSummary          fork (turn-preserving)
- *   prompt     -> void                    fire an agent run
+ *   prompt     -> void                    fire an agent run (optional model)
  *   abort      -> void                    abort the running turn
  *   pins       -> string[]                pinned session ids
  *   togglePin  -> string[]                pin/unpin a session, new list back
@@ -43,6 +44,11 @@ export function registerIpc(
     return adapter.messages(sessionId);
   });
 
+  ipcMain.handle("awefork:models", async () => {
+    const adapter = await withAdapter();
+    return adapter.listModels();
+  });
+
   ipcMain.handle(
     "awefork:fork",
     async (_event: IpcMainInvokeEvent, sessionId: string, atMessageId: string | null) => {
@@ -53,9 +59,14 @@ export function registerIpc(
 
   ipcMain.handle(
     "awefork:prompt",
-    async (_event: IpcMainInvokeEvent, sessionId: string, text: string) => {
+    async (
+      _event: IpcMainInvokeEvent,
+      sessionId: string,
+      text: string,
+      model: ModelChoice | null,
+    ) => {
       const adapter = await withAdapter();
-      await adapter.prompt(sessionId, text);
+      await adapter.prompt(sessionId, text, model ?? undefined);
     },
   );
 

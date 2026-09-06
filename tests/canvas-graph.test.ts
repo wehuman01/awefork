@@ -23,6 +23,7 @@ function chain(...pairs: [string, string][]): ChatMessage[] {
       text: `prompt ${userId}`,
       toolNames: [],
       modelId: null,
+      providerId: null,
       createdAt: i * 10,
     },
     {
@@ -31,6 +32,7 @@ function chain(...pairs: [string, string][]): ChatMessage[] {
       text: `reply ${assistantId}`,
       toolNames: [],
       modelId: `fake/model-${i + 1}`,
+      providerId: "oc-fake",
       createdAt: i * 10 + 5,
     },
   ]);
@@ -63,6 +65,11 @@ describe("buildTurnGraph", () => {
       ["fake/model-1"],
       ["fake/model-2"],
       ["fake/model-3"],
+    ]);
+    expect(graph.nodes.map((n) => n.model)).toEqual([
+      { providerId: "oc-fake", modelId: "fake/model-1" },
+      { providerId: "oc-fake", modelId: "fake/model-2" },
+      { providerId: "oc-fake", modelId: "fake/model-3" },
     ]);
   });
 

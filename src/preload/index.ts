@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { ChatMessage, SessionSummary } from "../shared/types.js";
+import type { ChatMessage, ModelChoice, ModelOption, SessionSummary } from "../shared/types.js";
 
 const api = {
   ready: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("awefork:ready"),
@@ -9,10 +9,11 @@ const api = {
   }> => ipcRenderer.invoke("awefork:sessions"),
   messages: (sessionId: string): Promise<ChatMessage[]> =>
     ipcRenderer.invoke("awefork:messages", sessionId),
+  models: (): Promise<ModelOption[]> => ipcRenderer.invoke("awefork:models"),
   fork: (sessionId: string, atMessageId: string | null): Promise<SessionSummary> =>
     ipcRenderer.invoke("awefork:fork", sessionId, atMessageId),
-  prompt: (sessionId: string, text: string): Promise<void> =>
-    ipcRenderer.invoke("awefork:prompt", sessionId, text),
+  prompt: (sessionId: string, text: string, model: ModelChoice | null): Promise<void> =>
+    ipcRenderer.invoke("awefork:prompt", sessionId, text, model),
   abort: (sessionId: string): Promise<void> => ipcRenderer.invoke("awefork:abort", sessionId),
   pins: (): Promise<string[]> => ipcRenderer.invoke("awefork:pins"),
   togglePin: (sessionId: string): Promise<string[]> =>

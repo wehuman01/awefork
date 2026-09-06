@@ -3,7 +3,7 @@ import { buildTurns } from "../src/shared/turns";
 import type { ChatMessage } from "../src/shared/types";
 
 function user(id: string, text: string, createdAt = 1000): ChatMessage {
-  return { id, role: "user", text, toolNames: [], modelId: null, createdAt };
+  return { id, role: "user", text, toolNames: [], modelId: null, providerId: null, createdAt };
 }
 
 function assistant(
@@ -12,8 +12,9 @@ function assistant(
   createdAt = 2000,
   toolNames: string[] = [],
   modelId: string | null = null,
+  providerId: string | null = null,
 ): ChatMessage {
-  return { id, role: "assistant", text, toolNames, modelId, createdAt };
+  return { id, role: "assistant", text, toolNames, modelId, providerId, createdAt };
 }
 
 describe("buildTurns", () => {
@@ -53,18 +54,28 @@ describe("buildTurns", () => {
   it("collects distinct model ids of the turn's replies in first-seen order", () => {
     const turns = buildTurns("s1", [
       user("u1", "q"),
-      assistant("a1", "", 2000, [], "glm/glm-5.3-flash"),
-      assistant("a2", "done", 3000, [], "glm/glm-5.3-flash"),
+      assistant("a1", "", 2000, [], "glm/glm-5.3-flash", "oc-awerouter"),
+      assistant("a2", "done", 3000, [], "glm/glm-5.3-flash", "oc-awerouter"),
       user("u2", "q2"),
-      assistant("a3", "ok", 4000, [], "codex/gpt-5.6-sol"),
+      assistant("a3", "ok", 4000, [], "codex/gpt-5.6-sol", "oc-aweshare"),
     ]);
     expect(turns[0]?.modelIds).toEqual(["glm/glm-5.3-flash"]);
     expect(turns[1]?.modelIds).toEqual(["codex/gpt-5.6-sol"]);
   });
 
+  it("keeps the model of the turn's last reply as the actionable choice", () => {
+    const turns = buildTurns("s1", [
+      user("u1", "q"),
+      assistant("a1", "", 2000, [], "glm/glm-5.3-flash", "oc-awerouter"),
+      assistant("a2", "done", 3000, [], "codex/gpt-5.6-sol", "oc-aweshare"),
+    ]);
+    expect(turns[0]?.model).toEqual({ providerId: "oc-aweshare", modelId: "codex/gpt-5.6-sol" });
+  });
+
   it("keeps model ids empty when the backend reports none", () => {
     const turns = buildTurns("s1", [user("u1", "q"), assistant("a1", "done")]);
     expect(turns[0]?.modelIds).toEqual([]);
+    expect(turns[0]?.model).toBeNull();
   });
 
   it("drops assistant messages before the first user message", () => {

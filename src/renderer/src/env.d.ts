@@ -7,7 +7,14 @@ declare module "*.vue" {
   export default component;
 }
 
-import type { AgentEvent, ChatMessage, ForkRecord, SessionSummary } from "../../shared/types";
+import type {
+  AgentEvent,
+  ChatMessage,
+  ForkRecord,
+  ModelChoice,
+  ModelOption,
+  SessionSummary,
+} from "../../shared/types";
 
 declare global {
   interface Window {
@@ -15,8 +22,9 @@ declare global {
       ready(): Promise<{ ok: boolean; error?: string }>;
       sessions(): Promise<{ sessions: SessionSummary[]; lineage: Record<string, ForkRecord> }>;
       messages(sessionId: string): Promise<ChatMessage[]>;
+      models(): Promise<ModelOption[]>;
       fork(sessionId: string, atMessageId: string | null): Promise<SessionSummary>;
-      prompt(sessionId: string, text: string): Promise<void>;
+      prompt(sessionId: string, text: string, model: ModelChoice | null): Promise<void>;
       abort(sessionId: string): Promise<void>;
       pins(): Promise<string[]>;
       togglePin(sessionId: string): Promise<string[]>;

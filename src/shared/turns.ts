@@ -1,4 +1,4 @@
-import type { ChatMessage } from "./types.js";
+import type { ChatMessage, ModelChoice } from "./types.js";
 
 /**
  * A turn is the unit of the canvas graph: one user prompt plus the assistant
@@ -16,6 +16,8 @@ export interface Turn {
   toolNames: string[];
   /** Distinct models across the turn's assistant messages, first-seen order. */
   modelIds: string[];
+  /** Model that wrote the turn's last reply; null when none was reported. */
+  model: ModelChoice | null;
   /** Creation time of the user message. */
   createdAt: number;
 }
@@ -43,6 +45,7 @@ export function buildTurns(sessionId: string, messages: ChatMessage[]): Turn[] {
         preview: "",
         toolNames: [...message.toolNames],
         modelIds: [],
+        model: null,
         createdAt: message.createdAt,
       };
       turns.push(current);
@@ -56,6 +59,9 @@ export function buildTurns(sessionId: string, messages: ChatMessage[]): Turn[] {
     }
     if (message.modelId && !current.modelIds.includes(message.modelId)) {
       current.modelIds.push(message.modelId);
+    }
+    if (message.modelId && message.providerId) {
+      current.model = { providerId: message.providerId, modelId: message.modelId };
     }
   }
 

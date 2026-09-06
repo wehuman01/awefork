@@ -11,7 +11,9 @@ import type { AgentEvent } from "../src/shared/types";
  * Fake opencode server mirroring the endpoints and semantics verified against
  * a real opencode 1.18 instance:
  *  - POST /session/:id/fork with {messageID} keeps messages STRICTLY BEFORE it
- *  - POST /session/:id/prompt_async fires and returns empty
+ *  - POST /session/:id/prompt_async fires and returns empty; model is an
+ *    object {providerID, modelID} when present
+ *  - GET /config/providers lists providers with nested model maps
  *  - GET /event streams SSE frames
  */
 
@@ -21,6 +23,7 @@ interface FakeMessage {
     sessionID: string;
     role: "user" | "assistant";
     modelID?: string;
+    providerID?: string;
     time: { created: number };
   };
   parts: { type: string; text?: string; tool?: string }[];
@@ -35,10 +38,20 @@ interface FakeSession {
   time: { created: number; updated: number };
 }
 
+interface FakeProvider {
+  id: string;
+  name?: string;
+  /** Secrets must never survive the adapter's mapping. */
+  key?: string;
+  models: Record<string, { id?: string; name?: string }>;
+}
+
 interface FakeState {
   sessions: FakeSession[];
   messages: Record<string, FakeMessage[]>;
   forkCalls: { sessionId: string; cutMessageId: string | null }[];
+  promptCalls: { sessionId: string; body: Record<string, unknown> }[];
+  providers: FakeProvider[];
   projects: { id: string; worktree: string }[];
   currentProject: string;
 }
@@ -67,6 +80,10 @@ function startFakeServer(state: FakeState): Promise<{ server: Server; baseUrl: s
       }
       if (method === "GET" && url.pathname === "/project") {
         res.end(JSON.stringify(state.projects));
+        return;
+      }
+      if (method === "GET" && url.pathname === "/config/providers") {
+        res.end(JSON.stringify({ providers: state.providers }));
         return;
       }
       if (method === "GET" && url.pathname === "/event") {
@@ -108,6 +125,7 @@ function startFakeServer(state: FakeState): Promise<{ server: Server; baseUrl: s
 
       const promptMatch = url.pathname.match(/^\/session\/([^/]+)\/prompt_async$/);
       if (method === "POST" && promptMatch) {
+        state.promptCalls.push({ sessionId: promptMatch[1] ?? "", body: payload });
         res.writeHead(204);
         res.end();
         return;
@@ -167,6 +185,19 @@ function baseState(): FakeState {
       ],
     },
     forkCalls: [],
+    promptCalls: [],
+    providers: [
+      {
+        id: "oc-fake",
+        name: "Fake Router",
+        key: "sk-secret-must-not-leak",
+        models: {
+          "glm-5.3-flash": { id: "glm-5.3-flash", name: "GLM 5.3 Flash" },
+          "gpt-5.6-sol": { id: "gpt-5.6-sol", name: "GPT 5.6 Sol" },
+        },
+      },
+      { id: "bare", models: { "unnamed-model": {} } },
+    ],
     projects: [{ id: "global", worktree: "/" }],
     currentProject: "global",
   };
@@ -179,6 +210,7 @@ function msg(id: string, role: "user" | "assistant", text: string): FakeMessage 
       sessionID: "s1",
       role,
       modelID: role === "assistant" ? "glm/glm-5.3-flash" : undefined,
+      providerID: role === "assistant" ? "oc-fake" : undefined,
       time: { created: id.charCodeAt(1) },
     },
     parts: [{ type: "text", text }],
@@ -216,9 +248,38 @@ describe("opencode adapter", () => {
       role: "user",
       text: "first question",
       modelId: null,
+      providerId: null,
     });
     expect(messages[1]?.toolNames).toEqual(["bash"]);
     expect(messages[1]?.modelId).toBe("glm/glm-5.3-flash");
+    expect(messages[1]?.providerId).toBe("oc-fake");
+  });
+
+  it("lists models with ids and names only — provider secrets dropped", async () => {
+    const state = baseState();
+    const { adapter } = await newAdapter(state);
+    const models = await adapter.listModels();
+    expect(models).toEqual([
+      {
+        providerId: "oc-fake",
+        providerName: "Fake Router",
+        modelId: "glm-5.3-flash",
+        modelName: "GLM 5.3 Flash",
+      },
+      {
+        providerId: "oc-fake",
+        providerName: "Fake Router",
+        modelId: "gpt-5.6-sol",
+        modelName: "GPT 5.6 Sol",
+      },
+      {
+        providerId: "bare",
+        providerName: "bare",
+        modelId: "unnamed-model",
+        modelName: "unnamed-model",
+      },
+    ]);
+    expect(JSON.stringify(models)).not.toContain("sk-secret");
   });
 
   it("fork at a user message keeps that full turn (exclusive cut at next user message)", async () => {
@@ -264,6 +325,19 @@ describe("opencode adapter", () => {
     const state = baseState();
     const { adapter } = await newAdapter(state);
     await expect(adapter.prompt("s1", "hello")).resolves.toBeUndefined();
+    expect(state.promptCalls).toEqual([
+      { sessionId: "s1", body: { parts: [{ type: "text", text: "hello" }] } },
+    ]);
+  });
+
+  it("prompt passes the chosen model as a provider/model object", async () => {
+    const state = baseState();
+    const { adapter } = await newAdapter(state);
+    await adapter.prompt("s1", "hello", { providerId: "oc-fake", modelId: "gpt-5.6-sol" });
+    expect(state.promptCalls[0]?.body.model).toEqual({
+      providerID: "oc-fake",
+      modelID: "gpt-5.6-sol",
+    });
   });
 
   it("subscribe emits normalized events from the SSE stream", async () => {

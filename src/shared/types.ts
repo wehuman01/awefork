@@ -37,7 +37,23 @@ export interface ChatMessage {
   toolNames: string[];
   /** Model that produced this message (e.g. "glm/glm-5.3-flash"); null for user messages or when the backend reports none. */
   modelId: string | null;
+  /** Provider that served the model (e.g. "oc-awerouter"); null alongside modelId. */
+  providerId: string | null;
   createdAt: number;
+}
+
+/** A model the agent backend offers, flattened from its provider config. */
+export interface ModelOption {
+  providerId: string;
+  providerName: string;
+  modelId: string;
+  modelName: string;
+}
+
+/** The model to run a prompt with; null = the backend's configured default. */
+export interface ModelChoice {
+  providerId: string;
+  modelId: string;
 }
 
 /** Fork lineage recorded by awefork when it forks a session. */
@@ -75,9 +91,11 @@ export interface AgentAdapter {
   readonly kind: string;
   listSessions(): Promise<SessionSummary[]>;
   messages(sessionId: string): Promise<ChatMessage[]>;
+  /** Models the backend offers (from its provider config). */
+  listModels(): Promise<ModelOption[]>;
   fork(sessionId: string, atMessageId: string | null): Promise<SessionSummary>;
   /** Fire an agent run; progress arrives through `subscribe`. */
-  prompt(sessionId: string, text: string): Promise<void>;
+  prompt(sessionId: string, text: string, model?: ModelChoice | null): Promise<void>;
   abort(sessionId: string): Promise<void>;
   /** Subscribe to the normalized event feed. Returns an unsubscribe function. */
   subscribe(handler: (event: AgentEvent) => void): Promise<() => void>;

@@ -1,5 +1,5 @@
 import { buildTurns, type Turn } from "./turns.js";
-import type { ChatMessage, LineageMap, SessionSummary } from "./types.js";
+import type { ChatMessage, LineageMap, ModelChoice, SessionSummary } from "./types.js";
 
 /**
  * Turn-level graph for one project directory.
@@ -34,6 +34,8 @@ export interface TurnNode {
   toolNames: string[];
   /** Distinct models used by the turn's replies; empty for stubs. */
   modelIds: string[];
+  /** Model that wrote the turn's last reply; null for stubs / when unreported. */
+  model: ModelChoice | null;
   createdAt: number;
   col: number;
   row: number;
@@ -163,6 +165,7 @@ export function buildTurnGraph(options: BuildGraphOptions): TurnGraph {
         preview: "",
         toolNames: [],
         modelIds: [],
+        model: null,
         createdAt: session.createdAt,
       });
       connect(sourceNodeId, stub.id, edgeKind);
@@ -179,6 +182,7 @@ export function buildTurnGraph(options: BuildGraphOptions): TurnGraph {
         preview: turn.preview,
         toolNames: turn.toolNames,
         modelIds: turn.modelIds,
+        model: turn.model,
         createdAt: turn.createdAt,
       });
       nodeByMessage.set(turn.messageId, node.id);

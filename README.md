@@ -33,19 +33,22 @@ It is intentionally scoped: read-only projection of your real agent sessions, fo
 
 ```text
 ┌──────────────┬──────────────────────────────────┐
-│ Sessions     │  message chain of active branch  │
+│ Sessions     │  the selected turn's exchange    │
 │ (tree with   │                                  │
-│  forks ⎇)    │  ▸ each user turn has            │
-│              │    [⎇ fork here]                 │
-│ /repo        │                                  │
-│  · session A │  chat input to continue          │
-│    · ⎇ A-1   │  this branch                     │
+│  forks ⎇,    │  ▸ click any card or session —   │
+│  foldable    │    the pane jumps to that turn   │
+│  folders)    │                                  │
+│ /repo        │  chat input to continue          │
+│  · session A │  this branch                     │
+│    · ⎇ A-1   │                                  │
 └──────────────┴──────────────────────────────────┘
 ```
 
-- **Navigator** — all opencode sessions grouped by project directory; forks nest under their parent.
-- **Fork here** — any user turn can seed a new branch. The new session keeps that full turn (question + answer).
-- **Continue** — send messages from awefork; replies stream in live.
+- **Navigator** — all opencode sessions grouped by project directory (folders fold); forks nest under their parent.
+- **Turn pane** — the right panel shows one turn: its prompt and reply. Click a canvas card or a sidebar session and the pane jumps there; while a new turn runs, it follows along.
+- **Fork here** — any user turn can seed a new branch. The new session keeps that full turn (question + answer), and awefork lands you in it.
+- **Model choice** — when starting a branch, pick any model configured in opencode (or keep the default).
+- **Continue** — send messages from awefork; replies stream in live. Replying while an older turn is selected branches from that turn.
 - **Native sessions** — forking calls `opencode serve`'s fork API; the result is a real session (open it in the TUI anytime).
 
 ## Install

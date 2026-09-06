@@ -45,12 +45,18 @@ SVG edges; the project keeps a single runtime dependency (vue).
   forks sprout as dashed edges; running sessions get a mint "running" state.
   Pan by dragging, zoom with the wheel (0.45–1.8), fit-to-view button.
 - **Draft card** — the "＋" chip on a node opens a dashed composer attached
-  below it. Sending forks the session at that turn AND fires the prompt on
-  the new branch in one move; the canvas then shows the new branch growing
-  from that node.
-- **Branch context panel** — the full message chain of the selected node's
-  session (user bubbles right, assistant left, tool chips, per-turn fork
-  buttons) plus the reply composer that continues the selected branch.
+  below it, preselecting the model that wrote that turn. A model dropdown
+  lists every model from the agent's provider config (`GET
+  /config/providers`, ids/names only). Sending forks the session at that
+  turn AND fires the prompt (with the chosen model) on the new branch in one
+  move; the app lands in the new session with the pane following its newest
+  turn.
+- **Branch context panel** — turn-scoped: it shows the selected turn only
+  (its user prompt and reply, tool chips, per-turn fork buttons). Selecting
+  a canvas card locks the pane to that turn; selecting a session (or sending
+  a prompt) follows the session's latest turn. The composer continues the
+  branch when the pane is on the latest turn and forks from the displayed
+  turn otherwise.
 
 ## Data mapping
 

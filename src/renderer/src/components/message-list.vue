@@ -29,7 +29,7 @@
               >{{ shortModel(message.modelId) }}</span>
               <span v-for="(name, i) in message.toolNames" :key="name" class="tool-chip" :class="{ lav: i % 2 === 1 }">{{ name }}</span>
             </p>
-            <p class="message-text pre-wrap">{{ message.text || "(no text output)" }}</p>
+            <p v-if="message.text" class="message-text pre-wrap">{{ message.text }}</p>
           </div>
         </div>
       </template>

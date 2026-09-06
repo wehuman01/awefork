@@ -56,6 +56,7 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
         ),
       ],
       modelId: m.info.modelID ?? null,
+      providerId: m.info.providerID ?? null,
       createdAt: m.info.time.created,
     }));
 
@@ -92,6 +93,10 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
       return mapMessages(await client.messages(sessionId));
     },
 
+    listModels() {
+      return client.listModels();
+    },
+
     async fork(sessionId, atMessageId) {
       const cut = atMessageId ? await findCutMessageId(sessionId, atMessageId) : null;
       const forked = await client.fork(sessionId, cut);
@@ -103,8 +108,8 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
       return { ...mapSession(forked), origin: "fork", parentSessionId: sessionId };
     },
 
-    async prompt(sessionId, text) {
-      await client.promptAsync(sessionId, text);
+    async prompt(sessionId, text, model) {
+      await client.promptAsync(sessionId, text, model);
     },
 
     async abort(sessionId) {

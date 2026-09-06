@@ -44,13 +44,6 @@
             <span class="avatar user">🍑</span>
             <span class="turn-title" :title="node.title">{{ node.title }}</span>
             <span class="turn-time">{{ relativeTime(node.createdAt) }}</span>
-            <button
-              type="button"
-              class="pin-star"
-              :class="{ on: isPinned(node.sessionId) }"
-              :title="isPinned(node.sessionId) ? '取消收藏' : '收藏这个分支故事'"
-              @click.stop="pinToggle(node.sessionId)"
-            >{{ isPinned(node.sessionId) ? "★" : "☆" }}</button>
           </div>
           <div class="turn-body">
             <span class="avatar bot">✨</span>
@@ -77,13 +70,6 @@
           <div class="turn-head">
             <span class="avatar user">🌱</span>
             <span class="turn-title" :title="node.title">{{ node.title }}</span>
-            <button
-              type="button"
-              class="pin-star"
-              :class="{ on: isPinned(node.sessionId) }"
-              :title="isPinned(node.sessionId) ? '取消收藏' : '收藏这个分支故事'"
-              @click.stop="pinToggle(node.sessionId)"
-            >{{ isPinned(node.sessionId) ? "★" : "☆" }}</button>
           </div>
           <p class="stub-hint">新分支还没有自己的回合 — 点「＋」写下第一步，或者直接在右侧回复。</p>
         </template>
@@ -108,7 +94,25 @@
         ></textarea>
         <div class="draft-foot">
           <span class="hint">⌘/Ctrl ⏎ 发送</span>
-          <span class="mini-select">{{ draftNode.kind === "stub" ? "继续此分支" : "fork 后发送" }}</span>
+          <select
+            class="model-select"
+            :value="draftModelValue"
+            title="用哪个模型跑这条分支"
+            @change="onDraftModelChange"
+          >
+            <option value="">默认模型</option>
+            <optgroup
+              v-for="group in modelsByProvider"
+              :key="group.providerId"
+              :label="group.providerName"
+            >
+              <option
+                v-for="m in group.models"
+                :key="m.modelId"
+                :value="encodeModel(group.providerId, m.modelId)"
+              >{{ m.modelName }}</option>
+            </optgroup>
+          </select>
           <button type="button" class="send-btn" :disabled="!store.draft?.text.trim()" @click="submitDraft">➤</button>
         </div>
       </article>
@@ -139,14 +143,15 @@
 import { computed, ref, watch } from "vue";
 import type { TurnNode } from "../../../shared/canvas-graph";
 import { COL_GAP, NODE_HEIGHT, NODE_WIDTH, ROW_GAP } from "../../../shared/canvas-graph";
+import type { ModelChoice } from "../../../shared/types";
 import {
   dismissDraft,
   openDraft,
   selectTurn,
   sendDraft,
+  setDraftModel,
   setDraftText,
   store,
-  togglePin,
   turnGraph,
 } from "../state";
 
@@ -158,14 +163,6 @@ const panning = ref(false);
 
 const graph = computed(() => turnGraph.value);
 const selectedTurnId = computed(() => store.selectedTurnId);
-
-function isPinned(sessionId: string): boolean {
-  return store.pins.includes(sessionId);
-}
-
-function pinToggle(sessionId: string): void {
-  void togglePin(sessionId);
-}
 
 const worldStyle = computed(() => ({
   transform: `translate(${tx.value}px, ${ty.value}px) scale(${scale.value})`,
@@ -215,6 +212,56 @@ function selectNode(node: TurnNode): void {
 
 function submitDraft(): void {
   void sendDraft();
+}
+
+// ── draft model picker ──────────────────────────────────────────────
+
+const MODEL_SEPARATOR = "\u0000";
+
+function encodeModel(providerId: string, modelId: string): string {
+  return `${providerId}${MODEL_SEPARATOR}${modelId}`;
+}
+
+interface ProviderGroup {
+  providerId: string;
+  providerName: string;
+  models: { modelId: string; modelName: string }[];
+}
+
+const modelsByProvider = computed<ProviderGroup[]>(() => {
+  const groups: ProviderGroup[] = [];
+  for (const option of store.models) {
+    const current = groups[groups.length - 1];
+    if (current && current.providerId === option.providerId) {
+      current.models.push({ modelId: option.modelId, modelName: option.modelName });
+    } else {
+      groups.push({
+        providerId: option.providerId,
+        providerName: option.providerName,
+        models: [{ modelId: option.modelId, modelName: option.modelName }],
+      });
+    }
+  }
+  return groups;
+});
+
+const draftModelValue = computed(() => {
+  const model = store.draft?.model;
+  return model ? encodeModel(model.providerId, model.modelId) : "";
+});
+
+function onDraftModelChange(event: Event): void {
+  const value = (event.target as HTMLSelectElement).value;
+  if (!value) {
+    setDraftModel(null);
+    return;
+  }
+  const separatorAt = value.indexOf(MODEL_SEPARATOR);
+  const choice: ModelChoice = {
+    providerId: value.slice(0, separatorAt),
+    modelId: value.slice(separatorAt + MODEL_SEPARATOR.length),
+  };
+  setDraftModel(choice);
 }
 
 // ── pan / zoom / fit ────────────────────────────────────────────────
