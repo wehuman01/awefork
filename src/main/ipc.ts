@@ -1,6 +1,7 @@
 import { type IpcMainInvokeEvent, ipcMain } from "electron";
 import { readLineage } from "../shared/lineage-store.js";
-import type { AgentAdapter, AgentEvent } from "../shared/types.js";
+import { readPins, writePins } from "../shared/pins-store.js";
+import type { AgentAdapter, AgentEvent } from "../shared/types";
 
 /**
  * IPC surface (all invoke-channels, prefixed awefork:):
@@ -10,9 +11,15 @@ import type { AgentAdapter, AgentEvent } from "../shared/types.js";
  *   fork       -> SessionSummary          fork (turn-preserving)
  *   prompt     -> void                    fire an agent run
  *   abort      -> void                    abort the running turn
+ *   pins       -> string[]                pinned session ids
+ *   togglePin  -> string[]                pin/unpin a session, new list back
  * Events are forwarded on channel "awefork:event".
  */
-export function registerIpc(adapterPromise: Promise<AgentAdapter>, lineagePath: string): void {
+export function registerIpc(
+  adapterPromise: Promise<AgentAdapter>,
+  lineagePath: string,
+  pinsPath: string,
+): void {
   const withAdapter = async (): Promise<AgentAdapter> => adapterPromise;
 
   ipcMain.handle("awefork:ready", async () => {
@@ -55,6 +62,17 @@ export function registerIpc(adapterPromise: Promise<AgentAdapter>, lineagePath: 
   ipcMain.handle("awefork:abort", async (_event: IpcMainInvokeEvent, sessionId: string) => {
     const adapter = await withAdapter();
     await adapter.abort(sessionId);
+  });
+
+  ipcMain.handle("awefork:pins", async () => readPins(pinsPath));
+
+  ipcMain.handle("awefork:togglePin", async (_event: IpcMainInvokeEvent, sessionId: string) => {
+    const pins = await readPins(pinsPath);
+    const next = pins.includes(sessionId)
+      ? pins.filter((id) => id !== sessionId)
+      : [...pins, sessionId];
+    await writePins(pinsPath, next);
+    return next;
   });
 }
 

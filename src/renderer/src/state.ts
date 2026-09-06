@@ -1,5 +1,6 @@
 import { computed, reactive, readonly } from "vue";
 import { buildTurnGraph, type TurnGraph, type TurnNode } from "../../shared/canvas-graph";
+import { selectCanvasSessions } from "../../shared/canvas-scope";
 import { buildSessionTree, enrichSessions, type SessionGroup } from "../../shared/session-tree";
 import type { AgentEvent, ChatMessage, ForkRecord, SessionSummary } from "../../shared/types";
 
@@ -17,6 +18,8 @@ interface AppState {
   connectionError: string | null;
   sessions: SessionSummary[];
   lineage: Record<string, ForkRecord>;
+  /** Session ids the user saved to the canvas (persisted in pins.json). */
+  pins: string[];
   selectedDirectory: string | null;
   selectedId: string | null;
   selectedTurnId: string | null;
@@ -37,6 +40,7 @@ const state = reactive<AppState>({
   connectionError: null,
   sessions: [],
   lineage: {},
+  pins: [],
   selectedDirectory: null,
   selectedId: null,
   selectedTurnId: null,
@@ -75,9 +79,31 @@ const directorySessions = computed<SessionSummary[]>(() =>
   enrichedSessions.value.filter((s) => s.directory === state.selectedDirectory),
 );
 
+const directorySessionIds = computed<Set<string>>(
+  () => new Set(directorySessions.value.map((s) => s.id)),
+);
+
+/** Pinned sessions of the current project — the canvas's standing residents. */
+export const pinnedSessions = computed<SessionSummary[]>(() =>
+  directorySessions.value.filter((s) => state.pins.includes(s.id)),
+);
+
+/**
+ * What the canvas draws: pinned branch stories plus the selected session's
+ * neighborhood. The full session list stays in the sidebar.
+ */
+const canvasSessions = computed<SessionSummary[]>(() =>
+  selectCanvasSessions(
+    directorySessions.value,
+    state.lineage,
+    state.pins.filter((id) => directorySessionIds.value.has(id)),
+    state.selectedId,
+  ),
+);
+
 export const turnGraph = computed<TurnGraph>(() =>
   buildTurnGraph({
-    sessions: directorySessions.value,
+    sessions: canvasSessions.value,
     lineage: state.lineage,
     messages: state.messagesBySession,
   }),
@@ -102,6 +128,11 @@ export async function init(): Promise<void> {
     state.connectionError = ready.error ?? "Failed to start opencode server.";
     return;
   }
+  try {
+    state.pins = await window.awefork.pins();
+  } catch {
+    state.pins = [];
+  }
   await refreshSessions();
   window.awefork.onEvent(handleEvent);
 }
@@ -118,16 +149,14 @@ export async function refreshSessions(): Promise<void> {
       ).directory;
     }
     // Select before the batch load so the initial session's panel and canvas
-    // node are ready the moment the directory finishes loading.
+    // node are ready the moment the working set finishes loading.
     if (
       state.selectedDirectory &&
       (!state.selectedId || !directorySessions.value.some((s) => s.id === state.selectedId))
     ) {
       await selectSession(latestSessionId(directorySessions.value));
     }
-    if (state.selectedDirectory) {
-      await ensureDirectoryMessages(state.selectedDirectory);
-    }
+    await ensureCanvasMessages();
   } catch (error) {
     state.connectionError = error instanceof Error ? error.message : String(error);
   }
@@ -137,8 +166,8 @@ export async function switchDirectory(directory: string): Promise<void> {
   if (state.selectedDirectory === directory) return;
   state.selectedDirectory = directory;
   state.messagesError = null;
-  await ensureDirectoryMessages(directory);
   await selectSession(latestSessionId(directorySessions.value), { focus: true });
+  await ensureCanvasMessages();
 }
 
 export async function selectSession(
@@ -156,6 +185,7 @@ export async function selectSession(
   if (!attemptedMessages.has(sessionId)) {
     await loadSessionMessages(sessionId);
   }
+  await ensureCanvasMessages();
 }
 
 /** Select a canvas node: switches branch if needed, remembers the turn. */
@@ -166,10 +196,9 @@ export async function selectTurn(node: TurnNode): Promise<void> {
   state.selectedTurnId = node.id;
 }
 
-async function ensureDirectoryMessages(directory: string): Promise<void> {
-  const pending = enrichedSessions.value
-    .filter((s) => s.directory === directory && !attemptedMessages.has(s.id))
-    .map((s) => s.id);
+/** Load messages for every session currently on the canvas that lacks them. */
+async function ensureCanvasMessages(): Promise<void> {
+  const pending = canvasSessions.value.filter((s) => !attemptedMessages.has(s.id)).map((s) => s.id);
   if (pending.length === 0) return;
   state.loadingMessages = true;
   await Promise.allSettled(pending.map((id) => loadSessionMessages(id)));
@@ -235,6 +264,16 @@ export async function forkAtMessage(atMessageId: string): Promise<void> {
     const forked = await window.awefork.fork(state.selectedId, atMessageId);
     await refreshSessions();
     await selectSession(forked.id, { focus: true });
+  } catch (error) {
+    state.actionError = error instanceof Error ? error.message : String(error);
+  }
+}
+
+/** Pin or unpin a session: pinned branch stories stay on the canvas. */
+export async function togglePin(sessionId: string): Promise<void> {
+  try {
+    state.pins = await window.awefork.togglePin(sessionId);
+    await ensureCanvasMessages();
   } catch (error) {
     state.actionError = error instanceof Error ? error.message : String(error);
   }

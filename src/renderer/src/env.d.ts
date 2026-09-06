@@ -18,6 +18,8 @@ declare global {
       fork(sessionId: string, atMessageId: string | null): Promise<SessionSummary>;
       prompt(sessionId: string, text: string): Promise<void>;
       abort(sessionId: string): Promise<void>;
+      pins(): Promise<string[]>;
+      togglePin(sessionId: string): Promise<string[]>;
       onEvent(handler: (event: AgentEvent) => void): () => void;
     };
   }

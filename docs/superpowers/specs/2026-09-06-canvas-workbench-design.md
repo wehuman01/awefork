@@ -25,10 +25,21 @@ SVG edges; the project keeps a single runtime dependency (vue).
 ```
 
 - **Sidebar** — projects (directories) with their sessions nested (forks
-  indented, ⎇ mark). Click project → canvas shows that directory's graph.
-  Click session → select its latest turn and center it. Search filters by
-  title. No "new session" button: the adapter has no create-session primitive
-  and awefork stays a read+fork projection (follow-up if ever needed).
+  indented, ⎇ mark). The sidebar is the full index; click project → canvas
+  shows that project's working set; click session → it becomes the selected
+  session and the canvas follows. Each row has a pin star (★). Search filters
+  by title. No "new session" button: the adapter has no create-session
+  primitive and awefork stays a read+fork projection (follow-up if ever
+  needed).
+- **Canvas scope (working set, not the archive)** — the canvas draws *pinned
+  branch stories plus the selected session's neighborhood* (`shared/
+  canvas-scope.ts`): every pinned session brings its fork subtree; the
+  selected session brings its subtree and its direct parent (fork-point
+  context). Everything else stays in the sidebar. Only the working set's
+  messages are fetched — startup stays cheap even with hundreds of sessions.
+  Launch selects the most recently updated session, so the canvas opens on
+  your latest work, never literally empty (empty state only when the
+  opencode history is empty).
 - **Canvas** — one node per **turn** (a user prompt plus its assistant
   reply). Sequential turns in a session chain left→right with solid edges;
   forks sprout as dashed edges; running sessions get a mint "running" state.
@@ -46,11 +57,12 @@ SVG edges; the project keeps a single runtime dependency (vue).
 - `Turn = user ChatMessage + following assistant message(s)` (built by
   `src/shared/turns.ts`). Node shows: question title, reply preview
   (3-line clamp), tool chips, relative time.
-- Graph built by `src/shared/canvas-graph.ts` (pure, unit-tested) from
-  sessions of one directory + lineage + messages of every session in that
-  directory. Layout: column = turn depth (fork child starts at parent
-  fork-turn column + 1); row = first free slot scanning downward from the
-  parent turn's row (roots stacked oldest-first). Deterministic.
+- Graph built by `src/shared/canvas-graph.ts` (pure, unit-tested) from the
+  working set (`src/shared/canvas-scope.ts`, also unit-tested) + lineage +
+  messages of the working-set sessions. Layout: column = turn depth (fork
+  child starts at parent fork-turn column + 1); row = first free slot
+  scanning downward from the parent turn's row (roots stacked
+  oldest-first). Deterministic.
 - **Shared-prefix rule**: a forked session contains a copy of the parent's
   history. The graph renders only the child's turns *after* the inherited
   prefix (leading turns whose ids already exist in the parent; position
@@ -61,13 +73,15 @@ SVG edges; the project keeps a single runtime dependency (vue).
 
 ## State (renderer/state.ts)
 
-Adds: `messagesBySession` cache (loaded per directory, refreshed for a
-session on `session.idle`), `selectedDirectory`, `selectedTurnId`,
+Adds: `messagesBySession` cache (loaded per working set, refreshed for a
+session on `session.idle`), `pins` (persisted in `<userData>/pins.json` via
+`awefork:pins` / `awefork:togglePin`; pinned sessions keep their branch
+story on the canvas), `selectedDirectory`, `selectedTurnId`,
 `draft {nodeId, text} | null`, `runningSessions` map (drives canvas running
 states and the reply box), `focusRequest` (sidebar → canvas centering).
 Existing actions kept: selectSession, sendPrompt, abort, forkAtMessage,
-forkLatest, dismissActionError; new: selectTurn, openDraft/sendDraft,
-switchDirectory.
+dismissActionError; new: selectTurn, openDraft/sendDraft, switchDirectory,
+togglePin.
 
 ## Components
 
@@ -82,4 +96,7 @@ switchDirectory.
 - `tests/turns.test.ts` — turn grouping, tool collection, empty sessions.
 - `tests/canvas-graph.test.ts` — sequential chains, fork edges, shared-prefix
   skipping, stub nodes, row/column collision rules, orphan forks as roots.
+- `tests/canvas-scope.test.ts` — working-set membership: pins bring their
+  subtree, selection brings subtree + direct parent, union without
+  duplicates, ghost pins ignored, lineage-resolved parents.
 - `npm run typecheck && npm run lint && npm test` must pass.

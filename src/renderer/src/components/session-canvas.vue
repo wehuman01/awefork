@@ -44,6 +44,13 @@
             <span class="avatar user">🍑</span>
             <span class="turn-title" :title="node.title">{{ node.title }}</span>
             <span class="turn-time">{{ relativeTime(node.createdAt) }}</span>
+            <button
+              type="button"
+              class="pin-star"
+              :class="{ on: isPinned(node.sessionId) }"
+              :title="isPinned(node.sessionId) ? '取消收藏' : '收藏这个分支故事'"
+              @click.stop="pinToggle(node.sessionId)"
+            >{{ isPinned(node.sessionId) ? "★" : "☆" }}</button>
           </div>
           <div class="turn-body">
             <span class="avatar bot">✨</span>
@@ -67,6 +74,13 @@
           <div class="turn-head">
             <span class="avatar user">🌱</span>
             <span class="turn-title" :title="node.title">{{ node.title }}</span>
+            <button
+              type="button"
+              class="pin-star"
+              :class="{ on: isPinned(node.sessionId) }"
+              :title="isPinned(node.sessionId) ? '取消收藏' : '收藏这个分支故事'"
+              @click.stop="pinToggle(node.sessionId)"
+            >{{ isPinned(node.sessionId) ? "★" : "☆" }}</button>
           </div>
           <p class="stub-hint">新分支还没有自己的回合 — 点「＋」写下第一步，或者直接在右侧回复。</p>
         </template>
@@ -129,6 +143,7 @@ import {
   sendDraft,
   setDraftText,
   store,
+  togglePin,
   turnGraph,
 } from "../state";
 
@@ -140,6 +155,14 @@ const panning = ref(false);
 
 const graph = computed(() => turnGraph.value);
 const selectedTurnId = computed(() => store.selectedTurnId);
+
+function isPinned(sessionId: string): boolean {
+  return store.pins.includes(sessionId);
+}
+
+function pinToggle(sessionId: string): void {
+  void togglePin(sessionId);
+}
 
 const worldStyle = computed(() => ({
   transform: `translate(${tx.value}px, ${ty.value}px) scale(${scale.value})`,

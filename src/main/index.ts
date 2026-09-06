@@ -8,6 +8,7 @@ import { ensureOpencodeServer, stopManagedServer } from "./opencode-server.js";
 const PORT = 4096;
 
 const lineagePath = join(app.getPath("userData"), "lineage.json");
+const pinsPath = join(app.getPath("userData"), "pins.json");
 
 const adapterPromise = ensureOpencodeServer(PORT)
   .then(({ baseUrl }) => createOpencodeAdapter({ baseUrl, lineagePath }))
@@ -16,7 +17,7 @@ const adapterPromise = ensureOpencodeServer(PORT)
     throw error instanceof Error ? error : new Error(String(error));
   });
 
-registerIpc(adapterPromise, lineagePath);
+registerIpc(adapterPromise, lineagePath, pinsPath);
 
 let mainWindow: BrowserWindow | null = null;
 

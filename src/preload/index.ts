@@ -14,6 +14,9 @@ const api = {
   prompt: (sessionId: string, text: string): Promise<void> =>
     ipcRenderer.invoke("awefork:prompt", sessionId, text),
   abort: (sessionId: string): Promise<void> => ipcRenderer.invoke("awefork:abort", sessionId),
+  pins: (): Promise<string[]> => ipcRenderer.invoke("awefork:pins"),
+  togglePin: (sessionId: string): Promise<string[]> =>
+    ipcRenderer.invoke("awefork:togglePin", sessionId),
   onEvent: (handler: (event: unknown) => void): (() => void) => {
     const listener = (_event: unknown, payload: unknown) => handler(payload);
     ipcRenderer.on("awefork:event", listener);

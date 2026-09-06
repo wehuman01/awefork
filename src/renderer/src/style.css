@@ -388,6 +388,68 @@ textarea {
   text-overflow: ellipsis;
 }
 
+.sess-row {
+  display: flex;
+  align-items: center;
+  border-radius: 12px;
+  min-width: 0;
+}
+
+.sess-row.active {
+  background: #fff1e8;
+}
+
+.sess-row .sess {
+  flex: 1;
+  min-width: 0;
+}
+
+.sess-row.active .sess {
+  background: none;
+  color: var(--ink);
+}
+
+.sess-row.active .dot {
+  background: var(--primary);
+}
+
+.pin-star {
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  color: var(--ink-faint);
+  line-height: 1;
+}
+
+.pin-star:hover {
+  background: var(--primary-soft);
+  color: var(--butter);
+}
+
+.pin-star.on {
+  color: #f0b429;
+}
+
+.turn-head .pin-star,
+.stub .turn-head .pin-star {
+  flex: 0 0 22px;
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  font-size: 12px;
+  opacity: 0.55;
+}
+
+.turn:hover .pin-star,
+.turn.selected .pin-star,
+.pin-star.on {
+  opacity: 1;
+}
+
 .group-empty {
   padding: 10px;
   font-size: 12px;

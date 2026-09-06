@@ -20,6 +20,7 @@
     "src/shared/types.ts",
     "src/shared/session-tree.ts",
     "src/shared/turns.ts",
-    "src/shared/canvas-graph.ts"
+    "src/shared/canvas-graph.ts",
+    "src/shared/canvas-scope.ts"
   ]
 }

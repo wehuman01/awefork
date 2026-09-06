@@ -21,23 +21,32 @@
           <span class="proj-name">{{ shortPath(group.directory) }}</span>
           <span v-if="group.directory === selectedDirectory" class="chev">●</span>
         </button>
-        <button
+        <div
           v-for="row in flatSessions(group)"
           :key="row.session.id"
-          type="button"
-          class="sess"
-          :class="{
-            active: row.session.id === selectedId,
-            running: store.running[row.session.id],
-          }"
-          :style="{ paddingLeft: `${20 + row.depth * 14}px` }"
-          :title="row.session.title || '(untitled)'"
-          @click="selectSession(row.session.id, { focus: true })"
+          class="sess-row"
+          :class="{ active: row.session.id === selectedId }"
         >
-          <span class="dot"></span>
-          <span v-if="row.session.origin === 'fork'" class="fork-glyph">⎇</span>
-          <span class="sess-name">{{ row.session.title || "(untitled)" }}</span>
-        </button>
+          <button
+            type="button"
+            class="sess"
+            :class="{ running: store.running[row.session.id] }"
+            :style="{ paddingLeft: `${8 + row.depth * 14}px` }"
+            :title="row.session.title || '(untitled)'"
+            @click="selectSession(row.session.id, { focus: true })"
+          >
+            <span class="dot"></span>
+            <span v-if="row.session.origin === 'fork'" class="fork-glyph">⎇</span>
+            <span class="sess-name">{{ row.session.title || "(untitled)" }}</span>
+          </button>
+          <button
+            type="button"
+            class="pin-star"
+            :class="{ on: store.pins.includes(row.session.id) }"
+            :title="store.pins.includes(row.session.id) ? '取消收藏' : '收藏这个分支故事'"
+            @click.stop="pinToggle(row.session.id)"
+          >{{ store.pins.includes(row.session.id) ? "★" : "☆" }}</button>
+        </div>
       </template>
       <p v-if="visibleGroups.length === 0" class="group-empty">没有匹配的会话</p>
     </nav>
@@ -47,12 +56,23 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import type { SessionGroup, SessionTreeNode } from "../../../shared/session-tree";
-import { refreshSessions, selectSession, sessionGroups, store, switchDirectory } from "../state";
+import {
+  refreshSessions,
+  selectSession,
+  sessionGroups,
+  store,
+  switchDirectory,
+  togglePin,
+} from "../state";
 
 const query = ref("");
 
 const selectedDirectory = computed(() => store.selectedDirectory);
 const selectedId = computed(() => store.selectedId);
+
+function pinToggle(sessionId: string): void {
+  void togglePin(sessionId);
+}
 
 const visibleGroups = computed<SessionGroup[]>(() => {
   const needle = query.value.trim().toLowerCase();
