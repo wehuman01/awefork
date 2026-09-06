@@ -11,10 +11,33 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "dist": "electron-vite build && electron-builder --mac",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && vue-tsc --noEmit -p tsconfig.web.json",
     "lint": "biome check .",
     "format": "biome format --write .",
     "test": "vitest run"
+  },
+  "build": {
+    "appId": "com.wehuman01.awefork",
+    "productName": "awefork",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "out/**"
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64"
+          ]
+        }
+      ],
+      "category": "public.app-category.developer-tools",
+      "identity": null
+    }
   },
   "dependencies": {
     "vue": "^3.5.42"
@@ -23,6 +46,7 @@
     "@biomejs/biome": "^2.3.4",
     "@vitejs/plugin-vue": "^6.0.8",
     "electron": "^44.1.1",
+    "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
     "typescript": "~5.8.3",
     "vitest": "^4.1.11",
