@@ -10,6 +10,7 @@ import type { AgentAdapter, AgentEvent, ModelChoice } from "../shared/types";
  *   messages   -> ChatMessage[]           flat message list of a session
  *   models     -> ModelOption[]           models offered by the agent config
  *   fork       -> SessionSummary          fork (turn-preserving)
+ *   deleteSession -> string[]             delete a session, pruned pins back
  *   prompt     -> void                    fire an agent run (optional model)
  *   abort      -> void                    abort the running turn
  *   pins       -> string[]                pinned session ids
@@ -56,6 +57,16 @@ export function registerIpc(
       return adapter.fork(sessionId, atMessageId);
     },
   );
+
+  // Returns the pins list after pruning the deleted session, so the renderer
+  // can update its canvas residents in one round-trip.
+  ipcMain.handle("awefork:deleteSession", async (_event: IpcMainInvokeEvent, sessionId: string) => {
+    const adapter = await withAdapter();
+    await adapter.deleteSession(sessionId);
+    const pins = (await readPins(pinsPath)).filter((id) => id !== sessionId);
+    await writePins(pinsPath, pins);
+    return pins;
+  });
 
   ipcMain.handle(
     "awefork:prompt",

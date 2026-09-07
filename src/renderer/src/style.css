@@ -700,6 +700,45 @@ textarea {
   transform: translateY(-50%) scale(1.1);
 }
 
+/* hover-reveal delete; swaps in where the timestamp sits */
+.turn-time {
+  transition: opacity 0.15s;
+}
+
+.turn:hover .turn-time {
+  opacity: 0;
+}
+
+.del-chip {
+  position: absolute;
+  right: 8px;
+  top: 10px;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-faint);
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  opacity: 0;
+  transition:
+    opacity 0.15s,
+    background 0.15s,
+    color 0.15s;
+  z-index: 2;
+}
+
+.turn:hover .del-chip {
+  opacity: 0.7;
+}
+
+.del-chip:hover {
+  opacity: 1;
+  background: #fdeceb;
+  color: #c4544a;
+}
+
 .stub-hint {
   font-size: 12px;
   line-height: 1.55;
@@ -1072,22 +1111,6 @@ textarea {
 .user-body .message-text {
   white-space: pre-wrap;
   word-break: break-word;
-}
-
-.fork-button {
-  display: inline-block;
-  margin-top: 7px;
-  font-size: 10.5px;
-  font-weight: 800;
-  color: #fff;
-  background: rgba(255, 255, 255, 0.22);
-  border: 1px dashed rgba(255, 255, 255, 0.65);
-  border-radius: 999px;
-  padding: 2.5px 10px;
-}
-
-.fork-button:hover {
-  background: rgba(255, 255, 255, 0.35);
 }
 
 .message-body {

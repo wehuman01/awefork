@@ -1,4 +1,4 @@
-import { recordFork } from "./lineage-store.js";
+import { recordFork, removeFork } from "./lineage-store.js";
 import { createOpencodeClient, type OpencodeClient } from "./opencode-client.js";
 import { createSseParser } from "./sse.js";
 import type { AgentAdapter, AgentEvent, ChatMessage, SessionSummary } from "./types.js";
@@ -112,6 +112,11 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
       await client.promptAsync(sessionId, text, model);
     },
 
+    async deleteSession(sessionId) {
+      await client.deleteSession(sessionId);
+      await removeFork(options.lineagePath, sessionId);
+    },
+
     async abort(sessionId) {
       await client.abort(sessionId);
     },
@@ -183,15 +188,14 @@ function emitToAgentEvent(
       break;
     }
     case "message.updated": {
-      const info = props.info as { id?: unknown; sessionID?: unknown } | undefined;
-      const sessionId = sessionIdOf(props.sessionID ?? info?.sessionID);
-      const messageId = messageIdOf(info?.id ?? props.messageID);
-      if (sessionId && messageId) {
-        emit({ type: "message.started", sessionId, messageId });
-      }
+      // Fork creation replays message.updated for every copied message, so
+      // this event can NOT mean "a run started" — running state is driven by
+      // session.status instead. Nothing else needs it: idle refreshes messages.
       break;
     }
     case "message.part.updated": {
+      // Same replay concern: skip frames without an actual text delta.
+      if (typeof props.delta !== "string" || props.delta === "") break;
       const part = props.part as { sessionID?: string; messageID?: string } | undefined;
       const sessionId = sessionIdOf(props.sessionID ?? part?.sessionID);
       const messageId = messageIdOf(props.messageID ?? part?.messageID);
@@ -200,9 +204,29 @@ function emitToAgentEvent(
           type: "message.delta",
           sessionId,
           messageId,
-          delta: typeof props.delta === "string" ? props.delta : "",
+          delta: props.delta as string,
         });
       }
+      break;
+    }
+    case "session.status": {
+      const sessionId = sessionIdOf(props.sessionID);
+      const status = props.status as { type?: unknown } | undefined;
+      if (sessionId && status?.type === "busy") {
+        emit({ type: "message.started", sessionId, messageId: "" });
+      }
+      break;
+    }
+    case "session.error": {
+      const sessionId = sessionIdOf(props.sessionID);
+      const error = props.error as { message?: unknown; data?: { message?: unknown } } | undefined;
+      const detail = error?.message ?? error?.data?.message;
+      const message =
+        typeof detail === "string" ? detail : JSON.stringify(props.error ?? "unknown error");
+      emit({
+        type: "server.error",
+        message: sessionId ? `${sessionId}: ${message}` : message,
+      });
       break;
     }
     case "session.idle": {

@@ -31,6 +31,12 @@
         @mousedown.stop
         @click="selectNode(node)"
       >
+        <button
+          type="button"
+          class="del-chip"
+          title="删除这个会话（整条分支故事）"
+          @click.stop="removeNode(node)"
+        >🗑</button>
         <template v-if="node.kind === 'turn'">
           <button
             type="button"
@@ -113,7 +119,12 @@
               >{{ m.modelName }}</option>
             </optgroup>
           </select>
-          <button type="button" class="send-btn" :disabled="!store.draft?.text.trim()" @click="submitDraft">➤</button>
+          <button
+            type="button"
+            class="send-btn"
+            :disabled="!store.draft?.text.trim() || store.draftSending"
+            @click="submitDraft"
+          >{{ store.draftSending ? "…" : "➤" }}</button>
         </div>
       </article>
     </div>
@@ -145,6 +156,7 @@ import type { TurnNode } from "../../../shared/canvas-graph";
 import { COL_GAP, NODE_HEIGHT, NODE_WIDTH, ROW_GAP } from "../../../shared/canvas-graph";
 import type { ModelChoice } from "../../../shared/types";
 import {
+  deleteSession,
   dismissDraft,
   openDraft,
   selectTurn,
@@ -212,6 +224,16 @@ function selectNode(node: TurnNode): void {
 
 function submitDraft(): void {
   void sendDraft();
+}
+
+/** A card IS a session's turn: deleting it removes the whole branch story. */
+function removeNode(node: TurnNode): void {
+  const title = node.title || "空会话";
+  const ok = window.confirm(
+    `删除会话「${title}」？\n它的所有回合都会一起删除（从它分叉出的子分支会保留）。`,
+  );
+  if (!ok) return;
+  void deleteSession(node.sessionId);
 }
 
 // ── draft model picker ──────────────────────────────────────────────

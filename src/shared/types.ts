@@ -94,6 +94,8 @@ export interface AgentAdapter {
   /** Models the backend offers (from its provider config). */
   listModels(): Promise<ModelOption[]>;
   fork(sessionId: string, atMessageId: string | null): Promise<SessionSummary>;
+  /** Permanently remove a session (and awefork's lineage record for it). */
+  deleteSession(sessionId: string): Promise<void>;
   /** Fire an agent run; progress arrives through `subscribe`. */
   prompt(sessionId: string, text: string, model?: ModelChoice | null): Promise<void>;
   abort(sessionId: string): Promise<void>;

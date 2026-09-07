@@ -20,34 +20,18 @@
       :running="isRunning"
       :stream-text="store.streamText"
       :error="null"
-      @fork="forkAt"
     />
     <div v-else class="ctx-empty">
       <p>左侧选会话，或在画布上点一张卡片。</p>
     </div>
 
-    <ChatInput
-      v-if="selectedSession"
-      :running="isRunning"
-      :at-latest="paneAtLatest"
-      @send="send"
-      @abort="abort"
-    />
+    <ChatInput v-if="selectedSession" :running="isRunning" @send="send" @abort="abort" />
   </aside>
 </template>
 
 <script setup lang="ts">
 import { computed } from "vue";
-import {
-  abortRun,
-  forkAtMessage,
-  paneAtLatest,
-  paneMessages,
-  paneTurn,
-  selectedSession,
-  sendPanePrompt,
-  store,
-} from "../state";
+import { abortRun, paneMessages, paneTurn, selectedSession, sendPanePrompt, store } from "../state";
 import ChatInput from "./chat-input.vue";
 import MessageList from "./message-list.vue";
 
@@ -60,10 +44,6 @@ const turnMeta = computed(() => {
   const pane = paneTurn.value;
   return pane ? `回合 ${pane.index + 1}/${pane.total}` : null;
 });
-
-function forkAt(messageId: string): void {
-  void forkAtMessage(messageId);
-}
 
 function send(text: string): void {
   void sendPanePrompt(text);

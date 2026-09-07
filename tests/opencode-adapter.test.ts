@@ -51,9 +51,12 @@ interface FakeState {
   messages: Record<string, FakeMessage[]>;
   forkCalls: { sessionId: string; cutMessageId: string | null }[];
   promptCalls: { sessionId: string; body: Record<string, unknown> }[];
+  deleteCalls: string[];
   providers: FakeProvider[];
   projects: { id: string; worktree: string }[];
   currentProject: string;
+  /** SSE frames streamed by GET /event; defaults to one session.idle. */
+  eventFrames?: { type: string; properties: Record<string, unknown> }[];
 }
 
 function startFakeServer(state: FakeState): Promise<{ server: Server; baseUrl: string }> {
@@ -88,12 +91,23 @@ function startFakeServer(state: FakeState): Promise<{ server: Server; baseUrl: s
       }
       if (method === "GET" && url.pathname === "/event") {
         res.writeHead(200, { "content-type": "text/event-stream" });
-        const frame = JSON.stringify({
-          id: "evt-1",
-          type: "session.idle",
-          properties: { sessionID: "s1" },
-        });
-        res.write(`data: ${frame}\n\n`);
+        const frames = state.eventFrames ?? [
+          { id: "evt-1", type: "session.idle", properties: { sessionID: "s1" } },
+        ];
+        for (const frame of frames) {
+          res.write(`data: ${JSON.stringify(frame)}\n\n`);
+        }
+        return;
+      }
+
+      const deleteMatch = url.pathname.match(/^\/session\/([^/]+)$/);
+      if (method === "DELETE" && deleteMatch) {
+        const id = deleteMatch[1] ?? "";
+        state.deleteCalls.push(id);
+        delete state.messages[id];
+        state.sessions = state.sessions.filter((s) => s.id !== id);
+        res.writeHead(204);
+        res.end();
         return;
       }
 
@@ -186,6 +200,7 @@ function baseState(): FakeState {
     },
     forkCalls: [],
     promptCalls: [],
+    deleteCalls: [],
     providers: [
       {
         id: "oc-fake",
@@ -348,6 +363,88 @@ describe("opencode adapter", () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
     unsubscribe();
     expect(events).toContainEqual({ type: "session.idle", sessionId: "s1" });
+  });
+
+  it("deleteSession removes the session server-side and its lineage record", async () => {
+    const state = baseState();
+    const { adapter, lineagePath } = await newAdapter(state);
+    const forked = await adapter.fork("s1", "u1");
+    await adapter.deleteSession(forked.id);
+
+    expect(state.deleteCalls).toEqual([forked.id]);
+    expect(state.sessions.find((s) => s.id === forked.id)).toBeUndefined();
+    const lineage = await readLineage(lineagePath);
+    expect(lineage[forked.id]).toBeUndefined();
+  });
+
+  it("message.updated alone never marks a session running (fork replay)", async () => {
+    const state = baseState();
+    state.eventFrames = [
+      // opencode replays these for every copied message when a fork is created
+      { type: "message.updated", properties: { sessionID: "fork-1", info: { id: "m1" } } },
+      { type: "message.part.updated", properties: { sessionID: "fork-1", messageID: "m1" } },
+    ];
+    const { adapter } = await newAdapter(state);
+    const events: AgentEvent[] = [];
+    const unsubscribe = await adapter.subscribe((event) => events.push(event));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    unsubscribe();
+    expect(events).not.toContainEqual({
+      type: "message.started",
+      sessionId: "fork-1",
+      messageId: "m1",
+    });
+    expect(events).not.toContainEqual({
+      type: "message.delta",
+      sessionId: "fork-1",
+      messageId: "m1",
+      delta: "",
+    });
+  });
+
+  it("session.status busy marks a session running; real deltas stream through", async () => {
+    const state = baseState();
+    state.eventFrames = [
+      { type: "session.status", properties: { sessionID: "s1", status: { type: "busy" } } },
+      {
+        type: "message.part.updated",
+        properties: { sessionID: "s1", messageID: "m1", delta: "hello" },
+      },
+    ];
+    const { adapter } = await newAdapter(state);
+    const events: AgentEvent[] = [];
+    const unsubscribe = await adapter.subscribe((event) => events.push(event));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    unsubscribe();
+    expect(events).toContainEqual({ type: "message.started", sessionId: "s1", messageId: "" });
+    expect(events).toContainEqual({
+      type: "message.delta",
+      sessionId: "s1",
+      messageId: "m1",
+      delta: "hello",
+    });
+  });
+
+  it("session.error surfaces as server.error instead of dying silently", async () => {
+    const state = baseState();
+    state.eventFrames = [
+      {
+        type: "session.error",
+        properties: {
+          sessionID: "s1",
+          error: { name: "UnknownError", data: { message: "Model not found: x/y" } },
+        },
+      },
+    ];
+    const { adapter } = await newAdapter(state);
+    const events: AgentEvent[] = [];
+    const unsubscribe = await adapter.subscribe((event) => events.push(event));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    unsubscribe();
+    expect(events).toContainEqual({
+      type: "server.error",
+      message: expect.stringContaining("Model not found: x/y"),
+    });
   });
 
   it("lists sessions across all projects, not just the server's current project", async () => {

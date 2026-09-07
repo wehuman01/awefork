@@ -24,6 +24,7 @@ declare global {
       messages(sessionId: string): Promise<ChatMessage[]>;
       models(): Promise<ModelOption[]>;
       fork(sessionId: string, atMessageId: string | null): Promise<SessionSummary>;
+      deleteSession(sessionId: string): Promise<string[]>;
       prompt(sessionId: string, text: string, model: ModelChoice | null): Promise<void>;
       abort(sessionId: string): Promise<void>;
       pins(): Promise<string[]>;

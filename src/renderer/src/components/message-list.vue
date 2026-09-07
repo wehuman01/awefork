@@ -5,14 +5,6 @@
         <div class="message-row user-row">
           <div class="user-body">
             <p class="message-text">{{ message.text }}</p>
-            <button
-              type="button"
-              class="fork-button"
-              title="从这个回合长出新分支"
-              @click="$emit('fork', message.id)"
-            >
-              ⎇ 在这里分叉
-            </button>
           </div>
           <span class="avatar user">🍑</span>
         </div>
@@ -58,8 +50,6 @@ const props = defineProps<{
   streamText: string;
   error: string | null;
 }>();
-
-defineEmits<{ fork: [messageId: string] }>();
 
 /** "glm/glm-5.3-flash" → "glm-5.3-flash"; full id lives in the chip tooltip. */
 function shortModel(id: string): string {

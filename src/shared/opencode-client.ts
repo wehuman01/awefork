@@ -73,6 +73,8 @@ export interface OpencodeClient {
   listModels(): Promise<ModelOption[]>;
   /** Cut point is exclusive: the new session keeps messages strictly before it. */
   fork(sessionId: string, cutMessageId: string | null): Promise<OcSession>;
+  /** Permanently remove a session and its messages. */
+  deleteSession(sessionId: string): Promise<void>;
   promptAsync(sessionId: string, text: string, model?: ModelChoice | null): Promise<void>;
   abort(sessionId: string): Promise<void>;
 }
@@ -133,6 +135,9 @@ export function createOpencodeClient(baseUrl: string): OpencodeClient {
         headers: { "content-type": "application/json" },
         body: JSON.stringify(cutMessageId ? { messageID: cutMessageId } : {}),
       }),
+    deleteSession: async (id) => {
+      await request(`/session/${id}`, { method: "DELETE" });
+    },
     promptAsync: async (id, text, model) => {
       await request(`/session/${id}/prompt_async`, {
         method: "POST",

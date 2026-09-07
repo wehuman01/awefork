@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { readLineage, recordFork } from "../src/shared/lineage-store";
+import { readLineage, recordFork, removeFork } from "../src/shared/lineage-store";
 
 async function tempLineagePath(): Promise<string> {
   return join(await mkdtemp(join(tmpdir(), "awefork-lineage-")), "lineage.json");
@@ -39,6 +39,25 @@ describe("lineage store", () => {
     await recordFork(path, "f", { parentId: "p", atMessageId: null, createdAt: 0 });
     const raw = await readFile(path, "utf8");
     expect(JSON.parse(raw)).toEqual({ f: { parentId: "p", atMessageId: null, createdAt: 0 } });
+  });
+
+  it("removeFork drops only the given record", async () => {
+    const path = await tempLineagePath();
+    await recordFork(path, "fork-1", { parentId: "parent-1", atMessageId: "msg-1", createdAt: 1 });
+    await recordFork(path, "fork-2", { parentId: "fork-1", atMessageId: null, createdAt: 2 });
+
+    await removeFork(path, "fork-1");
+
+    expect(await readLineage(path)).toEqual({
+      // fork-2 keeps its record even though its parent is gone — readers
+      // re-root sessions whose lineage parent is missing.
+      "fork-2": { parentId: "fork-1", atMessageId: null, createdAt: 2 },
+    });
+  });
+
+  it("removeFork on a missing record is a no-op", async () => {
+    const path = await tempLineagePath();
+    await expect(removeFork(path, "never-recorded")).resolves.toBeUndefined();
   });
 });
 

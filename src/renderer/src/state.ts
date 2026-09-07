@@ -48,6 +48,8 @@ interface AppState {
   streamText: string;
   actionError: string | null;
   draft: DraftState | null;
+  /** True while the draft's fork+prompt round-trip is in flight. */
+  draftSending: boolean;
   /** Bumped to ask the canvas to center on a session's latest node. */
   focusRequest: { sessionId: string; nonce: number } | null;
 }
@@ -68,6 +70,7 @@ const state = reactive<AppState>({
   streamText: "",
   actionError: null,
   draft: null,
+  draftSending: false,
   focusRequest: null,
 });
 
@@ -148,12 +151,6 @@ export const paneTurn = computed<{ turn: Turn; index: number; total: number } | 
   }
   const last = turns[turns.length - 1];
   return last ? { turn: last, index: turns.length - 1, total: turns.length } : null;
-});
-
-/** True when the pane shows the latest turn — typing continues the session. */
-export const paneAtLatest = computed(() => {
-  const pane = paneTurn.value;
-  return !pane || pane.index === pane.total - 1;
 });
 
 /** Messages of the pane's turn: from its user prompt up to the next one. */
@@ -313,23 +310,47 @@ function handleEvent(event: AgentEvent): void {
   }
 }
 
-export async function forkAtMessage(atMessageId: string): Promise<void> {
-  if (!state.selectedId) return;
-  state.actionError = null;
-  try {
-    const forked = await window.awefork.fork(state.selectedId, atMessageId);
-    await refreshSessions();
-    await selectSession(forked.id, { focus: true });
-  } catch (error) {
-    state.actionError = error instanceof Error ? error.message : String(error);
-  }
-}
-
 /** Pin or unpin a session: pinned branch stories stay on the canvas. */
 export async function togglePin(sessionId: string): Promise<void> {
   try {
     state.pins = await window.awefork.togglePin(sessionId);
     await ensureCanvasMessages();
+  } catch (error) {
+    state.actionError = error instanceof Error ? error.message : String(error);
+  }
+}
+
+/**
+ * Delete a session and its awefork sidecar records. The whole branch story
+ * (every turn card of that session) disappears; child forks survive and
+ * re-root themselves. Refused while the session has a run in flight.
+ */
+export async function deleteSession(sessionId: string): Promise<void> {
+  if (state.running[sessionId]) {
+    state.actionError = "会话正在运行，先停止再删除。";
+    return;
+  }
+  state.actionError = null;
+  try {
+    state.pins = await window.awefork.deleteSession(sessionId);
+    const { [sessionId]: goneMessages, ...keptMessages } = state.messagesBySession;
+    void goneMessages;
+    state.messagesBySession = keptMessages;
+    attemptedMessages.delete(sessionId);
+    activeStreamSessions.delete(sessionId);
+    const { [sessionId]: goneRunning, ...keptRunning } = state.running;
+    void goneRunning;
+    state.running = keptRunning;
+    const { [sessionId]: goneLineage, ...keptLineage } = state.lineage;
+    void goneLineage;
+    state.lineage = keptLineage;
+    state.sessions = state.sessions.filter((s) => s.id !== sessionId);
+    if (state.draft?.sessionId === sessionId) state.draft = null;
+    if (state.selectedId === sessionId) {
+      state.selectedId = null;
+      state.selectedTurnId = null;
+      await selectSession(latestSessionId(directorySessions.value));
+    }
   } catch (error) {
     state.actionError = error instanceof Error ? error.message : String(error);
   }
@@ -367,8 +388,20 @@ async function ensureModels(): Promise<void> {
   try {
     state.models = await window.awefork.models();
   } catch (error) {
+    // Allow a later draft to retry — the catalog may load once the agent settles.
+    modelsRequested = false;
     state.actionError = error instanceof Error ? error.message : String(error);
   }
+}
+
+/**
+ * Copy a ModelChoice into a plain object. Draft state lives inside a Vue
+ * reactive proxy, and ipcRenderer.invoke structured-clones its arguments —
+ * a Proxy throws "An object could not be cloned", which used to swallow the
+ * prompt after the fork had already been created.
+ */
+function plainModel(model: ModelChoice | null): ModelChoice | null {
+  return model ? { providerId: model.providerId, modelId: model.modelId } : null;
 }
 
 /**
@@ -379,47 +412,38 @@ async function ensureModels(): Promise<void> {
  */
 export async function sendDraft(): Promise<void> {
   const draft = state.draft;
-  if (!draft?.text.trim()) return;
+  if (!draft?.text.trim() || state.draftSending) return;
+  const text = draft.text.trim();
   state.actionError = null;
+  state.draftSending = true;
   try {
+    const model = plainModel(draft.model);
     if (draft.atMessageId) {
       const forked = await window.awefork.fork(draft.sessionId, draft.atMessageId);
       await refreshSessions();
       await selectSession(forked.id, { focus: true });
-      await window.awefork.prompt(forked.id, draft.text.trim(), draft.model);
+      await window.awefork.prompt(forked.id, text, model);
+      // Surface the carried-over prompt as the branch's first own turn right
+      // away; the idle refresh swaps it for the server's row.
+      appendLocalMessage(forked.id, text);
     } else {
       await selectSession(draft.sessionId, { focus: true });
-      await window.awefork.prompt(draft.sessionId, draft.text.trim(), draft.model);
+      await window.awefork.prompt(draft.sessionId, text, model);
+      appendLocalMessage(draft.sessionId, text);
     }
     state.draft = null;
   } catch (error) {
     state.actionError = error instanceof Error ? error.message : String(error);
+  } finally {
+    state.draftSending = false;
   }
 }
 
 /**
- * Send from the right-pane composer. On the latest turn (or a turn-less
- * session) this continues the session; on an older turn it branches: fork at
- * that turn, land in the new session, and prompt there.
+ * Show a sent prompt immediately; the next server refresh replaces it with
+ * the real message row.
  */
-export async function sendPanePrompt(text: string): Promise<void> {
-  if (!state.selectedId || !text.trim()) return;
-  if (!paneAtLatest.value) {
-    const messageId = state.selectedTurnId?.slice(state.selectedTurnId.indexOf(":") + 1) ?? null;
-    if (messageId) {
-      await forkAtMessage(messageId);
-      if (!state.selectedId) return;
-    }
-  }
-  await sendPrompt(text);
-}
-
-export async function sendPrompt(text: string): Promise<void> {
-  if (!state.selectedId || !text.trim()) return;
-  state.actionError = null;
-  activeStreamSessions.add(state.selectedId);
-  state.running = { ...state.running, [state.selectedId]: true };
-  const sessionId = state.selectedId;
+function appendLocalMessage(sessionId: string, text: string): void {
   state.messagesBySession = {
     ...state.messagesBySession,
     [sessionId]: [
@@ -435,6 +459,26 @@ export async function sendPrompt(text: string): Promise<void> {
       },
     ],
   };
+}
+
+/**
+ * Send from the right-pane composer. Forks live on the canvas only, so this
+ * always continues the branch at its end; the pane follows the newest turn
+ * so the reply streams into view.
+ */
+export async function sendPanePrompt(text: string): Promise<void> {
+  if (!state.selectedId || !text.trim()) return;
+  state.selectedTurnId = null;
+  await sendPrompt(text);
+}
+
+export async function sendPrompt(text: string): Promise<void> {
+  if (!state.selectedId || !text.trim()) return;
+  state.actionError = null;
+  activeStreamSessions.add(state.selectedId);
+  state.running = { ...state.running, [state.selectedId]: true };
+  const sessionId = state.selectedId;
+  appendLocalMessage(sessionId, text);
   try {
     await window.awefork.prompt(sessionId, text, null);
   } catch (error) {

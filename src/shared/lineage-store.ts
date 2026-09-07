@@ -42,3 +42,12 @@ export async function recordFork(
   await fs.mkdir(dirname(filePath), { recursive: true });
   await fs.writeFile(filePath, `${JSON.stringify(map, null, 2)}\n`, "utf8");
 }
+
+/** Forget a session's own fork record (its children keep theirs, pointing at
+ *  a now-missing parent — readers already treat that as "root"). */
+export async function removeFork(filePath: string, sessionId: string): Promise<void> {
+  const map = await readLineage(filePath);
+  if (!(sessionId in map)) return;
+  delete map[sessionId];
+  await fs.writeFile(filePath, `${JSON.stringify(map, null, 2)}\n`, "utf8");
+}
