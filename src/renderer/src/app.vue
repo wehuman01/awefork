@@ -27,6 +27,15 @@
     >
       {{ store.actionError }}（点击关闭）
     </div>
+    <div v-if="store.deletedToast" class="toast banner-undo" role="status">
+      <span class="undo-text">已删除「{{ store.deletedToast.title }}」</span>
+      <button
+        type="button"
+        class="undo-btn"
+        title="把会话放回来"
+        @click="undoDelete(store.deletedToast.sessionId)"
+      >撤销</button>
+    </div>
   </div>
 </template>
 
@@ -38,7 +47,7 @@ import SessionCanvas from "./components/session-canvas.vue";
 import SideBar from "./components/side-bar.vue";
 import TopBar from "./components/top-bar.vue";
 import { PANEL_LIMITS, panelStyle, panels, persistLayout, togglePanel } from "./layout";
-import { dismissActionError, init, store } from "./state";
+import { dismissActionError, init, store, undoDelete } from "./state";
 
 onMounted(() => {
   void init();

@@ -4,7 +4,9 @@
       <span class="mp-label">{{ label }}</span>
       <span class="mp-chev">{{ open ? "⌃" : "⌄" }}</span>
     </button>
-    <div v-if="open" class="mp-pop">
+    <!-- wheel.stop: 画布在 viewport 上用 @wheel.prevent 缩放；不拦截的话弹层里
+         滚动列表会变成缩放画布。 -->
+    <div v-if="open" class="mp-pop" @wheel.stop>
       <input
         ref="searchEl"
         v-model="query"

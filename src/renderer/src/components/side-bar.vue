@@ -81,6 +81,9 @@
       @mousedown.stop
     >
       <button type="button" class="ctx-menu-item" @click="beginRename">✏️ 重命名</button>
+      <button type="button" class="ctx-menu-item danger" @click="beginDelete">
+        🗑 删除会话…
+      </button>
     </div>
   </aside>
 </template>
@@ -90,6 +93,7 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 import type { SessionGroup, SessionTreeNode } from "../../../shared/session-tree";
 import type { SessionSummary } from "../../../shared/types";
 import {
+  deleteSession,
   refreshSessions,
   renameSession,
   selectSession,
@@ -136,6 +140,19 @@ function commitRename(): void {
   const title = renameText.value.trim();
   if (!title || title === active.title) return;
   void renameSession(active.sessionId, title);
+}
+
+/** Same soft delete as the canvas 🗑 chip: confirm, then the undo toast rules. */
+function beginDelete(): void {
+  const active = menu.value;
+  if (!active) return;
+  closeMenu();
+  const title = active.title || "空会话";
+  const ok = window.confirm(
+    `删除会话「${title}」？\n它的所有回合都会一起删除（从它分叉出的子分支会保留）。`,
+  );
+  if (!ok) return;
+  void deleteSession(active.sessionId);
 }
 
 /** Function ref: focus (and select) the rename input the moment it mounts. */

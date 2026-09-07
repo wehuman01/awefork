@@ -9,6 +9,7 @@ const PORT = 4096;
 
 const lineagePath = join(app.getPath("userData"), "lineage.json");
 const pinsPath = join(app.getPath("userData"), "pins.json");
+const trashPath = join(app.getPath("userData"), "trash.json");
 
 const adapterPromise = ensureOpencodeServer(PORT)
   .then(({ baseUrl }) => createOpencodeAdapter({ baseUrl, lineagePath }))
@@ -17,7 +18,7 @@ const adapterPromise = ensureOpencodeServer(PORT)
     throw error instanceof Error ? error : new Error(String(error));
   });
 
-registerIpc(adapterPromise, lineagePath, pinsPath);
+registerIpc(adapterPromise, lineagePath, pinsPath, trashPath);
 
 let mainWindow: BrowserWindow | null = null;
 

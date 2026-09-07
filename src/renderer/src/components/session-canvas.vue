@@ -177,6 +177,7 @@ import type { TurnNode } from "../../../shared/canvas-graph";
 import { COL_GAP, NODE_HEIGHT, NODE_WIDTH, ROW_GAP } from "../../../shared/canvas-graph";
 import { formatDuration, formatTokens } from "../format";
 import {
+  activeChain,
   deleteSession,
   dismissDraft,
   openDraft,
@@ -211,37 +212,11 @@ const svgSize = computed(() => {
 const nodeById = computed(() => new Map(graph.value.nodes.map((n) => [n.id, n])));
 
 // ── active path: the selected turn's lineage back to the story's root ──
+// Shared with the pane's context chain — state.activeChain is the source.
 
-const parentOfNode = computed(() => {
-  const map = new Map<string, string>();
-  for (const edge of graph.value.edges) map.set(edge.to, edge.from);
-  return map;
-});
+const activePathIds = computed(() => new Set(activeChain.value.map((n) => n.id)));
 
-/**
- * Node the path is traced to: the selected turn, else the selected session's
- * latest node (matching the pane's follow-latest behavior).
- */
-const pathTipId = computed(() => {
-  const selected = selectedTurnId.value;
-  if (selected && nodeById.value.has(selected)) return selected;
-  const nodes = nodesOf(store.selectedId);
-  return nodes.length > 0 ? (nodes[nodes.length - 1]?.id ?? null) : null;
-});
-
-const activePathIds = computed(() => {
-  const tip = pathTipId.value;
-  if (!tip) return new Set<string>();
-  const ids = new Set<string>();
-  let current: string | null = tip;
-  while (current && !ids.has(current)) {
-    ids.add(current);
-    current = parentOfNode.value.get(current) ?? null;
-  }
-  return ids;
-});
-
-const hasActivePath = computed(() => activePathIds.value.size > 0);
+const hasActivePath = computed(() => activeChain.value.length > 0);
 
 /** An edge is on the active path when both ends are on it (nodes have one incoming edge). */
 function onActivePath(edge: { from: string; to: string }): boolean {

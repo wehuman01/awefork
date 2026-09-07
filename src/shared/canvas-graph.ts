@@ -58,6 +58,29 @@ export interface TurnGraph {
   edges: GraphEdge[];
 }
 
+/**
+ * The lineage path from `tipId` back to its story's root, returned root-first.
+ * Cycle-safe; stops at nodes missing from the graph. This is the same path the
+ * canvas highlights as "active" and the pane shows as a turn's context chain.
+ */
+export function chainToTip(graph: TurnGraph, tipId: string | null): TurnNode[] {
+  if (!tipId) return [];
+  const nodeById = new Map(graph.nodes.map((n) => [n.id, n]));
+  const parentOf = new Map<string, string>();
+  for (const edge of graph.edges) parentOf.set(edge.to, edge.from);
+  const chain: TurnNode[] = [];
+  const seen = new Set<string>();
+  let current: string | null = tipId;
+  while (current && !seen.has(current)) {
+    const node = nodeById.get(current);
+    if (!node) break;
+    seen.add(current);
+    chain.push(node);
+    current = parentOf.get(current) ?? null;
+  }
+  return chain.reverse();
+}
+
 export interface BuildGraphOptions {
   /** Sessions of ONE directory, already sorted or not — the builder sorts. */
   sessions: SessionSummary[];

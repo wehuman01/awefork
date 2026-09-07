@@ -6,6 +6,11 @@ Canvas readability and daily-driver ergonomics on top of v0.1.0.
 
 ### Highlights
 
+- **Context chain in the pane** — the branch-context pane now lists the turns that lead into the selected one (the same path the canvas highlights), numbered, with cross-session forks marked ⎇; click a card to jump to that turn. More than 12 ancestors collapse into an "earlier turns" note.
+- **Delete from the sidebar** — right-click any session row (forks included) for 删除会话; the same undo toast guards it as the canvas delete.
+- **Undo delete** — deleting a session now hides it instantly with an「已删除 · 撤销」toast; the real server delete only fires after an 8-second grace window, so one click puts the session (and its pin) back. Pending deletes persist in `trash.json` and flush on the next launch, so quitting mid-window still completes the deletion.
+- **Delete stays in place** — after deleting, the selection moves to whatever session now occupies the deleted row's spot in the sidebar (next, else previous) instead of jumping back to the newest conversation.
+- **Model picker scrolls** — the mouse wheel inside the searchable model list scrolls the list again instead of zooming the canvas underneath.
 - **Active path highlight** — selecting a turn lights up the whole lineage from the story's root to that card (edges included); everything else dims. Branch-heavy canvases now answer "which line am I on".
 - **Turn navigation** — ‹ › buttons in the right pane (or ←/→ keys) walk between turns without returning to the canvas; typing in an input never triggers them.
 - **Turn stats** — cards and the pane header show each turn's wall time and output tokens, mapped from opencode's per-message `tokens` usage (no extra requests).

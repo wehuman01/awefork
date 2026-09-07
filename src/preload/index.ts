@@ -1,5 +1,11 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { ChatMessage, ModelChoice, ModelOption, SessionSummary } from "../shared/types.js";
+import type {
+  ChatMessage,
+  ModelChoice,
+  ModelOption,
+  SessionSummary,
+  TrashEntry,
+} from "../shared/types.js";
 
 const api = {
   ready: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("awefork:ready"),
@@ -22,6 +28,11 @@ const api = {
   pins: (): Promise<string[]> => ipcRenderer.invoke("awefork:pins"),
   togglePin: (sessionId: string): Promise<string[]> =>
     ipcRenderer.invoke("awefork:togglePin", sessionId),
+  trash: (): Promise<TrashEntry[]> => ipcRenderer.invoke("awefork:trash"),
+  trashAdd: (sessionId: string, title: string): Promise<TrashEntry[]> =>
+    ipcRenderer.invoke("awefork:trashAdd", sessionId, title),
+  trashRemove: (sessionId: string): Promise<TrashEntry[]> =>
+    ipcRenderer.invoke("awefork:trashRemove", sessionId),
   onEvent: (handler: (event: unknown) => void): (() => void) => {
     const listener = (_event: unknown, payload: unknown) => handler(payload);
     ipcRenderer.on("awefork:event", listener);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildTurnGraph, type TurnNode } from "../src/shared/canvas-graph";
+import { buildTurnGraph, chainToTip, type TurnNode } from "../src/shared/canvas-graph";
 import type { ChatMessage, ForkRecord, LineageMap, SessionSummary } from "../src/shared/types";
 
 function session(id: string, overrides: Partial<SessionSummary> = {}): SessionSummary {
@@ -183,5 +183,41 @@ describe("buildTurnGraph", () => {
     });
 
     expect(graph.nodes.map((n) => n.sessionId)).toEqual(["a"]);
+  });
+});
+
+describe("chainToTip", () => {
+  it("walks a linear session root-first", () => {
+    const graph = buildTurnGraph({
+      sessions: [session("a")],
+      lineage: {},
+      messages: { a: chain(["a-u1", "a-r1"], ["a-u2", "a-r2"]) },
+    });
+
+    expect(chainToTip(graph, "a:a-u2").map((n) => n.id)).toEqual(["a:a-u1", "a:a-u2"]);
+  });
+
+  it("crosses a fork edge back into the parent session's turn", () => {
+    const graph = buildTurnGraph({
+      sessions: [session("a"), session("b", { origin: "fork", createdAt: 500 })],
+      lineage: { b: fork("a", "a-u1") },
+      messages: {
+        a: chain(["a-u1", "a-r1"], ["a-u2", "a-r2"]),
+        b: chain(["a-u1", "a-r1"], ["a-u2", "a-r2"], ["b-u3", "b-r3"]),
+      },
+    });
+
+    expect(chainToTip(graph, "b:b-u3").map((n) => n.id)).toEqual(["a:a-u1", "b:b-u3"]);
+  });
+
+  it("returns empty for a null tip and ignores unknown tip ids", () => {
+    const graph = buildTurnGraph({
+      sessions: [session("a")],
+      lineage: {},
+      messages: { a: chain(["a-u1", "a-r1"]) },
+    });
+
+    expect(chainToTip(graph, null)).toEqual([]);
+    expect(chainToTip(graph, "ghost:x")).toEqual([]);
   });
 });

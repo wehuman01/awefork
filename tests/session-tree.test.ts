@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildSessionTree } from "../src/shared/session-tree";
+import { buildSessionTree, pickNeighborId } from "../src/shared/session-tree";
 import type { LineageMap, SessionSummary } from "../src/shared/types";
 
 function session(partial: Partial<SessionSummary> & { id: string }): SessionSummary {
@@ -61,5 +61,23 @@ describe("buildSessionTree", () => {
       orphan: { parentId: "deleted", atMessageId: null, createdAt: 0 },
     });
     expect(tree[0]?.roots.map((n) => n.session.id)).toEqual(["orphan", "a"]);
+  });
+});
+
+describe("pickNeighborId", () => {
+  const ids = ["a", "b", "c"];
+
+  it("takes over the deleted row's position (the next session)", () => {
+    expect(pickNeighborId(ids, "a")).toBe("b");
+    expect(pickNeighborId(ids, "b")).toBe("c");
+  });
+
+  it("falls back to the previous session at the end of the list", () => {
+    expect(pickNeighborId(ids, "c")).toBe("b");
+  });
+
+  it("returns null for the last survivor and for unknown ids", () => {
+    expect(pickNeighborId(["a"], "a")).toBeNull();
+    expect(pickNeighborId(ids, "zzz")).toBeNull();
   });
 });

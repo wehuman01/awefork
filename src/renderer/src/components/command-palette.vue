@@ -42,6 +42,7 @@ import {
   selectSession,
   store,
   switchDirectory,
+  visibleSessions,
 } from "../state";
 
 interface PaletteItem {
@@ -99,7 +100,7 @@ const items = computed<PaletteItem[]>(() => {
     },
   ].filter((action) => match(action.label) || match(action.hint));
 
-  const sessions = store.sessions
+  const sessions = visibleSessions.value
     .filter((s) => match(s.title) || match(s.directory))
     .slice(0, 30)
     .map(

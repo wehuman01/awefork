@@ -73,6 +73,17 @@ export interface ForkRecord {
 export type LineageMap = Record<string, ForkRecord>;
 
 /**
+ * A session awaiting its hard delete (trash store). Kept here rather than in
+ * trash-store.ts so the renderer's type surface stays free of node built-ins.
+ */
+export interface TrashEntry {
+  id: string;
+  /** Session title at delete time, for a human scanning the file. */
+  title: string;
+  deletedAt: number;
+}
+
+/**
  * Normalized event feed forwarded to the renderer.
  * Kept intentionally small: the UI only needs to know what changed.
  */

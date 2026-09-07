@@ -1,7 +1,18 @@
 import { computed, reactive, readonly } from "vue";
-import { buildTurnGraph, type TurnGraph, type TurnNode } from "../../shared/canvas-graph";
+import {
+  buildTurnGraph,
+  chainToTip,
+  type TurnGraph,
+  type TurnNode,
+} from "../../shared/canvas-graph";
 import { selectCanvasSessions } from "../../shared/canvas-scope";
-import { buildSessionTree, enrichSessions, type SessionGroup } from "../../shared/session-tree";
+import {
+  buildSessionTree,
+  enrichSessions,
+  pickNeighborId,
+  type SessionGroup,
+  type SessionTreeNode,
+} from "../../shared/session-tree";
 import { buildTurns, type Turn } from "../../shared/turns";
 import type {
   AgentEvent,
@@ -27,6 +38,13 @@ interface DraftState {
 interface AppState {
   connectionError: string | null;
   sessions: SessionSummary[];
+  /**
+   * Session ids sitting in the delete grace window: hidden from every view,
+   * still alive on the server until the hard delete fires (or undo cancels it).
+   */
+  trash: string[];
+  /** The latest soft delete, driving the undo toast; null = no toast. */
+  deletedToast: { sessionId: string; title: string } | null;
   lineage: Record<string, ForkRecord>;
   /** Session ids the user saved to the canvas (persisted in pins.json). */
   pins: string[];
@@ -61,6 +79,8 @@ interface AppState {
 const state = reactive<AppState>({
   connectionError: null,
   sessions: [],
+  trash: [],
+  deletedToast: null,
   lineage: {},
   pins: [],
   selectedDirectory: null,
@@ -85,20 +105,26 @@ export const store = readonly(state);
 /** Readonly shape of a chat message as seen by components. */
 export type ReadonlyChatMessage = (typeof store)["messagesBySession"][string][number];
 
+/** Sessions still shown: everything outside the delete grace window. */
+export const visibleSessions = computed<SessionSummary[]>(() => {
+  const trashed = new Set(state.trash);
+  return state.sessions.filter((s) => !trashed.has(s.id));
+});
+
 export const sessionGroups = computed<SessionGroup[]>(() =>
-  buildSessionTree(state.sessions, state.lineage),
+  buildSessionTree(visibleSessions.value, state.lineage),
 );
 
 export const directories = computed<string[]>(() => {
   const latest = new Map<string, number>();
-  for (const session of state.sessions) {
+  for (const session of visibleSessions.value) {
     latest.set(session.directory, Math.max(latest.get(session.directory) ?? 0, session.updatedAt));
   }
   return [...latest.keys()].sort((a, b) => (latest.get(b) ?? 0) - (latest.get(a) ?? 0));
 });
 
 const enrichedSessions = computed<SessionSummary[]>(() =>
-  enrichSessions(state.sessions, state.lineage),
+  enrichSessions(visibleSessions.value, state.lineage),
 );
 
 const directorySessions = computed<SessionSummary[]>(() =>
@@ -135,8 +161,26 @@ export const turnGraph = computed<TurnGraph>(() =>
   }),
 );
 
+/**
+ * The selected turn's lineage from its story's root down to the tip, root
+ * first. Tip: the locked turn, else the selected session's latest node —
+ * matching the pane's follow-latest behavior. The canvas highlights this
+ * path and the pane renders the turns before it as context.
+ */
+export const activeChain = computed<TurnNode[]>(() => {
+  const graph = turnGraph.value;
+  const nodeById = new Map(graph.nodes.map((n) => [n.id, n]));
+  const selected = state.selectedTurnId;
+  let tip: TurnNode | null = selected ? (nodeById.get(selected) ?? null) : null;
+  if (!tip && state.selectedId) {
+    const nodes = graph.nodes.filter((n) => n.sessionId === state.selectedId);
+    tip = nodes.length > 0 ? (nodes[nodes.length - 1] ?? null) : null;
+  }
+  return chainToTip(graph, tip?.id ?? null);
+});
+
 export const selectedSession = computed<SessionSummary | null>(
-  () => state.sessions.find((s) => s.id === state.selectedId) ?? null,
+  () => visibleSessions.value.find((s) => s.id === state.selectedId) ?? null,
 );
 
 const selectedTurns = computed<Turn[]>(() =>
@@ -217,8 +261,35 @@ export async function init(): Promise<void> {
   } catch {
     state.pins = [];
   }
+  try {
+    state.trash = (await window.awefork.trash()).map((entry) => entry.id);
+  } catch {
+    state.trash = [];
+  }
+  await flushTrash();
   await refreshSessions();
   window.awefork.onEvent(handleEvent);
+}
+
+/**
+ * Execute the hard deletes a previous run left pending (app quit inside the
+ * grace window, or a flush that failed). Entries that fail to delete are
+ * dropped from the trash anyway — the session simply stays alive server-side,
+ * same as a failed in-session hard delete.
+ */
+async function flushTrash(): Promise<void> {
+  for (const sessionId of [...state.trash]) {
+    try {
+      await window.awefork.deleteSession(sessionId);
+    } catch {
+      // Already gone server-side — nothing left to delete.
+    }
+    try {
+      state.trash = (await window.awefork.trashRemove(sessionId)).map((entry) => entry.id);
+    } catch {
+      // A leftover entry just flushes again next startup.
+    }
+  }
 }
 
 export async function refreshSessions(): Promise<void> {
@@ -411,39 +482,129 @@ export async function togglePin(sessionId: string): Promise<void> {
 }
 
 /**
- * Delete a session and its awefork sidecar records. The whole branch story
- * (every turn card of that session) disappears; child forks survive and
- * re-root themselves. Refused while the session has a run in flight.
+ * Soft-delete a session: it vanishes from every view at once, but the server
+ * delete only fires after a grace window (DELETE_GRACE_MS), during which the
+ * toast's 撤销 button puts it back untouched. Once the window lapses,
+ * `hardDeleteSession` performs the old eager delete: prunes pins, drops
+ * caches; child forks survive and re-root themselves. Refused while the
+ * session has a run in flight.
  */
 export async function deleteSession(sessionId: string): Promise<void> {
   if (state.running[sessionId]) {
     state.actionError = "会话正在运行，先停止再删除。";
     return;
   }
+  if (state.trash.includes(sessionId)) return;
+  const session = state.sessions.find((s) => s.id === sessionId);
+  if (!session) return;
   state.actionError = null;
+
+  // Neighbor comes from the pre-delete sidebar order: whatever row now sits
+  // where the deleted one was, so the selection doesn't jump across the list.
+  const neighbor = pickNeighborId(flatDirectorySessionIds(), sessionId);
+
+  state.trash = [...state.trash, sessionId];
+  if (state.draft?.sessionId === sessionId) state.draft = null;
   try {
-    state.pins = await window.awefork.deleteSession(sessionId);
-    stopWatch(sessionId);
-    const { [sessionId]: goneMessages, ...keptMessages } = state.messagesBySession;
-    void goneMessages;
-    state.messagesBySession = keptMessages;
-    attemptedMessages.delete(sessionId);
-    activeStreamSessions.delete(sessionId);
-    const { [sessionId]: goneRunning, ...keptRunning } = state.running;
-    void goneRunning;
-    state.running = keptRunning;
-    const { [sessionId]: goneLineage, ...keptLineage } = state.lineage;
-    void goneLineage;
-    state.lineage = keptLineage;
-    state.sessions = state.sessions.filter((s) => s.id !== sessionId);
-    if (state.draft?.sessionId === sessionId) state.draft = null;
-    if (state.selectedId === sessionId) {
-      state.selectedId = null;
-      state.selectedTurnId = null;
-      await selectSession(latestSessionId(directorySessions.value));
+    state.trash = (await window.awefork.trashAdd(sessionId, session.title)).map(
+      (entry) => entry.id,
+    );
+  } catch (error) {
+    // Could not persist the pending delete — show the session again rather
+    // than risk hiding it with no way to complete or undo the deletion.
+    state.trash = state.trash.filter((id) => id !== sessionId);
+    state.actionError = error instanceof Error ? error.message : String(error);
+    return;
+  }
+
+  // Toast + timer first: the undo window must be armed even if the
+  // neighbor-selection round-trip below fails.
+  state.deletedToast = { sessionId, title: session.title };
+  scheduleHardDelete(sessionId);
+
+  if (state.selectedId === sessionId) {
+    state.selectedId = null;
+    state.selectedTurnId = null;
+    const target = neighbor ?? latestSessionId(directorySessions.value);
+    if (target) await selectSession(target);
+  }
+}
+
+/** Current directory's sessions flattened in sidebar display order. */
+function flatDirectorySessionIds(): string[] {
+  const group = sessionGroups.value.find((g) => g.directory === state.selectedDirectory);
+  if (!group) return [];
+  const ids: string[] = [];
+  const walk = (nodes: SessionTreeNode[]): void => {
+    for (const node of nodes) {
+      ids.push(node.session.id);
+      walk(node.children);
     }
+  };
+  walk(group.roots);
+  return ids;
+}
+
+/** Undo a pending delete: cancel the hard delete, put the session back. */
+export async function undoDelete(sessionId: string): Promise<void> {
+  const timer = pendingHardDeletes.get(sessionId);
+  if (timer) {
+    clearTimeout(timer);
+    pendingHardDeletes.delete(sessionId);
+  }
+  if (state.deletedToast?.sessionId === sessionId) state.deletedToast = null;
+  try {
+    state.trash = (await window.awefork.trashRemove(sessionId)).map((entry) => entry.id);
   } catch (error) {
     state.actionError = error instanceof Error ? error.message : String(error);
+    return;
+  }
+  // The session was never server-deleted; walk straight back into it.
+  if (state.sessions.some((s) => s.id === sessionId)) {
+    await selectSession(sessionId, { focus: true });
+  }
+}
+
+const DELETE_GRACE_MS = 8000;
+const pendingHardDeletes = new Map<string, ReturnType<typeof setTimeout>>();
+
+function scheduleHardDelete(sessionId: string): void {
+  const timer = setTimeout(() => {
+    void hardDeleteSession(sessionId);
+  }, DELETE_GRACE_MS);
+  pendingHardDeletes.set(sessionId, timer);
+}
+
+async function hardDeleteSession(sessionId: string): Promise<void> {
+  pendingHardDeletes.delete(sessionId);
+  if (state.deletedToast?.sessionId === sessionId) state.deletedToast = null;
+  try {
+    state.pins = await window.awefork.deleteSession(sessionId);
+  } catch (error) {
+    // The server delete failed: put the session back and say so. An
+    // involuntary undo beats a session stuck invisible with no recovery.
+    state.trash = state.trash.filter((id) => id !== sessionId);
+    state.actionError = error instanceof Error ? error.message : String(error);
+    void window.awefork.trashRemove(sessionId).catch(() => {});
+    return;
+  }
+  stopWatch(sessionId);
+  const { [sessionId]: goneMessages, ...keptMessages } = state.messagesBySession;
+  void goneMessages;
+  state.messagesBySession = keptMessages;
+  attemptedMessages.delete(sessionId);
+  activeStreamSessions.delete(sessionId);
+  const { [sessionId]: goneRunning, ...keptRunning } = state.running;
+  void goneRunning;
+  state.running = keptRunning;
+  const { [sessionId]: goneLineage, ...keptLineage } = state.lineage;
+  void goneLineage;
+  state.lineage = keptLineage;
+  state.sessions = state.sessions.filter((s) => s.id !== sessionId);
+  try {
+    state.trash = (await window.awefork.trashRemove(sessionId)).map((entry) => entry.id);
+  } catch {
+    // Left in the persisted trash; the next startup flush retries the cleanup.
   }
 }
 

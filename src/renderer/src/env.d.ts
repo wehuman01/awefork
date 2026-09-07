@@ -14,6 +14,7 @@ import type {
   ModelChoice,
   ModelOption,
   SessionSummary,
+  TrashEntry,
 } from "../../shared/types";
 
 declare global {
@@ -30,6 +31,9 @@ declare global {
       renameSession(sessionId: string, title: string): Promise<void>;
       pins(): Promise<string[]>;
       togglePin(sessionId: string): Promise<string[]>;
+      trash(): Promise<TrashEntry[]>;
+      trashAdd(sessionId: string, title: string): Promise<TrashEntry[]>;
+      trashRemove(sessionId: string): Promise<TrashEntry[]>;
       onEvent(handler: (event: AgentEvent) => void): () => void;
     };
   }

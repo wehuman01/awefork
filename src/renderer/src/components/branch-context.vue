@@ -45,7 +45,38 @@
       :running="isRunning"
       :stream-text="store.streamText"
       :error="null"
-    />
+    >
+      <template v-if="contextTurns.length > 0 || omittedCount > 0" #context>
+        <div class="chain">
+          <div class="chain-label">上文链路</div>
+          <p v-if="omittedCount > 0" class="chain-omitted">…更早 {{ omittedCount }} 个回合</p>
+          <button
+            v-for="(node, i) in contextTurns"
+            :key="node.id"
+            type="button"
+            class="chain-card"
+            title="跳到这个回合"
+            @click="jumpTo(node)"
+          >
+            <span class="chain-step">{{ chainStart + i }}</span>
+            <span class="chain-body">
+              <span class="chain-title">
+                <span
+                  v-if="node.sessionId !== store.selectedId"
+                  class="chain-fork"
+                  title="来自上游分支"
+                >⎇</span>
+                {{ node.title }}
+              </span>
+              <span class="chain-preview">{{
+                node.preview ||
+                  (node.toolNames.length > 0 ? `(${node.toolNames.length} 个工具调用，无文本回复)` : "(无文本回复)")
+              }}</span>
+            </span>
+          </button>
+        </div>
+      </template>
+    </MessageList>
     <div v-else class="ctx-empty">
       <p>左侧选会话，或在画布上点一张卡片。</p>
     </div>
@@ -64,14 +95,17 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted } from "vue";
+import type { TurnNode } from "../../../shared/canvas-graph";
 import type { ModelChoice } from "../../../shared/types";
 import { formatDuration, formatTokens } from "../format";
 import {
   abortRun,
+  activeChain,
   cloneSelectedSession,
   paneMessages,
   paneTurn,
   selectedSession,
+  selectTurn,
   sendPanePrompt,
   setPaneModel,
   stepTurn,
@@ -81,6 +115,19 @@ import ChatInput from "./chat-input.vue";
 import MessageList from "./message-list.vue";
 
 const pane = computed(() => paneTurn.value);
+
+// ── context chain: the turns before the pane's current one ──────────
+
+/** Keep the pane readable: at most this many ancestor cards, oldest dropped. */
+const MAX_CONTEXT = 12;
+
+const omittedCount = computed(() => Math.max(0, activeChain.value.length - 1 - MAX_CONTEXT));
+const contextTurns = computed(() => activeChain.value.slice(0, -1).slice(-MAX_CONTEXT));
+const chainStart = computed(() => omittedCount.value + 1);
+
+function jumpTo(node: TurnNode): void {
+  void selectTurn(node);
+}
 
 const isRunning = computed(() => {
   const id = store.selectedId;

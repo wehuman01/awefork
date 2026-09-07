@@ -1,5 +1,6 @@
 <template>
   <section class="message-list" ref="listEl">
+    <slot name="context" />
     <article v-for="message in messages" :key="message.id" class="message" :class="message.role">
       <template v-if="message.role === 'user'">
         <div class="message-row user-row">

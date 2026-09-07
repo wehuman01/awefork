@@ -1,7 +1,8 @@
 import { type IpcMainInvokeEvent, ipcMain } from "electron";
 import { readLineage } from "../shared/lineage-store.js";
 import { readPins, writePins } from "../shared/pins-store.js";
-import type { AgentAdapter, AgentEvent, ModelChoice } from "../shared/types";
+import { readTrash, writeTrash } from "../shared/trash-store.js";
+import type { AgentAdapter, AgentEvent, ModelChoice, TrashEntry } from "../shared/types";
 
 /**
  * IPC surface (all invoke-channels, prefixed awefork:):
@@ -16,12 +17,16 @@ import type { AgentAdapter, AgentEvent, ModelChoice } from "../shared/types";
  *   renameSession -> void                rename a session (native PATCH)
  *   pins       -> string[]                pinned session ids
  *   togglePin  -> string[]                pin/unpin a session, new list back
+ *   trash      -> TrashEntry[]            sessions awaiting their hard delete
+ *   trashAdd   -> TrashEntry[]            queue a pending delete, list back
+ *   trashRemove-> TrashEntry[]            un-queue (undo), list back
  * Events are forwarded on channel "awefork:event".
  */
 export function registerIpc(
   adapterPromise: Promise<AgentAdapter>,
   lineagePath: string,
   pinsPath: string,
+  trashPath: string,
 ): void {
   const withAdapter = async (): Promise<AgentAdapter> => adapterPromise;
 
@@ -104,6 +109,24 @@ export function registerIpc(
       : [...pins, sessionId];
     await writePins(pinsPath, next);
     return next;
+  });
+
+  ipcMain.handle("awefork:trash", async () => readTrash(trashPath));
+
+  ipcMain.handle(
+    "awefork:trashAdd",
+    async (_event: IpcMainInvokeEvent, sessionId: string, title: string) => {
+      const entries = (await readTrash(trashPath)).filter((entry) => entry.id !== sessionId);
+      entries.push({ id: sessionId, title, deletedAt: Date.now() });
+      await writeTrash(trashPath, entries);
+      return entries;
+    },
+  );
+
+  ipcMain.handle("awefork:trashRemove", async (_event: IpcMainInvokeEvent, sessionId: string) => {
+    const entries = (await readTrash(trashPath)).filter((entry) => entry.id !== sessionId);
+    await writeTrash(trashPath, entries);
+    return entries;
   });
 }
 

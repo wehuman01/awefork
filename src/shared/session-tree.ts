@@ -93,3 +93,15 @@ function latestUpdated(nodes: SessionTreeNode[]): number {
   if (nodes.length === 0) return 0;
   return Math.max(...nodes.map((n) => n.session.updatedAt));
 }
+
+/**
+ * The session that takes the deleted one's place in a flat display list:
+ * the next row, else the previous one, else null. Deleting from the middle
+ * keeps the selection where the user's cursor is instead of jumping away.
+ */
+export function pickNeighborId(orderedIds: string[], deletedId: string): string | null {
+  const index = orderedIds.indexOf(deletedId);
+  if (index === -1) return null;
+  const rest = orderedIds.filter((id) => id !== deletedId);
+  return rest[index] ?? rest[index - 1] ?? null;
+}
