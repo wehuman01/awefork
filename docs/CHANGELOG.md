@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+Canvas readability and daily-driver ergonomics on top of v0.1.0.
+
+### Highlights
+
+- **Active path highlight** — selecting a turn lights up the whole lineage from the story's root to that card (edges included); everything else dims. Branch-heavy canvases now answer "which line am I on".
+- **Turn navigation** — ‹ › buttons in the right pane (or ←/→ keys) walk between turns without returning to the canvas; typing in an input never triggers them.
+- **Turn stats** — cards and the pane header show each turn's wall time and output tokens, mapped from opencode's per-message `tokens` usage (no extra requests).
+- **Smarter empty-prompt titles** — "(empty prompt)" cards fall back to the turn's first tool name, else the reply's first line.
+- **Clone current branch** — one click forks the selected session at its latest state (a checkpoint), landing you in the copy.
+- **Rename sessions** — right-click a sidebar row to rename; calls opencode's native `PATCH /session/{id}` through the adapter protocol.
+- **Searchable model picker** — the native select became a combobox with search (70+ models); the right-pane composer also gained a per-session model picker that rides along with prompts.
+- **Resizable shell** — drag the handles between columns to resize the sidebar and pane; double-click a handle to fold/unfold. Widths persist in localStorage.
+- **Canvas minimap** — working sets beyond the overview threshold get a minimap with a live viewport rectangle; click or drag it to pan.
+- **Command palette** — ⌘K / Ctrl+K (or the topbar button) to jump between sessions and fire actions (fit view, clone, refresh, fold panels).
+
 ## v0.1.0
 
 First release. Non-linear session workbench for opencode with node-level forking.

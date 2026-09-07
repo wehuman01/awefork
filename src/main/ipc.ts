@@ -13,6 +13,7 @@ import type { AgentAdapter, AgentEvent, ModelChoice } from "../shared/types";
  *   deleteSession -> string[]             delete a session, pruned pins back
  *   prompt     -> void                    fire an agent run (optional model)
  *   abort      -> void                    abort the running turn
+ *   renameSession -> void                rename a session (native PATCH)
  *   pins       -> string[]                pinned session ids
  *   togglePin  -> string[]                pin/unpin a session, new list back
  * Events are forwarded on channel "awefork:event".
@@ -85,6 +86,14 @@ export function registerIpc(
     const adapter = await withAdapter();
     await adapter.abort(sessionId);
   });
+
+  ipcMain.handle(
+    "awefork:renameSession",
+    async (_event: IpcMainInvokeEvent, sessionId: string, title: string) => {
+      const adapter = await withAdapter();
+      await adapter.renameSession(sessionId, title);
+    },
+  );
 
   ipcMain.handle("awefork:pins", async () => readPins(pinsPath));
 

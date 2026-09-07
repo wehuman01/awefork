@@ -4,11 +4,14 @@ import type { ChatMessage, ModelChoice } from "./types.js";
  * A turn is the unit of the canvas graph: one user prompt plus the assistant
  * reply (and any tool calls) it produced.
  */
+/** Stand-in shown when a turn's user text is blank and nothing else is known. */
+const EMPTY_TITLE = "(empty prompt)";
+
 export interface Turn {
   /** User message that opens the turn. */
   messageId: string;
   sessionId: string;
-  /** First line of the user text; "(empty prompt)" when the text is blank. */
+  /** First line of the user text; falls back to the first tool name or reply snippet when blank. */
   title: string;
   /** Assistant text of the turn's reply, "" when the agent only called tools. */
   preview: string;
@@ -20,6 +23,10 @@ export interface Turn {
   model: ModelChoice | null;
   /** Creation time of the user message. */
   createdAt: number;
+  /** Last reply's completion minus the prompt's creation; null while the run is unfinished. */
+  durationMs: number | null;
+  /** Output tokens summed across the turn's replies. */
+  outputTokens: number;
 }
 
 /**
@@ -41,7 +48,7 @@ export function buildTurns(sessionId: string, messages: ChatMessage[]): Turn[] {
       current = {
         messageId: message.id,
         sessionId,
-        title: title || "(empty prompt)",
+        title: title || EMPTY_TITLE,
         preview: "",
         toolNames: [...message.toolNames],
         // Seed from the user row: opencode records the run's model there, so
@@ -53,6 +60,8 @@ export function buildTurns(sessionId: string, messages: ChatMessage[]): Turn[] {
             ? { providerId: message.providerId, modelId: message.modelId }
             : null,
         createdAt: message.createdAt,
+        durationMs: null,
+        outputTokens: 0,
       };
       turns.push(current);
       continue;
@@ -69,6 +78,17 @@ export function buildTurns(sessionId: string, messages: ChatMessage[]): Turn[] {
     if (message.modelId && message.providerId) {
       current.model = { providerId: message.providerId, modelId: message.modelId };
     }
+    if (message.outputTokens !== null) current.outputTokens += message.outputTokens;
+    if (message.completedAt !== null) current.durationMs = message.completedAt - current.createdAt;
+  }
+
+  // Blank prompts (agent-side nudges, interrupted sends) get a stand-in title
+  // from what the turn actually did — its first tool, else the reply's first line.
+  for (const turn of turns) {
+    if (turn.title !== EMPTY_TITLE) continue;
+    const firstTool = turn.toolNames[0];
+    const firstReplyLine = turn.preview.trim().split("\n")[0]?.trim();
+    turn.title = firstTool ? `🔧 ${firstTool}` : firstReplyLine || EMPTY_TITLE;
   }
 
   return turns;

@@ -42,6 +42,8 @@ export interface ChatMessage {
   createdAt: number;
   /** When the backend finished the message; null while unreported or still running. */
   completedAt: number | null;
+  /** Output tokens of this assistant message; null on user rows or when unreported. */
+  outputTokens: number | null;
 }
 
 /** A model the agent backend offers, flattened from its provider config. */
@@ -98,6 +100,8 @@ export interface AgentAdapter {
   fork(sessionId: string, atMessageId: string | null): Promise<SessionSummary>;
   /** Permanently remove a session (and awefork's lineage record for it). */
   deleteSession(sessionId: string): Promise<void>;
+  /** Rename a session through the backend's native API. */
+  renameSession(sessionId: string, title: string): Promise<void>;
   /** Fire an agent run; progress arrives through `subscribe`. */
   prompt(sessionId: string, text: string, model?: ModelChoice | null): Promise<void>;
   abort(sessionId: string): Promise<void>;

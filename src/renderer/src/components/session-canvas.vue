@@ -12,9 +12,19 @@
           <path
             :d="edge.path"
             class="edge"
-            :class="{ fork: edge.kind === 'fork' }"
+            :class="{
+              fork: edge.kind === 'fork',
+              active: onActivePath(edge),
+              dim: hasActivePath && !onActivePath(edge),
+            }"
           />
-          <circle :cx="edge.ex" :cy="edge.ey" r="3.5" class="edge-dot" />
+          <circle
+            :cx="edge.ex"
+            :cy="edge.ey"
+            r="3.5"
+            class="edge-dot"
+            :class="{ active: onActivePath(edge), dim: hasActivePath && !onActivePath(edge) }"
+          />
         </g>
       </svg>
 
@@ -26,6 +36,7 @@
           selected: node.id === selectedTurnId,
           running: store.running[node.sessionId],
           stub: node.kind === 'stub',
+          dimmed: hasActivePath && !activePathIds.has(node.id),
         }"
         :style="{ left: `${node.x}px`, top: `${node.y}px`, width: `${NODE_WIDTH}px` }"
         @mousedown.stop
@@ -70,7 +81,7 @@
           </div>
           <div class="turn-foot">
             <span v-if="store.running[node.sessionId]" class="running-flag">○ 运行中…</span>
-            <span v-else>{{ node.toolNames.length > 0 ? `${node.toolNames.length} 个工具` : "无工具调用" }}</span>
+            <span v-else>{{ footMeta(node) }}</span>
             <span
               class="model"
               :title="node.modelIds.length > 1 ? node.modelIds.join('\n') : undefined"
@@ -105,25 +116,13 @@
         ></textarea>
         <div class="draft-foot">
           <span class="hint">⌘/Ctrl ⏎ 发送</span>
-          <select
-            class="model-select"
-            :value="draftModelValue"
+          <ModelPicker
+            class="draft-model"
+            :model-value="store.draft?.model ?? null"
+            :models="store.models"
             title="用哪个模型跑这条分支"
-            @change="onDraftModelChange"
-          >
-            <option value="">默认模型</option>
-            <optgroup
-              v-for="group in modelsByProvider"
-              :key="group.providerId"
-              :label="group.providerName"
-            >
-              <option
-                v-for="m in group.models"
-                :key="m.modelId"
-                :value="encodeModel(group.providerId, m.modelId)"
-              >{{ m.modelName }}</option>
-            </optgroup>
-          </select>
+            @update:model-value="setDraftModel"
+          />
           <button
             type="button"
             class="send-btn"
@@ -152,14 +151,31 @@
       </div>
       <button type="button" class="fit-btn" title="适配视图" @click="fitView">⛶</button>
     </div>
+
+    <div
+      v-if="showMinimap"
+      ref="minimapEl"
+      class="minimap"
+      title="小地图 — 点击或拖拽移动视图"
+      @mousedown.stop.prevent="onMinimapDown"
+    >
+      <div
+        v-for="n in graph.nodes"
+        :key="`mm-${n.id}`"
+        class="mm-node"
+        :class="{ stub: n.kind === 'stub', on: activePathIds.has(n.id) }"
+        :style="mmNodeStyle(n)"
+      ></div>
+      <div class="mm-view" :style="mmViewStyle"></div>
+    </div>
   </main>
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import type { TurnNode } from "../../../shared/canvas-graph";
 import { COL_GAP, NODE_HEIGHT, NODE_WIDTH, ROW_GAP } from "../../../shared/canvas-graph";
-import type { ModelChoice } from "../../../shared/types";
+import { formatDuration, formatTokens } from "../format";
 import {
   deleteSession,
   dismissDraft,
@@ -171,6 +187,7 @@ import {
   store,
   turnGraph,
 } from "../state";
+import ModelPicker from "./model-picker.vue";
 
 const viewportEl = ref<HTMLElement | null>(null);
 const scale = ref(1);
@@ -192,6 +209,45 @@ const svgSize = computed(() => {
 });
 
 const nodeById = computed(() => new Map(graph.value.nodes.map((n) => [n.id, n])));
+
+// ── active path: the selected turn's lineage back to the story's root ──
+
+const parentOfNode = computed(() => {
+  const map = new Map<string, string>();
+  for (const edge of graph.value.edges) map.set(edge.to, edge.from);
+  return map;
+});
+
+/**
+ * Node the path is traced to: the selected turn, else the selected session's
+ * latest node (matching the pane's follow-latest behavior).
+ */
+const pathTipId = computed(() => {
+  const selected = selectedTurnId.value;
+  if (selected && nodeById.value.has(selected)) return selected;
+  const nodes = nodesOf(store.selectedId);
+  return nodes.length > 0 ? (nodes[nodes.length - 1]?.id ?? null) : null;
+});
+
+const activePathIds = computed(() => {
+  const tip = pathTipId.value;
+  if (!tip) return new Set<string>();
+  const ids = new Set<string>();
+  let current: string | null = tip;
+  while (current && !ids.has(current)) {
+    ids.add(current);
+    current = parentOfNode.value.get(current) ?? null;
+  }
+  return ids;
+});
+
+const hasActivePath = computed(() => activePathIds.value.size > 0);
+
+/** An edge is on the active path when both ends are on it (nodes have one incoming edge). */
+function onActivePath(edge: { from: string; to: string }): boolean {
+  const ids = activePathIds.value;
+  return ids.has(edge.from) && ids.has(edge.to);
+}
 
 const edgesWithPoints = computed(() =>
   graph.value.edges.flatMap((edge) => {
@@ -242,54 +298,7 @@ function removeNode(node: TurnNode): void {
 }
 
 // ── draft model picker ──────────────────────────────────────────────
-
-const MODEL_SEPARATOR = "\u0000";
-
-function encodeModel(providerId: string, modelId: string): string {
-  return `${providerId}${MODEL_SEPARATOR}${modelId}`;
-}
-
-interface ProviderGroup {
-  providerId: string;
-  providerName: string;
-  models: { modelId: string; modelName: string }[];
-}
-
-const modelsByProvider = computed<ProviderGroup[]>(() => {
-  const groups: ProviderGroup[] = [];
-  for (const option of store.models) {
-    const current = groups[groups.length - 1];
-    if (current && current.providerId === option.providerId) {
-      current.models.push({ modelId: option.modelId, modelName: option.modelName });
-    } else {
-      groups.push({
-        providerId: option.providerId,
-        providerName: option.providerName,
-        models: [{ modelId: option.modelId, modelName: option.modelName }],
-      });
-    }
-  }
-  return groups;
-});
-
-const draftModelValue = computed(() => {
-  const model = store.draft?.model;
-  return model ? encodeModel(model.providerId, model.modelId) : "";
-});
-
-function onDraftModelChange(event: Event): void {
-  const value = (event.target as HTMLSelectElement).value;
-  if (!value) {
-    setDraftModel(null);
-    return;
-  }
-  const separatorAt = value.indexOf(MODEL_SEPARATOR);
-  const choice: ModelChoice = {
-    providerId: value.slice(0, separatorAt),
-    modelId: value.slice(separatorAt + MODEL_SEPARATOR.length),
-  };
-  setDraftModel(choice);
-}
+// ModelPicker emits a ModelChoice directly — no string encoding needed.
 
 // ── pan / zoom / fit ────────────────────────────────────────────────
 
@@ -414,6 +423,90 @@ watch(
   },
 );
 
+watch(
+  () => store.fitRequest,
+  (nonce) => {
+    if (nonce) fitView();
+  },
+);
+
+// ── minimap ─────────────────────────────────────────────────────────
+
+const MM_WIDTH = 176;
+const MM_HEIGHT = 110;
+const minimapEl = ref<HTMLElement | null>(null);
+const viewportSize = ref({ w: 0, h: 0 });
+let resizeObserver: ResizeObserver | null = null;
+
+onMounted(() => {
+  resizeObserver = new ResizeObserver((entries) => {
+    const rect = entries[0]?.contentRect;
+    if (rect) viewportSize.value = { w: rect.width, h: rect.height };
+  });
+  if (viewportEl.value) resizeObserver.observe(viewportEl.value);
+});
+onUnmounted(() => resizeObserver?.disconnect());
+
+const showMinimap = computed(() => graph.value.nodes.length > OVERVIEW_NODE_LIMIT);
+
+const minimapGeometry = computed(() => {
+  const nodes = graph.value.nodes;
+  if (nodes.length === 0) return null;
+  const minX = Math.min(...nodes.map((n) => n.x));
+  const minY = Math.min(...nodes.map((n) => n.y));
+  const worldW = Math.max(...nodes.map((n) => n.x + NODE_WIDTH)) - minX || 1;
+  const worldH = Math.max(...nodes.map((n) => n.y + NODE_HEIGHT)) - minY || 1;
+  const s = Math.min(MM_WIDTH / worldW, MM_HEIGHT / worldH);
+  return { minX, minY, s, offX: (MM_WIDTH - worldW * s) / 2, offY: (MM_HEIGHT - worldH * s) / 2 };
+});
+
+function mmNodeStyle(node: TurnNode): Record<string, string> {
+  const g = minimapGeometry.value;
+  if (!g) return { display: "none" };
+  return {
+    left: `${g.offX + (node.x - g.minX) * g.s}px`,
+    top: `${g.offY + (node.y - g.minY) * g.s}px`,
+    width: `${Math.max(3, NODE_WIDTH * g.s)}px`,
+    height: `${Math.max(2, NODE_HEIGHT * g.s)}px`,
+  };
+}
+
+/** The viewport's current slice of world space, drawn on the minimap. */
+const mmViewStyle = computed(() => {
+  const g = minimapGeometry.value;
+  const { w, h } = viewportSize.value;
+  if (!g || w === 0 || h === 0) return { display: "none" };
+  return {
+    left: `${g.offX + (-tx.value / scale.value - g.minX) * g.s}px`,
+    top: `${g.offY + (-ty.value / scale.value - g.minY) * g.s}px`,
+    width: `${(w / scale.value) * g.s}px`,
+    height: `${(h / scale.value) * g.s}px`,
+  };
+});
+
+function minimapPan(event: MouseEvent): void {
+  const g = minimapGeometry.value;
+  const rect = minimapEl.value?.getBoundingClientRect();
+  if (!g || !rect) return;
+  const worldX = (event.clientX - rect.left - g.offX) / g.s + g.minX;
+  const worldY = (event.clientY - rect.top - g.offY) / g.s + g.minY;
+  const { w, h } = viewportSize.value;
+  tx.value = w / 2 - worldX * scale.value;
+  ty.value = h / 2 - worldY * scale.value;
+}
+
+function onMinimapDown(event: MouseEvent): void {
+  if (event.button !== 0) return;
+  minimapPan(event);
+  const move = (moveEvent: MouseEvent): void => minimapPan(moveEvent);
+  const up = (): void => {
+    window.removeEventListener("mousemove", move);
+    window.removeEventListener("mouseup", up);
+  };
+  window.addEventListener("mousemove", move);
+  window.addEventListener("mouseup", up);
+}
+
 // ── formatting ──────────────────────────────────────────────────────
 
 /** Foot label: first model, "+N" when a turn mixed several; agent name when none reported. */
@@ -421,6 +514,14 @@ function modelLabel(models: string[]): string {
   const [first, ...rest] = models;
   if (!first) return "opencode";
   return rest.length === 0 ? first : `${first} +${rest.length}`;
+}
+
+/** Foot left side: tool count plus the run's wall time and output tokens when known. */
+function footMeta(node: TurnNode): string {
+  const bits = [node.toolNames.length > 0 ? `${node.toolNames.length} 个工具` : "无工具调用"];
+  if (node.durationMs !== null) bits.push(formatDuration(node.durationMs));
+  if (node.outputTokens > 0) bits.push(formatTokens(node.outputTokens));
+  return bits.join(" · ");
 }
 
 function relativeTime(timestamp: number): string {

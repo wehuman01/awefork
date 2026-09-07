@@ -44,11 +44,14 @@ It is intentionally scoped: read-only projection of your real agent sessions, fo
 └──────────────┴──────────────────────────────────┘
 ```
 
-- **Navigator** — all opencode sessions grouped by project directory (folders fold); forks nest under their parent.
-- **Turn pane** — the right panel shows one turn: its prompt and reply. Click a canvas card or a sidebar session and the pane jumps there; while a new turn runs, it follows along.
+- **Navigator** — all opencode sessions grouped by project directory (folders fold); forks nest under their parent. Right-click a row to rename (`PATCH /session`).
+- **Turn pane** — the right panel shows one turn: its prompt and reply, with run duration and output tokens in the header. Click a canvas card or a sidebar session and the pane jumps there; while a new turn runs, it follows along. Walk turns with ‹ › or ←/→.
 - **Fork here** — any user turn can seed a new branch. The new session keeps that full turn (question + answer), and awefork lands you in it.
-- **Model choice** — when starting a branch, pick any model configured in opencode (or keep the default).
+- **Checkpoint clone** — fork the selected branch's latest state in one click, no turn picking needed.
+- **Model choice** — a searchable picker (70+ models is fine) when starting a branch, plus a per-session picker beside the composer.
 - **Continue** — send messages from awefork; replies stream in live. Replying while an older turn is selected branches from that turn.
+- **Canvas** — selecting a turn highlights its full path from the root and dims the rest; fit view, and a minimap once the working set grows.
+- **Command palette** — ⌘K / Ctrl+K to jump between sessions and fire actions; drag the column handles to resize, double-click to fold.
 - **Native sessions** — forking calls `opencode serve`'s fork API; the result is a real session (open it in the TUI anytime).
 
 ## Install

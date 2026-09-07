@@ -26,6 +26,7 @@ interface FakeMessage {
     modelID?: string;
     providerID?: string;
     model?: { providerID?: string; modelID?: string };
+    tokens?: { input?: number; output?: number; total?: number };
     time: { created: number; completed?: number };
   };
   parts: { type: string; text?: string; tool?: string }[];
@@ -110,6 +111,19 @@ function startFakeServer(state: FakeState): Promise<{ server: Server; baseUrl: s
         state.sessions = state.sessions.filter((s) => s.id !== id);
         res.writeHead(204);
         res.end();
+        return;
+      }
+
+      if (method === "PATCH" && deleteMatch) {
+        const id = deleteMatch[1] ?? "";
+        const target = state.sessions.find((s) => s.id === id);
+        if (!target) {
+          res.writeHead(404);
+          res.end(JSON.stringify({ data: { message: `Session not found: ${id}` } }));
+          return;
+        }
+        if (typeof payload.title === "string") target.title = payload.title;
+        res.end(JSON.stringify(target));
         return;
       }
 
@@ -280,6 +294,16 @@ describe("opencode adapter", () => {
     expect(messages[1]?.completedAt).toBe(5000);
   });
 
+  it("maps assistant token usage; user rows report none", async () => {
+    const state = baseState();
+    const a1 = state.messages.s1?.[1]?.info;
+    if (a1) a1.tokens = { total: 99, input: 70, output: 29 };
+    const { adapter } = await newAdapter(state);
+    const messages = await adapter.messages("s1");
+    expect(messages[0]?.outputTokens).toBeNull();
+    expect(messages[1]?.outputTokens).toBe(29);
+  });
+
   it("lists models with ids and names only — provider secrets dropped", async () => {
     const state = baseState();
     const { adapter } = await newAdapter(state);
@@ -376,6 +400,13 @@ describe("opencode adapter", () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
     unsubscribe();
     expect(events).toContainEqual({ type: "session.idle", sessionId: "s1" });
+  });
+
+  it("renameSession PATCHes the title onto the session row", async () => {
+    const state = baseState();
+    const { adapter } = await newAdapter(state);
+    await adapter.renameSession("s1", "renamed title");
+    expect(state.sessions.find((s) => s.id === "s1")?.title).toBe("renamed title");
   });
 
   it("deleteSession removes the session server-side and its lineage record", async () => {

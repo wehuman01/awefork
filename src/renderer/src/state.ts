@@ -50,8 +50,12 @@ interface AppState {
   draft: DraftState | null;
   /** True while the draft's fork+prompt round-trip is in flight. */
   draftSending: boolean;
+  /** Model the pane composer will use next, per session; null = agent default. */
+  paneModels: Record<string, ModelChoice | null>;
   /** Bumped to ask the canvas to center on a session's latest node. */
   focusRequest: { sessionId: string; nonce: number } | null;
+  /** Bumped to ask the canvas to fit the whole working set in view. */
+  fitRequest: number | null;
 }
 
 const state = reactive<AppState>({
@@ -71,7 +75,9 @@ const state = reactive<AppState>({
   actionError: null,
   draft: null,
   draftSending: false,
+  paneModels: {},
   focusRequest: null,
+  fitRequest: null,
 });
 
 export const store = readonly(state);
@@ -260,6 +266,8 @@ export async function selectSession(
   if (options.focus) {
     state.focusRequest = { sessionId, nonce: Date.now() };
   }
+  // The pane's model picker needs the catalog; load it once, lazily.
+  void ensureModels();
   // Reload unconditionally: clicking a card is also the user's healing path
   // for a stale card (e.g. a lost SSE finish signal).
   await loadSessionMessages(sessionId);
@@ -272,6 +280,15 @@ export async function selectTurn(node: TurnNode): Promise<void> {
     await selectSession(node.sessionId);
   }
   state.selectedTurnId = node.id;
+}
+
+/** Move the pane to a neighboring turn of the selected session (±1). */
+export function stepTurn(delta: number): void {
+  const pane = paneTurn.value;
+  if (!pane) return;
+  const target = selectedTurns.value[pane.index + delta];
+  if (!target) return;
+  state.selectedTurnId = `${target.sessionId}:${target.messageId}`;
 }
 
 /** Load messages for every session currently on the canvas that lacks them. */
@@ -430,6 +447,35 @@ export async function deleteSession(sessionId: string): Promise<void> {
   }
 }
 
+/**
+ * Fork the selected session at its latest state — a checkpoint branch holding
+ * the full story with nothing prompted yet. Lands you in the clone.
+ */
+export async function cloneSelectedSession(): Promise<void> {
+  const sessionId = state.selectedId;
+  if (!sessionId || state.running[sessionId]) return;
+  state.actionError = null;
+  try {
+    const forked = await window.awefork.fork(sessionId, null);
+    await refreshSessions();
+    await selectSession(forked.id, { focus: true });
+  } catch (error) {
+    state.actionError = error instanceof Error ? error.message : String(error);
+  }
+}
+
+/** Rename a session through the agent's native API and update local state. */
+export async function renameSession(sessionId: string, title: string): Promise<void> {
+  const trimmed = title.trim();
+  if (!trimmed) return;
+  try {
+    await window.awefork.renameSession(sessionId, trimmed);
+    state.sessions = state.sessions.map((s) => (s.id === sessionId ? { ...s, title: trimmed } : s));
+  } catch (error) {
+    state.actionError = error instanceof Error ? error.message : String(error);
+  }
+}
+
 export function openDraft(node: TurnNode): void {
   void ensureModels();
   state.draft = {
@@ -539,6 +585,7 @@ function appendLocalMessage(
         providerId: model?.providerId ?? null,
         createdAt: Date.now(),
         completedAt: null,
+        outputTokens: null,
       },
     ],
   };
@@ -552,19 +599,19 @@ function appendLocalMessage(
 export async function sendPanePrompt(text: string): Promise<void> {
   if (!state.selectedId || !text.trim()) return;
   state.selectedTurnId = null;
-  await sendPrompt(text);
+  await sendPrompt(text, state.paneModels[state.selectedId] ?? null);
 }
 
-export async function sendPrompt(text: string): Promise<void> {
+export async function sendPrompt(text: string, model: ModelChoice | null = null): Promise<void> {
   if (!state.selectedId || !text.trim()) return;
   state.actionError = null;
   activeStreamSessions.add(state.selectedId);
   state.running = { ...state.running, [state.selectedId]: true };
   const sessionId = state.selectedId;
   const sentAt = Date.now();
-  appendLocalMessage(sessionId, text);
+  appendLocalMessage(sessionId, text, model);
   try {
-    await window.awefork.prompt(sessionId, text, null);
+    await window.awefork.prompt(sessionId, text, plainModel(model));
     watchCompletion(sessionId, sentAt);
   } catch (error) {
     activeStreamSessions.delete(sessionId);
@@ -573,6 +620,16 @@ export async function sendPrompt(text: string): Promise<void> {
     state.running = rest;
     state.actionError = error instanceof Error ? error.message : String(error);
   }
+}
+
+/** Remember the model the pane composer should use for this session's next run. */
+export function setPaneModel(sessionId: string, model: ModelChoice | null): void {
+  state.paneModels = { ...state.paneModels, [sessionId]: model };
+}
+
+/** Ask the canvas to fit the whole working set in view (command palette). */
+export function requestCanvasFit(): void {
+  state.fitRequest = Date.now();
 }
 
 export async function abortRun(): Promise<void> {

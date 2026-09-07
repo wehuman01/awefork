@@ -12,6 +12,7 @@ function user(id: string, text: string, createdAt = 1000): ChatMessage {
     providerId: null,
     createdAt,
     completedAt: null,
+    outputTokens: null,
   };
 }
 
@@ -22,6 +23,7 @@ function assistant(
   toolNames: string[] = [],
   modelId: string | null = null,
   providerId: string | null = null,
+  overrides: Partial<ChatMessage> = {},
 ): ChatMessage {
   return {
     id,
@@ -32,6 +34,8 @@ function assistant(
     providerId,
     createdAt,
     completedAt: null,
+    outputTokens: null,
+    ...overrides,
   };
 }
 
@@ -117,6 +121,33 @@ describe("buildTurns", () => {
   it("falls back to a placeholder title for blank prompts", () => {
     const turns = buildTurns("s1", [user("u1", "   ")]);
     expect(turns[0]?.title).toBe("(empty prompt)");
+  });
+
+  it("titles a blank prompt after its first tool, else the reply's first line", () => {
+    const withTool = buildTurns("s1", [
+      user("u1", "  "),
+      assistant("a1", "did things", 2000, ["read"]),
+    ]);
+    expect(withTool[0]?.title).toBe("🔧 read");
+
+    const withReplyOnly = buildTurns("s1", [user("u1", ""), assistant("a1", "summary line\nmore")]);
+    expect(withReplyOnly[0]?.title).toBe("summary line");
+  });
+
+  it("measures the turn's run duration and sums output tokens", () => {
+    const turns = buildTurns("s1", [
+      user("u1", "q", 1000),
+      assistant("a1", "part one", 2000, [], null, null, { outputTokens: 120, completedAt: 5000 }),
+      assistant("a2", "part two", 6000, [], null, null, { outputTokens: 30, completedAt: 8000 }),
+    ]);
+    expect(turns[0]?.durationMs).toBe(7000);
+    expect(turns[0]?.outputTokens).toBe(150);
+  });
+
+  it("keeps duration null and tokens zero while a run never reported completion", () => {
+    const turns = buildTurns("s1", [user("u1", "q"), assistant("a1", "partial")]);
+    expect(turns[0]?.durationMs).toBeNull();
+    expect(turns[0]?.outputTokens).toBe(0);
   });
 
   it("returns no turns for an empty session", () => {

@@ -17,6 +17,8 @@ const api = {
   prompt: (sessionId: string, text: string, model: ModelChoice | null): Promise<void> =>
     ipcRenderer.invoke("awefork:prompt", sessionId, text, model),
   abort: (sessionId: string): Promise<void> => ipcRenderer.invoke("awefork:abort", sessionId),
+  renameSession: (sessionId: string, title: string): Promise<void> =>
+    ipcRenderer.invoke("awefork:renameSession", sessionId, title),
   pins: (): Promise<string[]> => ipcRenderer.invoke("awefork:pins"),
   togglePin: (sessionId: string): Promise<string[]> =>
     ipcRenderer.invoke("awefork:togglePin", sessionId),

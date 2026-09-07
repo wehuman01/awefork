@@ -29,11 +29,18 @@
       <span class="status-dot"></span>
       {{ connectionError ? "opencode 未连接" : "opencode 已连接" }}
     </div>
+    <button
+      type="button"
+      class="icon-btn cmdk-btn"
+      title="命令面板（⌘K / Ctrl+K）"
+      @click="togglePalette()"
+    >⌘K</button>
   </header>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
+import { togglePalette } from "../layout";
 import { directories, store, switchDirectory } from "../state";
 
 const open = ref(false);

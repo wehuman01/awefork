@@ -37,6 +37,10 @@ export interface TurnNode {
   /** Model that wrote the turn's last reply; null for stubs / when unreported. */
   model: ModelChoice | null;
   createdAt: number;
+  /** Last reply's completion minus the prompt's creation; null for stubs / unfinished runs. */
+  durationMs: number | null;
+  /** Output tokens summed across the turn's replies; 0 for stubs. */
+  outputTokens: number;
   col: number;
   row: number;
   x: number;
@@ -167,6 +171,8 @@ export function buildTurnGraph(options: BuildGraphOptions): TurnGraph {
         modelIds: [],
         model: null,
         createdAt: session.createdAt,
+        durationMs: null,
+        outputTokens: 0,
       });
       connect(sourceNodeId, stub.id, edgeKind);
     }
@@ -184,6 +190,8 @@ export function buildTurnGraph(options: BuildGraphOptions): TurnGraph {
         modelIds: turn.modelIds,
         model: turn.model,
         createdAt: turn.createdAt,
+        durationMs: turn.durationMs,
+        outputTokens: turn.outputTokens,
       });
       nodeByMessage.set(turn.messageId, node.id);
       connect(previousId, node.id, index === 0 ? previousKind : "sequence");

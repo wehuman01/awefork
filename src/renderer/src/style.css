@@ -85,6 +85,21 @@ textarea {
   min-height: 0;
 }
 
+/* drag handles between the three shell columns */
+
+.col-handle {
+  flex: 0 0 7px;
+  cursor: col-resize;
+  background: transparent;
+  position: relative;
+  z-index: 5;
+}
+
+.col-handle:hover,
+.col-handle:active {
+  background: var(--primary-soft);
+}
+
 /* ── top bar ───────────────────────────────────────────────────────── */
 
 .topbar {
@@ -217,6 +232,14 @@ textarea {
 .topbar-status.ok .status-dot {
   background: var(--mint);
   box-shadow: 0 0 0 3px var(--mint-soft);
+}
+
+.cmdk-btn {
+  margin-left: 10px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 9px;
+  font-size: 11.5px;
 }
 
 .topbar-status.bad .status-dot {
@@ -492,6 +515,49 @@ textarea {
   color: var(--ink-faint);
 }
 
+/* right-click menu + inline rename (sidebar) */
+
+.ctx-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 140px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lift);
+  padding: 5px;
+}
+
+.ctx-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--ink-soft);
+}
+
+.ctx-menu-item:hover {
+  background: var(--primary-soft);
+  color: var(--primary-deep);
+}
+
+.sess-rename {
+  flex: 1;
+  min-width: 0;
+  margin-right: 4px;
+  border: 1.5px solid var(--primary);
+  border-radius: 10px;
+  background: var(--card);
+  padding: 5px 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  outline: none;
+  box-shadow: 0 0 0 3px var(--primary-soft);
+}
+
 /* ── canvas ────────────────────────────────────────────────────────── */
 
 .viewport {
@@ -529,6 +595,7 @@ textarea {
   fill: none;
   stroke: #ffb08a;
   stroke-width: 2.5;
+  transition: stroke-opacity 0.15s;
 }
 
 .edge.fork {
@@ -536,8 +603,30 @@ textarea {
   stroke-dasharray: 7 7;
 }
 
+.edge.active {
+  stroke: var(--primary-deep);
+  stroke-width: 3.5;
+}
+
+.edge.fork.active {
+  stroke: #7a66d6;
+}
+
+.edge.dim {
+  stroke-opacity: 0.22;
+}
+
 .edge-dot {
   fill: #ffb08a;
+  transition: fill-opacity 0.15s;
+}
+
+.edge-dot.active {
+  fill: var(--primary-deep);
+}
+
+.edge-dot.dim {
+  fill-opacity: 0.22;
 }
 
 /* turn cards */
@@ -552,7 +641,12 @@ textarea {
   transition:
     box-shadow 0.15s,
     border-color 0.15s,
-    transform 0.15s;
+    transform 0.15s,
+    opacity 0.15s;
+}
+
+.turn.dimmed {
+  opacity: 0.35;
 }
 
 .turn:hover {
@@ -824,25 +918,10 @@ textarea {
   flex: 0 0 auto;
 }
 
-.model-select {
+/* the canvas draft's model picker fills the row's leftover width */
+.draft-foot .mp {
   flex: 1;
   min-width: 0;
-  border: 1px solid var(--line);
-  background: var(--card);
-  border-radius: 999px;
-  padding: 4px 10px;
-  font-size: 11.5px;
-  font-weight: 700;
-  color: var(--primary-deep);
-  cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.model-select:focus {
-  outline: none;
-  border-color: var(--primary-border);
 }
 
 .mini-select {
@@ -993,6 +1072,47 @@ textarea {
   border-color: var(--primary-border);
 }
 
+/* minimap — appears once the working set outgrows the overview heuristic */
+
+.minimap {
+  position: absolute;
+  left: 16px;
+  bottom: 46px;
+  width: 176px;
+  height: 110px;
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(4px);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  cursor: pointer;
+}
+
+.mm-node {
+  position: absolute;
+  border-radius: 2px;
+  background: #ffd0b5;
+  border: 1px solid #ffb08a;
+}
+
+.mm-node.on {
+  background: var(--primary);
+  border-color: var(--primary-deep);
+}
+
+.mm-node.stub {
+  background: #eee6f8;
+  border-color: #c9b8f0;
+}
+
+.mm-view {
+  position: absolute;
+  border: 1.5px solid var(--primary-deep);
+  border-radius: 3px;
+  background: rgba(255, 138, 92, 0.08);
+  pointer-events: none;
+}
+
 /* ── branch context panel ──────────────────────────────────────────── */
 
 .context {
@@ -1052,6 +1172,35 @@ textarea {
   border-radius: 999px;
   padding: 3px 10px;
   flex: 0 0 auto;
+}
+
+.ctx-nav {
+  display: flex;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.nav-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--ink-soft);
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.nav-btn:hover:not(:disabled) {
+  border-color: var(--primary-border);
+  color: var(--primary-deep);
+  background: var(--primary-soft);
+}
+
+.nav-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 .ctx-empty {
@@ -1224,6 +1373,94 @@ textarea {
   font-weight: 800;
   border-radius: 999px;
   padding: 6px 18px;
+}
+
+/* ── command palette ───────────────────────────────────────────────── */
+
+.palette-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(74, 63, 58, 0.25);
+  backdrop-filter: blur(2px);
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 14vh;
+}
+
+.palette {
+  width: 540px;
+  max-width: 86vw;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  box-shadow: var(--shadow-lift);
+  padding: 8px;
+}
+
+.palette-input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 14px;
+  font-size: 14px;
+  outline: none;
+}
+
+.palette-input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-soft);
+}
+
+.palette-list {
+  margin-top: 6px;
+  max-height: 320px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.palette-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  padding: 8px 12px;
+  border-radius: 10px;
+}
+
+.palette-item.hl {
+  background: var(--primary-soft);
+}
+
+.palette-icon {
+  flex: 0 0 auto;
+  font-size: 13px;
+}
+
+.palette-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.palette-hint {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+
+.palette-empty {
+  padding: 16px;
+  text-align: center;
+  font-size: 12.5px;
+  color: var(--ink-faint);
 }
 
 /* ── banners & toasts ──────────────────────────────────────────────── */

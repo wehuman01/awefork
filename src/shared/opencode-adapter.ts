@@ -70,6 +70,7 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
         providerId,
         createdAt: m.info.time.created,
         completedAt: typeof m.info.time.completed === "number" ? m.info.time.completed : null,
+        outputTokens: typeof m.info.tokens?.output === "number" ? m.info.tokens.output : null,
       };
     });
 
@@ -135,6 +136,10 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
     async deleteSession(sessionId) {
       await client.deleteSession(sessionId);
       await removeFork(options.lineagePath, sessionId);
+    },
+
+    async renameSession(sessionId, title) {
+      await client.renameSession(sessionId, title);
     },
 
     async abort(sessionId) {

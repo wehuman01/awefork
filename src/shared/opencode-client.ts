@@ -33,6 +33,8 @@ interface OcMessageInfo {
   providerID?: string;
   /** User messages record the run's model here instead of top-level modelID. */
   model?: { providerID?: string; modelID?: string };
+  /** Present on assistant messages: {total, input, output, reasoning, cache}. */
+  tokens?: { input?: number; output?: number; total?: number };
   time: { created: number; completed?: number };
 }
 
@@ -77,6 +79,8 @@ export interface OpencodeClient {
   fork(sessionId: string, cutMessageId: string | null): Promise<OcSession>;
   /** Permanently remove a session and its messages. */
   deleteSession(sessionId: string): Promise<void>;
+  /** PATCH /session/:id — rename a session in place. */
+  renameSession(sessionId: string, title: string): Promise<OcSession>;
   /**
    * Fire a run on POST /session/:id/message. This endpoint resolves only when
    * the whole run finishes — and unlike prompt_async it publishes the run's
@@ -146,6 +150,12 @@ export function createOpencodeClient(baseUrl: string): OpencodeClient {
     deleteSession: async (id) => {
       await request(`/session/${id}`, { method: "DELETE" });
     },
+    renameSession: (id, title) =>
+      request<OcSession>(`/session/${id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ title }),
+      }),
     prompt: async (id, text, model) => {
       await request(`/session/${id}/message`, {
         method: "POST",
