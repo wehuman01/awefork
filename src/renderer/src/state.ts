@@ -175,6 +175,31 @@ const streamBuffers = new Map<string, string>();
 /** Sessions whose messages have been requested (or are already cached). */
 const attemptedMessages = new Set<string>();
 
+/**
+ * Poll-based watchdogs for prompts awefork sent, keyed by session. Run-finish
+ * signals ride the SSE stream (session.idle / session.status idle) and an
+ * event-stream gap loses them forever — so every send also polls messages
+ * until the run's assistant row reports a completion time. Whichever signal
+ * lands first settles the run; the other becomes a no-op.
+ */
+const completionWatches = new Map<
+  string,
+  { timer: ReturnType<typeof setInterval>; sentAt: number; ticks: number }
+>();
+const WATCH_INTERVAL_MS = 1500;
+const WATCH_MAX_TICKS = 160; // give up after ~4 minutes; SSE busy frames re-set running anyway
+
+let refreshTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** Trailing debounce: one refresh per burst of session events. */
+function scheduleRefresh(delay = 400): void {
+  if (refreshTimer) return;
+  refreshTimer = setTimeout(() => {
+    refreshTimer = null;
+    void refreshSessions();
+  }, delay);
+}
+
 export async function init(): Promise<void> {
   const ready = await window.awefork.ready();
   if (!ready.ok) {
@@ -235,9 +260,9 @@ export async function selectSession(
   if (options.focus) {
     state.focusRequest = { sessionId, nonce: Date.now() };
   }
-  if (!attemptedMessages.has(sessionId)) {
-    await loadSessionMessages(sessionId);
-  }
+  // Reload unconditionally: clicking a card is also the user's healing path
+  // for a stale card (e.g. a lost SSE finish signal).
+  await loadSessionMessages(sessionId);
   await ensureCanvasMessages();
 }
 
@@ -258,24 +283,76 @@ async function ensureCanvasMessages(): Promise<void> {
   state.loadingMessages = false;
 }
 
-async function loadSessionMessages(sessionId: string): Promise<void> {
+async function loadSessionMessages(
+  sessionId: string,
+  reportError = true,
+): Promise<ChatMessage[] | null> {
   attemptedMessages.add(sessionId);
   try {
     // Await first, THEN merge: spreading before the await would snapshot the
     // pre-await state, and concurrent loads would overwrite each other.
     const messages = await window.awefork.messages(sessionId);
     state.messagesBySession = { ...state.messagesBySession, [sessionId]: messages };
+    return messages;
   } catch (error) {
-    if (state.selectedId === sessionId) {
+    if (reportError && state.selectedId === sessionId) {
       state.messagesError = error instanceof Error ? error.message : String(error);
     }
+    return null;
   }
+}
+
+/** Start (or restart) the poll watchdog for a prompt awefork just sent. */
+function watchCompletion(sessionId: string, sentAt: number): void {
+  stopWatch(sessionId);
+  const timer = setInterval(() => {
+    const watch = completionWatches.get(sessionId);
+    if (!watch) return;
+    watch.ticks += 1;
+    void pollForCompletion(sessionId, watch);
+  }, WATCH_INTERVAL_MS);
+  completionWatches.set(sessionId, { timer, sentAt, ticks: 0 });
+}
+
+function stopWatch(sessionId: string): void {
+  const watch = completionWatches.get(sessionId);
+  if (watch) {
+    clearInterval(watch.timer);
+    completionWatches.delete(sessionId);
+  }
+}
+
+async function pollForCompletion(
+  sessionId: string,
+  watch: { sentAt: number; ticks: number },
+): Promise<void> {
+  const messages = await loadSessionMessages(sessionId, false);
+  // idle may have stopped the watch while the fetch was in flight.
+  if (!completionWatches.has(sessionId)) return;
+  const done = messages?.some(
+    (m) => m.role === "assistant" && m.completedAt !== null && m.completedAt >= watch.sentAt,
+  );
+  if (done || watch.ticks >= WATCH_MAX_TICKS) {
+    stopWatch(sessionId);
+    settleRun(sessionId);
+  }
+}
+
+/** Shared run-finished cleanup, driven by SSE idle or the poll watchdog. */
+function settleRun(sessionId: string): void {
+  activeStreamSessions.delete(sessionId);
+  streamBuffers.delete(sessionId);
+  const { [sessionId]: finished, ...stillRunning } = state.running;
+  void finished;
+  state.running = stillRunning;
+  if (state.selectedId === sessionId) state.streamText = "";
 }
 
 function handleEvent(event: AgentEvent): void {
   switch (event.type) {
     case "session.updated": {
-      void refreshSessions();
+      // A single run emits several of these; coalesce into one refresh.
+      scheduleRefresh();
       break;
     }
     case "message.started": {
@@ -292,12 +369,8 @@ function handleEvent(event: AgentEvent): void {
       break;
     }
     case "session.idle": {
-      activeStreamSessions.delete(event.sessionId);
-      streamBuffers.delete(event.sessionId);
-      const { [event.sessionId]: finished, ...stillRunning } = state.running;
-      void finished;
-      state.running = stillRunning;
-      if (event.sessionId === state.selectedId) state.streamText = "";
+      stopWatch(event.sessionId);
+      settleRun(event.sessionId);
       // Refresh the canvas card (and panel) with the finished reply.
       void loadSessionMessages(event.sessionId);
       void refreshSessions();
@@ -333,6 +406,7 @@ export async function deleteSession(sessionId: string): Promise<void> {
   state.actionError = null;
   try {
     state.pins = await window.awefork.deleteSession(sessionId);
+    stopWatch(sessionId);
     const { [sessionId]: goneMessages, ...keptMessages } = state.messagesBySession;
     void goneMessages;
     state.messagesBySession = keptMessages;
@@ -418,18 +492,21 @@ export async function sendDraft(): Promise<void> {
   state.draftSending = true;
   try {
     const model = plainModel(draft.model);
+    const sentAt = Date.now();
     if (draft.atMessageId) {
       const forked = await window.awefork.fork(draft.sessionId, draft.atMessageId);
       await refreshSessions();
       await selectSession(forked.id, { focus: true });
       await window.awefork.prompt(forked.id, text, model);
+      watchCompletion(forked.id, sentAt);
       // Surface the carried-over prompt as the branch's first own turn right
       // away; the idle refresh swaps it for the server's row.
-      appendLocalMessage(forked.id, text);
+      appendLocalMessage(forked.id, text, model);
     } else {
       await selectSession(draft.sessionId, { focus: true });
       await window.awefork.prompt(draft.sessionId, text, model);
-      appendLocalMessage(draft.sessionId, text);
+      watchCompletion(draft.sessionId, sentAt);
+      appendLocalMessage(draft.sessionId, text, model);
     }
     state.draft = null;
   } catch (error) {
@@ -441,9 +518,14 @@ export async function sendDraft(): Promise<void> {
 
 /**
  * Show a sent prompt immediately; the next server refresh replaces it with
- * the real message row.
+ * the real message row. `model` seeds the canvas card's model chip so the
+ * chosen model shows before the server rows arrive.
  */
-function appendLocalMessage(sessionId: string, text: string): void {
+function appendLocalMessage(
+  sessionId: string,
+  text: string,
+  model: ModelChoice | null = null,
+): void {
   state.messagesBySession = {
     ...state.messagesBySession,
     [sessionId]: [
@@ -453,9 +535,10 @@ function appendLocalMessage(sessionId: string, text: string): void {
         role: "user",
         text,
         toolNames: [],
-        modelId: null,
-        providerId: null,
+        modelId: model?.modelId ?? null,
+        providerId: model?.providerId ?? null,
         createdAt: Date.now(),
+        completedAt: null,
       },
     ],
   };
@@ -478,9 +561,11 @@ export async function sendPrompt(text: string): Promise<void> {
   activeStreamSessions.add(state.selectedId);
   state.running = { ...state.running, [state.selectedId]: true };
   const sessionId = state.selectedId;
+  const sentAt = Date.now();
   appendLocalMessage(sessionId, text);
   try {
     await window.awefork.prompt(sessionId, text, null);
+    watchCompletion(sessionId, sentAt);
   } catch (error) {
     activeStreamSessions.delete(sessionId);
     const { [sessionId]: stopped, ...rest } = state.running;

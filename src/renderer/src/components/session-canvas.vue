@@ -53,7 +53,12 @@
           </div>
           <div class="turn-body">
             <span class="avatar bot">✨</span>
-            <p class="turn-preview">{{ node.preview || "(工具调用，无文本回复)" }}</p>
+            <p class="turn-preview">
+              {{
+                node.preview ||
+                  (node.toolNames.length > 0 ? "(工具调用，无文本回复)" : "(无文本回复)")
+              }}
+            </p>
           </div>
           <div v-if="node.toolNames.length > 0" class="chips">
             <span
@@ -411,16 +416,11 @@ watch(
 
 // ── formatting ──────────────────────────────────────────────────────
 
-/** "glm/glm-5.3-flash" → "glm-5.3-flash"; provider prefix lives in the tooltip. */
-function shortModel(id: string): string {
-  return id.split("/").pop() || id;
-}
-
 /** Foot label: first model, "+N" when a turn mixed several; agent name when none reported. */
 function modelLabel(models: string[]): string {
   const [first, ...rest] = models;
   if (!first) return "opencode";
-  return rest.length === 0 ? shortModel(first) : `${shortModel(first)} +${rest.length}`;
+  return rest.length === 0 ? first : `${first} +${rest.length}`;
 }
 
 function relativeTime(timestamp: number): string {

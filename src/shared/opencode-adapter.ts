@@ -21,6 +21,8 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
   const client: OpencodeClient = createOpencodeClient(options.baseUrl);
 
   let abortController: AbortController | null = null;
+  /** Set by subscribe; lets detached prompts report request-level failures. */
+  let emitEvent: ((event: AgentEvent) => void) | null = null;
 
   const mapSession = (s: {
     id: string;
@@ -39,26 +41,37 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
   });
 
   const mapMessages = (raw: Awaited<ReturnType<OpencodeClient["messages"]>>): ChatMessage[] =>
-    raw.map((m) => ({
-      id: m.info.id,
-      role: m.info.role,
-      text: m.parts
-        .filter((p) => p.type === "text" && typeof p.text === "string")
-        .map((p) => p.text as string)
-        .join("\n")
-        .trim(),
-      toolNames: [
-        ...new Set(
-          m.parts
-            .filter((p) => p.type === "tool")
-            .map((p) => (typeof p.tool === "string" ? p.tool : "tool"))
-            .filter(Boolean),
-        ),
-      ],
-      modelId: m.info.modelID ?? null,
-      providerId: m.info.providerID ?? null,
-      createdAt: m.info.time.created,
-    }));
+    raw.map((m) => {
+      // Assistant rows report the model top-level; the user row that opened
+      // the run carries it nested under `model`. Reading both keeps the model
+      // visible even when a run dies before its assistant row reports back.
+      const nested = m.info.model;
+      const modelId =
+        m.info.modelID ?? (typeof nested?.modelID === "string" ? nested.modelID : null);
+      const providerId =
+        m.info.providerID ?? (typeof nested?.providerID === "string" ? nested.providerID : null);
+      return {
+        id: m.info.id,
+        role: m.info.role,
+        text: m.parts
+          .filter((p) => p.type === "text" && typeof p.text === "string")
+          .map((p) => p.text as string)
+          .join("\n")
+          .trim(),
+        toolNames: [
+          ...new Set(
+            m.parts
+              .filter((p) => p.type === "tool")
+              .map((p) => (typeof p.tool === "string" ? p.tool : "tool"))
+              .filter(Boolean),
+          ),
+        ],
+        modelId,
+        providerId,
+        createdAt: m.info.time.created,
+        completedAt: typeof m.info.time.completed === "number" ? m.info.time.completed : null,
+      };
+    });
 
   async function findCutMessageId(sessionId: string, atMessageId: string): Promise<string | null> {
     const messages = await client.messages(sessionId);
@@ -109,7 +122,14 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
     },
 
     async prompt(sessionId, text, model) {
-      await client.promptAsync(sessionId, text, model);
+      // Detached on purpose: /message only resolves when the whole run
+      // finishes, while progress reaches this adapter through the /event
+      // stream. Request-level failures (server gone, unknown session) have no
+      // event, so they surface here as server.error.
+      client.prompt(sessionId, text, model).catch((error) => {
+        const detail = error instanceof Error ? error.message : String(error);
+        emitEvent?.({ type: "server.error", message: `Prompt failed for ${sessionId}: ${detail}` });
+      });
     },
 
     async deleteSession(sessionId) {
@@ -130,6 +150,7 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
       const emit = (event: AgentEvent) => {
         if (!stopped) handler(event);
       };
+      emitEvent = emit;
 
       const connect = async () => {
         while (!stopped && !signal.aborted) {
@@ -163,6 +184,7 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
       void connect();
       return () => {
         stopped = true;
+        if (emitEvent === emit) emitEvent = null;
         abortController?.abort();
       };
     },
@@ -194,7 +216,8 @@ function emitToAgentEvent(
       break;
     }
     case "message.part.updated": {
-      // Same replay concern: skip frames without an actual text delta.
+      // Snapshot frames carry no delta on opencode 1.18; older builds put the
+      // text delta here. Skip frames without one.
       if (typeof props.delta !== "string" || props.delta === "") break;
       const part = props.part as { sessionID?: string; messageID?: string } | undefined;
       const sessionId = sessionIdOf(props.sessionID ?? part?.sessionID);
@@ -209,11 +232,32 @@ function emitToAgentEvent(
       }
       break;
     }
+    case "message.part.delta": {
+      // opencode 1.18 streams text growth through this dedicated event.
+      if (props.field !== "text") break;
+      if (typeof props.delta !== "string" || props.delta === "") break;
+      const sessionId = sessionIdOf(props.sessionID);
+      const messageId = messageIdOf(props.messageID);
+      if (sessionId && messageId) {
+        emit({
+          type: "message.delta",
+          sessionId,
+          messageId,
+          delta: props.delta as string,
+        });
+      }
+      break;
+    }
     case "session.status": {
       const sessionId = sessionIdOf(props.sessionID);
+      if (!sessionId) break;
       const status = props.status as { type?: unknown } | undefined;
-      if (sessionId && status?.type === "busy") {
+      if (status?.type === "busy") {
         emit({ type: "message.started", sessionId, messageId: "" });
+      } else if (status?.type === "idle") {
+        // The twin of session.idle, emitted just before it. Handling both
+        // means a dropped frame of either kind still finishes the run in UI.
+        emit({ type: "session.idle", sessionId });
       }
       break;
     }

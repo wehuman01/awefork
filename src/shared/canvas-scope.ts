@@ -3,9 +3,10 @@
  *
  * Rule: the canvas shows the branch stories you pinned, plus the story you
  * are looking at. Concretely: pinned sessions and the selected session each
- * bring their fork subtree (descendants); the selected session also brings
- * its direct parent so the fork point has context. Everything else stays in
- * the sidebar index — the canvas is a workbench, not the archive.
+ * bring their whole fork tree — the selected one by walking up to the top of
+ * its story first, so a fresh fork keeps the source line and its sibling
+ * branches visible. Everything else stays in the sidebar index — the canvas
+ * is a workbench, not the archive.
  */
 
 import type { LineageMap, SessionSummary } from "./types.js";
@@ -37,9 +38,17 @@ export function selectCanvasSessions(
   for (const id of pinnedIds) addSubtree(id);
 
   if (selectedId && byId.has(selectedId)) {
-    addSubtree(selectedId);
-    const parent = lineage[selectedId]?.parentId ?? byId.get(selectedId)?.parentSessionId;
-    if (parent && byId.has(parent)) keep.add(parent);
+    // Whole story, not just the branch below the selection: walk up to the
+    // story's root, then keep its entire fork tree (siblings included).
+    let rootId = selectedId;
+    const walked = new Set([rootId]);
+    for (;;) {
+      const parent = lineage[rootId]?.parentId ?? byId.get(rootId)?.parentSessionId;
+      if (!parent || !byId.has(parent) || walked.has(parent)) break;
+      walked.add(parent);
+      rootId = parent;
+    }
+    addSubtree(rootId);
   }
 
   return sessions.filter((s) => keep.has(s.id));

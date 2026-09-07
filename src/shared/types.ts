@@ -35,11 +35,13 @@ export interface ChatMessage {
   text: string;
   /** Distinct tool names invoked in this message, in first-seen order. */
   toolNames: string[];
-  /** Model that produced this message (e.g. "glm/glm-5.3-flash"); null for user messages or when the backend reports none. */
+  /** Model that produced this message (e.g. "glm/glm-5.3-flash"); user messages carry the model the run was configured with, null when the backend reports none. */
   modelId: string | null;
   /** Provider that served the model (e.g. "oc-awerouter"); null alongside modelId. */
   providerId: string | null;
   createdAt: number;
+  /** When the backend finished the message; null while unreported or still running. */
+  completedAt: number | null;
 }
 
 /** A model the agent backend offers, flattened from its provider config. */

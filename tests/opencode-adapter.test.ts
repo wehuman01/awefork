@@ -11,8 +11,9 @@ import type { AgentEvent } from "../src/shared/types";
  * Fake opencode server mirroring the endpoints and semantics verified against
  * a real opencode 1.18 instance:
  *  - POST /session/:id/fork with {messageID} keeps messages STRICTLY BEFORE it
- *  - POST /session/:id/prompt_async fires and returns empty; model is an
- *    object {providerID, modelID} when present
+ *  - POST /session/:id/message runs to completion; model is an object
+ *    {providerID, modelID} when present. This is the variant that publishes
+ *    the run's events on /event — prompt_async publishes none on 1.18.
  *  - GET /config/providers lists providers with nested model maps
  *  - GET /event streams SSE frames
  */
@@ -24,7 +25,8 @@ interface FakeMessage {
     role: "user" | "assistant";
     modelID?: string;
     providerID?: string;
-    time: { created: number };
+    model?: { providerID?: string; modelID?: string };
+    time: { created: number; completed?: number };
   };
   parts: { type: string; text?: string; tool?: string }[];
 }
@@ -137,7 +139,7 @@ function startFakeServer(state: FakeState): Promise<{ server: Server; baseUrl: s
         return;
       }
 
-      const promptMatch = url.pathname.match(/^\/session\/([^/]+)\/prompt_async$/);
+      const promptMatch = url.pathname.match(/^\/session\/([^/]+)\/message$/);
       if (method === "POST" && promptMatch) {
         state.promptCalls.push({ sessionId: promptMatch[1] ?? "", body: payload });
         res.writeHead(204);
@@ -256,18 +258,26 @@ describe("opencode adapter", () => {
   it("maps messages to text, tool names, and model id", async () => {
     const state = baseState();
     state.messages.s1?.[1]?.parts.push({ type: "tool", tool: "bash" });
+    // opencode 1.18: the user row that opens a run carries the model nested;
+    // the assistant row reports top-level ids plus a completion time.
+    const u1 = state.messages.s1?.[0]?.info;
+    if (u1) u1.model = { providerID: "oc-fake", modelID: "glm/glm-5.3-flash" };
+    const a1 = state.messages.s1?.[1]?.info;
+    if (a1) a1.time.completed = 5000;
     const { adapter } = await newAdapter(state);
     const messages = await adapter.messages("s1");
     expect(messages[0]).toMatchObject({
       id: "u1",
       role: "user",
       text: "first question",
-      modelId: null,
-      providerId: null,
+      modelId: "glm/glm-5.3-flash",
+      providerId: "oc-fake",
+      completedAt: null,
     });
     expect(messages[1]?.toolNames).toEqual(["bash"]);
     expect(messages[1]?.modelId).toBe("glm/glm-5.3-flash");
     expect(messages[1]?.providerId).toBe("oc-fake");
+    expect(messages[1]?.completedAt).toBe(5000);
   });
 
   it("lists models with ids and names only — provider secrets dropped", async () => {
@@ -336,10 +346,12 @@ describe("opencode adapter", () => {
     await expect(adapter.fork("s1", "nope")).rejects.toThrow(/not found in session s1/);
   });
 
-  it("prompt fires the async endpoint", async () => {
+  it("prompt fires the message endpoint (the event-publishing variant)", async () => {
     const state = baseState();
     const { adapter } = await newAdapter(state);
-    await expect(adapter.prompt("s1", "hello")).resolves.toBeUndefined();
+    await adapter.prompt("s1", "hello");
+    // the request is detached; give the fake server a beat to record it
+    await new Promise((resolve) => setTimeout(resolve, 50));
     expect(state.promptCalls).toEqual([
       { sessionId: "s1", body: { parts: [{ type: "text", text: "hello" }] } },
     ]);
@@ -349,6 +361,7 @@ describe("opencode adapter", () => {
     const state = baseState();
     const { adapter } = await newAdapter(state);
     await adapter.prompt("s1", "hello", { providerId: "oc-fake", modelId: "gpt-5.6-sol" });
+    await new Promise((resolve) => setTimeout(resolve, 50));
     expect(state.promptCalls[0]?.body.model).toEqual({
       providerID: "oc-fake",
       modelID: "gpt-5.6-sol",
@@ -422,6 +435,63 @@ describe("opencode adapter", () => {
       sessionId: "s1",
       messageId: "m1",
       delta: "hello",
+    });
+  });
+
+  it("session.status idle finishes a run like session.idle (twin frames)", async () => {
+    const state = baseState();
+    state.eventFrames = [
+      { type: "session.status", properties: { sessionID: "s1", status: { type: "idle" } } },
+    ];
+    const { adapter } = await newAdapter(state);
+    const events: AgentEvent[] = [];
+    const unsubscribe = await adapter.subscribe((event) => events.push(event));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    unsubscribe();
+    expect(events).toContainEqual({ type: "session.idle", sessionId: "s1" });
+    expect(events).not.toContainEqual({ type: "message.started", sessionId: "s1", messageId: "" });
+  });
+
+  it("message.part.delta streams text deltas (opencode 1.18 shape)", async () => {
+    const state = baseState();
+    state.eventFrames = [
+      {
+        type: "message.part.delta",
+        properties: {
+          sessionID: "s1",
+          messageID: "m1",
+          partID: "p1",
+          field: "text",
+          delta: "he",
+        },
+      },
+      {
+        type: "message.part.delta",
+        properties: {
+          sessionID: "s1",
+          messageID: "m1",
+          partID: "p2",
+          field: "thinking",
+          delta: "hm",
+        },
+      },
+    ];
+    const { adapter } = await newAdapter(state);
+    const events: AgentEvent[] = [];
+    const unsubscribe = await adapter.subscribe((event) => events.push(event));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    unsubscribe();
+    expect(events).toContainEqual({
+      type: "message.delta",
+      sessionId: "s1",
+      messageId: "m1",
+      delta: "he",
+    });
+    expect(events).not.toContainEqual({
+      type: "message.delta",
+      sessionId: "s1",
+      messageId: "m1",
+      delta: "hm",
     });
   });
 

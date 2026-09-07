@@ -44,8 +44,14 @@ export function buildTurns(sessionId: string, messages: ChatMessage[]): Turn[] {
         title: title || "(empty prompt)",
         preview: "",
         toolNames: [...message.toolNames],
-        modelIds: [],
-        model: null,
+        // Seed from the user row: opencode records the run's model there, so
+        // a turn whose reply never reports (failed/empty run) still shows
+        // what was configured. Assistant models below take over when present.
+        modelIds: message.modelId ? [message.modelId] : [],
+        model:
+          message.modelId && message.providerId
+            ? { providerId: message.providerId, modelId: message.modelId }
+            : null,
         createdAt: message.createdAt,
       };
       turns.push(current);

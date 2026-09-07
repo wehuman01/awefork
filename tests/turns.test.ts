@@ -3,7 +3,16 @@ import { buildTurns } from "../src/shared/turns";
 import type { ChatMessage } from "../src/shared/types";
 
 function user(id: string, text: string, createdAt = 1000): ChatMessage {
-  return { id, role: "user", text, toolNames: [], modelId: null, providerId: null, createdAt };
+  return {
+    id,
+    role: "user",
+    text,
+    toolNames: [],
+    modelId: null,
+    providerId: null,
+    createdAt,
+    completedAt: null,
+  };
 }
 
 function assistant(
@@ -14,7 +23,16 @@ function assistant(
   modelId: string | null = null,
   providerId: string | null = null,
 ): ChatMessage {
-  return { id, role: "assistant", text, toolNames, modelId, providerId, createdAt };
+  return {
+    id,
+    role: "assistant",
+    text,
+    toolNames,
+    modelId,
+    providerId,
+    createdAt,
+    completedAt: null,
+  };
 }
 
 describe("buildTurns", () => {
@@ -76,6 +94,18 @@ describe("buildTurns", () => {
     const turns = buildTurns("s1", [user("u1", "q"), assistant("a1", "done")]);
     expect(turns[0]?.modelIds).toEqual([]);
     expect(turns[0]?.model).toBeNull();
+  });
+
+  it("seeds the turn model from the user row when the reply reports none", () => {
+    const turns = buildTurns("s1", [
+      { ...user("u1", "q"), modelId: "stepfun-2/step-3.7-flash", providerId: "oc-awerouter" },
+      assistant("a1", "", 2000),
+    ]);
+    expect(turns[0]?.modelIds).toEqual(["stepfun-2/step-3.7-flash"]);
+    expect(turns[0]?.model).toEqual({
+      providerId: "oc-awerouter",
+      modelId: "stepfun-2/step-3.7-flash",
+    });
   });
 
   it("drops assistant messages before the first user message", () => {

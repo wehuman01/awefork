@@ -31,7 +31,9 @@ interface OcMessageInfo {
   modelID?: string;
   /** Provider that served the model, e.g. "oc-awerouter". */
   providerID?: string;
-  time: { created: number };
+  /** User messages record the run's model here instead of top-level modelID. */
+  model?: { providerID?: string; modelID?: string };
+  time: { created: number; completed?: number };
 }
 
 interface OcPart {
@@ -75,7 +77,13 @@ export interface OpencodeClient {
   fork(sessionId: string, cutMessageId: string | null): Promise<OcSession>;
   /** Permanently remove a session and its messages. */
   deleteSession(sessionId: string): Promise<void>;
-  promptAsync(sessionId: string, text: string, model?: ModelChoice | null): Promise<void>;
+  /**
+   * Fire a run on POST /session/:id/message. This endpoint resolves only when
+   * the whole run finishes — and unlike prompt_async it publishes the run's
+   * events on /event (opencode 1.18: prompt_async publishes none), so callers
+   * detach it and follow progress through the event stream.
+   */
+  prompt(sessionId: string, text: string, model?: ModelChoice | null): Promise<void>;
   abort(sessionId: string): Promise<void>;
 }
 
@@ -138,8 +146,8 @@ export function createOpencodeClient(baseUrl: string): OpencodeClient {
     deleteSession: async (id) => {
       await request(`/session/${id}`, { method: "DELETE" });
     },
-    promptAsync: async (id, text, model) => {
-      await request(`/session/${id}/prompt_async`, {
+    prompt: async (id, text, model) => {
+      await request(`/session/${id}/message`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({

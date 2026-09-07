@@ -40,10 +40,10 @@ describe("selectCanvasSessions", () => {
     expect(selectCanvasSessions(sessions, lineage, [], null)).toEqual([]);
   });
 
-  it("shows the selected session with its fork subtree and direct parent", () => {
+  it("shows the whole story of the selected session — sibling branches stay", () => {
     const ids = selectCanvasSessions(sessions, lineage, [], "a-fork-1").map((s) => s.id);
-    // parent root-a is included for fork-point context; sibling a-fork-2 is not
-    expect(ids.sort()).toEqual(["a-fork-1", "a-fork-1-1", "root-a"]);
+    // walks up to root-a and brings its full fork tree, a-fork-2 included
+    expect(ids.sort()).toEqual(["a-fork-1", "a-fork-1-1", "a-fork-2", "root-a"]);
   });
 
   it("shows the whole branch story of a pinned session", () => {

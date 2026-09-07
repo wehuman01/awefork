@@ -25,6 +25,7 @@ function chain(...pairs: [string, string][]): ChatMessage[] {
       modelId: null,
       providerId: null,
       createdAt: i * 10,
+      completedAt: null,
     },
     {
       id: assistantId,
@@ -34,6 +35,7 @@ function chain(...pairs: [string, string][]): ChatMessage[] {
       modelId: `fake/model-${i + 1}`,
       providerId: "oc-fake",
       createdAt: i * 10 + 5,
+      completedAt: null,
     },
   ]);
 }
