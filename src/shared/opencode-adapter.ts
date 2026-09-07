@@ -126,10 +126,15 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
       // Detached on purpose: /message only resolves when the whole run
       // finishes, while progress reaches this adapter through the /event
       // stream. Request-level failures (server gone, unknown session) have no
-      // event, so they surface here as server.error.
+      // event, so they surface here as server.error — with the session id, so
+      // the renderer can settle that run instead of waiting out the watchdog.
       client.prompt(sessionId, text, model).catch((error) => {
         const detail = error instanceof Error ? error.message : String(error);
-        emitEvent?.({ type: "server.error", message: `Prompt failed for ${sessionId}: ${detail}` });
+        emitEvent?.({
+          type: "server.error",
+          sessionId,
+          message: `Prompt failed for ${sessionId}: ${detail}`,
+        });
       });
     },
 
@@ -274,6 +279,7 @@ function emitToAgentEvent(
         typeof detail === "string" ? detail : JSON.stringify(props.error ?? "unknown error");
       emit({
         type: "server.error",
+        sessionId,
         message: sessionId ? `${sessionId}: ${message}` : message,
       });
       break;

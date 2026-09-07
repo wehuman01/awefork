@@ -466,6 +466,15 @@ function handleEvent(event: AgentEvent): void {
     }
     case "server.error": {
       state.actionError = event.message;
+      // A failed prompt (or a server-side run error) never produces a
+      // completion signal, so the watchdog would otherwise keep the session
+      // "running" for its whole timeout. Settle the named session up front;
+      // connection-level errors carry no sessionId and only toast.
+      if (event.sessionId) {
+        stopWatch(event.sessionId);
+        settleRun(event.sessionId);
+        void refreshSessions();
+      }
       break;
     }
   }
@@ -704,6 +713,11 @@ export async function sendDraft(): Promise<void> {
       const forked = await window.awefork.fork(draft.sessionId, draft.atMessageId);
       await refreshSessions();
       await selectSession(forked.id, { focus: true });
+      // Mark the new branch running before the request goes out, like
+      // sendPrompt does — the canvas card and delete guard must not wait on
+      // the first SSE busy frame.
+      activeStreamSessions.add(forked.id);
+      state.running = { ...state.running, [forked.id]: true };
       await window.awefork.prompt(forked.id, text, model);
       watchCompletion(forked.id, sentAt);
       // Surface the carried-over prompt as the branch's first own turn right

@@ -92,7 +92,12 @@ export type AgentEvent =
   | { type: "message.started"; sessionId: string; messageId: string }
   | { type: "message.delta"; sessionId: string; messageId: string; delta: string }
   | { type: "session.idle"; sessionId: string }
-  | { type: "server.error"; message: string };
+  /**
+   * `sessionId` is set when the failure concerns one session (a failed prompt
+   * request, a session.error frame) so the renderer can settle that session's
+   * run right away; connection-level failures carry none.
+   */
+  | { type: "server.error"; message: string; sessionId?: string | null };
 
 /**
  * The protocol every agent backend implements.

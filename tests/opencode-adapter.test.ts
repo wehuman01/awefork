@@ -544,6 +544,7 @@ describe("opencode adapter", () => {
     unsubscribe();
     expect(events).toContainEqual({
       type: "server.error",
+      sessionId: "s1",
       message: expect.stringContaining("Model not found: x/y"),
     });
   });
