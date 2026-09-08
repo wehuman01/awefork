@@ -65,7 +65,7 @@ const SESSION_DEFS: SessionDef[] = [
         id: "r2",
         prompt: "把密码哈希迁移到 argon2，写迁移脚本",
         reply:
-          "迁移脚本 migration_007_argon2.sql 已写好：双写窗口一周，老用户首次登录时自动升级哈希。",
+          "迁移脚本 migration_007_argon2.sql 已写好：双写窗口一周，老用户首次登录时自动升级哈希。\n\n```sql\nALTER TABLE users ADD COLUMN argon2_hash TEXT;\n-- 双写窗口：两个哈希并存，登录验证成功后回填\nUPDATE users SET argon2_hash = argon2(mdw_password) WHERE id = ?;\n```\n\n上线分三步：\n1. 先发**双写**版本，观察一周\n2. 再切**读新写**，老哈希只兜底\n3. 最后 `DROP COLUMN` 收尾",
         tools: ["write", "bash"],
         tokens: 2100,
         minutesAgo: 1500,
@@ -74,7 +74,7 @@ const SESSION_DEFS: SessionDef[] = [
         id: "r3",
         prompt: "JWT 和 session 两版方案对比一下",
         reply:
-          "JWT：无状态、网关不用查库，缺点是吊销麻烦。session：存 redis，键 user:{id}，滑动过期 30 分钟，吊销即删键。登录 QPS 高的话 JWT 省一次 redis 往返。",
+          "两版方案的关键差异：\n\n| 维度 | JWT | session |\n| --- | :---: | ---: |\n| 网关查库 | 不用 | 每次查 redis |\n| 吊销 | 麻烦（黑名单） | 即删键 |\n| 过期 | 15 分钟 | 滑动 30 分钟 |\n\n> 登录 QPS 高的话 JWT 省一次 redis 往返；风控要求即时登出就选 session。\n\n详见 [RFC 7519](https://www.rfc-editor.org/rfc/rfc7519)。",
         minutesAgo: 1440,
       },
       {
@@ -91,7 +91,7 @@ const SESSION_DEFS: SessionDef[] = [
         id: "r5",
         prompt: "给登录接口加压测，500 并发",
         reply:
-          "k6 跑完：P95 312ms，错误率 0.2%。瓶颈在 bcrypt 验证占 180ms；登录 QPS 到 2400 后 redis 连接池打满。",
+          "k6 跑完，结果分两档：\n\n- **成功路径**：P95 312ms，错误率 0.2%\n  - 其中 bcrypt 验证占 180ms（大头）\n  - redis 往返 4ms\n- **打满之后**：登录 QPS 到 2400，redis 连接池耗尽，开始排队\n\n瓶颈排序：`bcrypt` > 连接池 > 网关 CPU。",
         tools: ["bash"],
         tokens: 1800,
         minutesAgo: 900,
@@ -451,6 +451,9 @@ export function installMockAdapter(): void {
     trashRemove: async (sessionId) => {
       trash = trash.filter((t) => t.id !== sessionId);
       return trash;
+    },
+    openExternal: async (url) => {
+      window.open(url, "_blank", "noopener");
     },
     onEvent: (handler) => {
       handlers.add(handler);

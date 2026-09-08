@@ -1,4 +1,4 @@
-import { type IpcMainInvokeEvent, ipcMain } from "electron";
+import { type IpcMainInvokeEvent, ipcMain, shell } from "electron";
 import { readLineage } from "../shared/lineage-store.js";
 import { readPins, writePins } from "../shared/pins-store.js";
 import { readTrash, writeTrash } from "../shared/trash-store.js";
@@ -21,6 +21,7 @@ import type { AgentAdapter, AgentEvent, ModelChoice, TrashEntry } from "../share
  *   trash      -> TrashEntry[]            sessions awaiting their hard delete
  *   trashAdd   -> TrashEntry[]            queue a pending delete, list back
  *   trashRemove-> TrashEntry[]            un-queue (undo), list back
+ *   openExternal -> void                  open a reply link in the system browser
  * Events are forwarded on channel "awefork:event".
  */
 export function registerIpc(
@@ -136,6 +137,26 @@ export function registerIpc(
     const entries = (await readTrash(trashPath)).filter((entry) => entry.id !== sessionId);
     await writeTrash(trashPath, entries);
     return entries;
+  });
+
+  // Markdown links in replies route through here — shell.openExternal is the
+  // only sanctioned way out of the app window, and the scheme gate keeps
+  // file:/javascript:-style hrefs from ever reaching it.
+  ipcMain.handle("awefork:openExternal", (_event: IpcMainInvokeEvent, url: string) => {
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      return;
+    }
+    if (
+      parsed.protocol !== "http:" &&
+      parsed.protocol !== "https:" &&
+      parsed.protocol !== "mailto:"
+    ) {
+      return;
+    }
+    void shell.openExternal(parsed.href);
   });
 }
 

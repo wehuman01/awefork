@@ -14,7 +14,19 @@
         <div class="message-row">
           <span class="avatar bot">✨</span>
           <div class="message-body">
-            <p v-if="message.text" class="message-text pre-wrap">{{ message.text }}</p>
+            <button
+              v-if="message.text"
+              type="button"
+              class="msg-copy"
+              :title="copiedId === message.id ? '已复制' : '复制这条回复'"
+              @click="copyMessage(message)"
+            >{{ copiedId === message.id ? "✓" : "⧉" }}</button>
+            <p v-if="message.toolNames.length > 0" class="tool-row">
+              <span v-for="name in message.toolNames" :key="name" class="tool-chip lav">{{
+                name
+              }}</span>
+            </p>
+            <MarkdownView v-if="message.text" :source="message.text" />
             <p v-else-if="message.error" class="message-text run-error">
               ⚠ 运行失败：{{ message.error }}
             </p>
@@ -27,7 +39,10 @@
         <span class="avatar bot">✨</span>
         <div class="message-body">
           <p class="tool-row"><span class="tool-chip running">running…</span></p>
-          <p v-if="streamText" class="message-text pre-wrap stream">{{ streamText }}</p>
+          <template v-if="streamText">
+            <MarkdownView :source="streamText" class="stream" />
+            <span class="stream-caret"></span>
+          </template>
         </div>
       </div>
     </article>
@@ -38,6 +53,7 @@
 import { nextTick, ref, watch } from "vue";
 import type { SessionSummary } from "../../../shared/types";
 import type { ReadonlyChatMessage } from "../state";
+import { MarkdownView } from "./markdown-view";
 
 const props = defineProps<{
   session: SessionSummary | null;
@@ -65,4 +81,34 @@ watch(
     });
   },
 );
+
+// Jumping to another turn (or session) swaps the whole list's content; the
+// old scroll position is meaningless there, so the pane starts back at the
+// top. Keyed on the first row's id: appending a prompt keeps it stable, so
+// the stick-to-bottom logic above still owns in-place growth.
+watch(
+  () => [props.session?.id, props.messages[0]?.id],
+  () => {
+    void nextTick(() => {
+      listEl.value?.scrollTo({ top: 0 });
+    });
+  },
+);
+
+const copiedId = ref<string | null>(null);
+let copiedTimer: ReturnType<typeof setTimeout> | null = null;
+
+async function copyMessage(message: ReadonlyChatMessage): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(message.text);
+    copiedId.value = message.id;
+    if (copiedTimer) clearTimeout(copiedTimer);
+    copiedTimer = setTimeout(() => {
+      copiedId.value = null;
+    }, 1500);
+  } catch {
+    // Clipboard denied — the text is still selectable; nothing to recover to.
+  }
+}
 </script>
+}

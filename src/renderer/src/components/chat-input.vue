@@ -1,6 +1,7 @@
 <template>
   <form class="chat-input" @submit.prevent="submit">
     <textarea
+      ref="textareaEl"
       v-model="text"
       :placeholder="inputPlaceholder"
       :disabled="running"
@@ -21,7 +22,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import type { ModelChoice, ModelOption } from "../../../shared/types";
 import ModelPicker from "./model-picker.vue";
 
@@ -37,6 +38,23 @@ const emit = defineEmits<{
 }>();
 
 const text = ref("");
+const textareaEl = ref<HTMLTextAreaElement | null>(null);
+
+// Grow the box with the draft instead of scrolling inside it; two rows is the
+// floor and roughly a half pane the ceiling.
+const MAX_INPUT_HEIGHT_PX = 200;
+
+function fitTextarea(): void {
+  const el = textareaEl.value;
+  if (!el) return;
+  el.style.height = "auto";
+  el.style.height = `${Math.min(el.scrollHeight, MAX_INPUT_HEIGHT_PX)}px`;
+}
+
+watch(text, () => {
+  void nextTick(fitTextarea);
+});
+onMounted(fitTextarea);
 
 const inputPlaceholder = computed(() => {
   if (props.running) return "Agent is running…";

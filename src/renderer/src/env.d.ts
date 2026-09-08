@@ -35,6 +35,7 @@ declare global {
       trash(): Promise<TrashEntry[]>;
       trashAdd(sessionId: string, title: string): Promise<TrashEntry[]>;
       trashRemove(sessionId: string): Promise<TrashEntry[]>;
+      openExternal(url: string): Promise<void>;
       onEvent(handler: (event: AgentEvent) => void): () => void;
     };
   }

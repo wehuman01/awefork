@@ -35,6 +35,7 @@ const api = {
     ipcRenderer.invoke("awefork:trashAdd", sessionId, title),
   trashRemove: (sessionId: string): Promise<TrashEntry[]> =>
     ipcRenderer.invoke("awefork:trashRemove", sessionId),
+  openExternal: (url: string): Promise<void> => ipcRenderer.invoke("awefork:openExternal", url),
   onEvent: (handler: (event: unknown) => void): (() => void) => {
     const listener = (_event: unknown, payload: unknown) => handler(payload);
     ipcRenderer.on("awefork:event", listener);
