@@ -56,6 +56,7 @@ interface FakeState {
   forkCalls: { sessionId: string; cutMessageId: string | null }[];
   promptCalls: { sessionId: string; body: Record<string, unknown> }[];
   deleteCalls: string[];
+  deleteMessageCalls: { sessionId: string; messageId: string }[];
   providers: FakeProvider[];
   projects: { id: string; worktree: string }[];
   currentProject: string;
@@ -131,6 +132,18 @@ function startFakeServer(state: FakeState): Promise<{ server: Server; baseUrl: s
       const messageMatch = url.pathname.match(/^\/session\/([^/]+)\/message$/);
       if (method === "GET" && messageMatch) {
         res.end(JSON.stringify(state.messages[messageMatch[1] ?? ""] ?? []));
+        return;
+      }
+
+      const deleteMessageMatch = url.pathname.match(/^\/session\/([^/]+)\/message\/([^/]+)$/);
+      if (method === "DELETE" && deleteMessageMatch) {
+        const sessionId = deleteMessageMatch[1] ?? "";
+        const messageId = deleteMessageMatch[2] ?? "";
+        state.deleteMessageCalls.push({ sessionId, messageId });
+        const rows = state.messages[sessionId] ?? [];
+        state.messages[sessionId] = rows.filter((m) => m.info.id !== messageId);
+        res.writeHead(204);
+        res.end();
         return;
       }
 
@@ -218,6 +231,7 @@ function baseState(): FakeState {
     forkCalls: [],
     promptCalls: [],
     deleteCalls: [],
+    deleteMessageCalls: [],
     providers: [
       {
         id: "oc-fake",
@@ -430,6 +444,16 @@ describe("opencode adapter", () => {
     expect(state.sessions.find((s) => s.id === forked.id)).toBeUndefined();
     const lineage = await readLineage(lineagePath);
     expect(lineage[forked.id]).toBeUndefined();
+  });
+
+  it("deleteMessage removes exactly the addressed row", async () => {
+    const state = baseState();
+    const { adapter } = await newAdapter(state);
+    await adapter.deleteMessage("s1", "a2");
+
+    expect(state.deleteMessageCalls).toEqual([{ sessionId: "s1", messageId: "a2" }]);
+    const messages = await adapter.messages("s1");
+    expect(messages.map((m) => m.id)).toEqual(["u1", "a1", "u2", "u3", "a3"]);
   });
 
   it("message.updated alone never marks a session running (fork replay)", async () => {

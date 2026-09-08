@@ -32,6 +32,27 @@ export interface Turn {
 }
 
 /**
+ * Rows of the turn opened by `userMessageId`: from that user message up to
+ * (not including) the next one. null when no such user row exists. Shared by
+ * the pane's turn view and turn deletion — both need exactly one turn's rows.
+ */
+export function turnMessageRange(
+  messages: ChatMessage[],
+  userMessageId: string,
+): { start: number; end: number } | null {
+  const start = messages.findIndex((m) => m.id === userMessageId);
+  if (start === -1) return null;
+  let end = messages.length;
+  for (let i = start + 1; i < messages.length; i += 1) {
+    if (messages[i]?.role === "user") {
+      end = i;
+      break;
+    }
+  }
+  return { start, end };
+}
+
+/**
  * Group a flat message chain into turns. A turn starts at every user message;
  * assistant messages append to the current turn's reply. Assistant messages
  * before the first user message belong to no turn and are dropped.

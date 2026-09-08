@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildTurns } from "../src/shared/turns";
+import { buildTurns, turnMessageRange } from "../src/shared/turns";
 import type { ChatMessage } from "../src/shared/types";
 
 function user(id: string, text: string, createdAt = 1000): ChatMessage {
@@ -165,5 +165,25 @@ describe("buildTurns", () => {
 
   it("returns no turns for an empty session", () => {
     expect(buildTurns("s1", [])).toEqual([]);
+  });
+});
+
+describe("turnMessageRange", () => {
+  it("covers the user row and every row it produced, up to the next user row", () => {
+    const messages = [
+      user("u1", "q1"),
+      assistant("a1", "answer 1"),
+      assistant("a2", "answer 2"),
+      user("u2", "q2"),
+      assistant("a3", "answer 3"),
+    ];
+    expect(turnMessageRange(messages, "u1")).toEqual({ start: 0, end: 3 });
+    expect(turnMessageRange(messages, "u2")).toEqual({ start: 3, end: 5 });
+  });
+
+  it("returns null for an unknown message id", () => {
+    const messages = [user("u1", "q1"), assistant("a1", "answer 1")];
+    expect(turnMessageRange(messages, "ghost")).toBeNull();
+    expect(turnMessageRange([], "u1")).toBeNull();
   });
 });

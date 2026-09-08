@@ -13,7 +13,7 @@ import {
   type SessionGroup,
   type SessionTreeNode,
 } from "../../shared/session-tree";
-import { buildTurns, type Turn } from "../../shared/turns";
+import { buildTurns, type Turn, turnMessageRange } from "../../shared/turns";
 import type {
   AgentEvent,
   ChatMessage,
@@ -226,16 +226,8 @@ export const paneMessages = computed<ChatMessage[]>(() => {
   );
   const turn = paneTurn.value?.turn;
   if (!turn) return messages;
-  const start = messages.findIndex((m) => m.id === turn.messageId);
-  if (start === -1) return messages;
-  let end = messages.length;
-  for (let i = start + 1; i < messages.length; i += 1) {
-    if (messages[i]?.role === "user") {
-      end = i;
-      break;
-    }
-  }
-  return messages.slice(start, end);
+  const range = turnMessageRange(messages, turn.messageId);
+  return range ? messages.slice(range.start, range.end) : messages;
 });
 
 const activeStreamSessions = new Set<string>();
@@ -590,6 +582,52 @@ function landingAfterDelete(deletedId: string): string | null {
     .filter((s) => s.parentSessionId === deletedId)
     .sort((a, b) => a.createdAt - b.createdAt);
   return children[0]?.id ?? null;
+}
+
+/**
+ * True when the card's 🗑 should remove just this one turn: it ends the
+ * session (the tip) and earlier rows survive the removal. A mid-story turn
+ * anchors the forks hanging off it, so it keeps the whole-session delete; a
+ * session whose FIRST row is this turn would be hollowed out by a turn
+ * delete, so it too deletes the session. Stubs have no rows to remove.
+ */
+export function isTurnDelete(node: TurnNode): boolean {
+  if (node.kind !== "turn" || !isSessionTip(node)) return false;
+  const messages = state.messagesBySession[node.sessionId] ?? [];
+  const start = messages.findIndex((m) => m.id === node.messageId);
+  return start > 0;
+}
+
+/**
+ * Delete exactly one turn — the tip card's 🗑 when isTurnDelete holds: the
+ * opening user row plus every assistant/tool row it produced, through the
+ * backend's native message delete. Not undoable; refused while a run is in
+ * flight. A partial failure keeps whatever the server actually removed.
+ */
+export async function deleteTurn(node: TurnNode): Promise<void> {
+  const sessionId = node.sessionId;
+  if (state.running[sessionId]) {
+    state.actionError = "会话正在运行，先停止再删除。";
+    return;
+  }
+  const messages = state.messagesBySession[sessionId] ?? [];
+  if (!node.messageId) return;
+  const range = turnMessageRange(messages, node.messageId);
+  if (!range) return;
+  const ids = messages.slice(range.start, range.end).map((m) => m.id);
+  state.actionError = null;
+  try {
+    for (const id of ids) {
+      await window.awefork.deleteMessage(sessionId, id);
+    }
+  } catch (error) {
+    state.actionError = error instanceof Error ? error.message : String(error);
+  }
+  if (state.selectedTurnId === node.id) state.selectedTurnId = null;
+  // Show what the server actually has now, whether the delete fully landed
+  // or stopped halfway; the session's updatedAt changed either way.
+  await loadSessionMessages(sessionId);
+  void refreshSessions();
 }
 
 /** Current directory's sessions flattened in sidebar display order. */

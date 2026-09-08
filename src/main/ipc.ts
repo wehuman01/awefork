@@ -12,6 +12,7 @@ import type { AgentAdapter, AgentEvent, ModelChoice, TrashEntry } from "../share
  *   models     -> ModelOption[]           models offered by the agent config
  *   fork       -> SessionSummary          fork (turn-preserving)
  *   deleteSession -> string[]             delete a session, pruned pins back
+ *   deleteMessage -> void                 remove one message row (native DELETE)
  *   prompt     -> void                    fire an agent run (optional model)
  *   abort      -> void                    abort the running turn
  *   renameSession -> void                rename a session (native PATCH)
@@ -91,6 +92,14 @@ export function registerIpc(
     const adapter = await withAdapter();
     await adapter.abort(sessionId);
   });
+
+  ipcMain.handle(
+    "awefork:deleteMessage",
+    async (_event: IpcMainInvokeEvent, sessionId: string, messageId: string) => {
+      const adapter = await withAdapter();
+      await adapter.deleteMessage(sessionId, messageId);
+    },
+  );
 
   ipcMain.handle(
     "awefork:renameSession",

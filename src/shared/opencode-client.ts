@@ -81,6 +81,8 @@ export interface OpencodeClient {
   fork(sessionId: string, cutMessageId: string | null): Promise<OcSession>;
   /** Permanently remove a session and its messages. */
   deleteSession(sessionId: string): Promise<void>;
+  /** DELETE /session/:id/message/:messageId — remove one message row. */
+  deleteMessage(sessionId: string, messageId: string): Promise<void>;
   /** PATCH /session/:id — rename a session in place. */
   renameSession(sessionId: string, title: string): Promise<OcSession>;
   /**
@@ -151,6 +153,9 @@ export function createOpencodeClient(baseUrl: string): OpencodeClient {
       }),
     deleteSession: async (id) => {
       await request(`/session/${id}`, { method: "DELETE" });
+    },
+    deleteMessage: async (id, messageId) => {
+      await request(`/session/${id}/message/${messageId}`, { method: "DELETE" });
     },
     renameSession: (id, title) =>
       request<OcSession>(`/session/${id}`, {

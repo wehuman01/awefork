@@ -20,6 +20,8 @@ const api = {
     ipcRenderer.invoke("awefork:fork", sessionId, atMessageId),
   deleteSession: (sessionId: string): Promise<string[]> =>
     ipcRenderer.invoke("awefork:deleteSession", sessionId),
+  deleteMessage: (sessionId: string, messageId: string): Promise<void> =>
+    ipcRenderer.invoke("awefork:deleteMessage", sessionId, messageId),
   prompt: (sessionId: string, text: string, model: ModelChoice | null): Promise<void> =>
     ipcRenderer.invoke("awefork:prompt", sessionId, text, model),
   abort: (sessionId: string): Promise<void> => ipcRenderer.invoke("awefork:abort", sessionId),

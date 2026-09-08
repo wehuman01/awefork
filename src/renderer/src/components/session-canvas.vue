@@ -36,7 +36,7 @@
         class="turn"
         :class="{
           selected: node.id === selectedTurnId,
-          running: store.running[node.sessionId],
+          running: isNodeRunning(node),
           stub: node.kind === 'stub',
           dimmed: hasActivePath && !activePathIds.has(node.id),
         }"
@@ -47,7 +47,7 @@
         <button
           type="button"
           class="del-chip"
-          title="删除这个会话（整条分支故事）"
+          :title="isTurnDelete(node) ? '删除这个回合（更早的对话保留）' : '删除这个会话（整条分支故事）'"
           @click.stop="removeNode(node)"
         >🗑</button>
         <button
@@ -79,7 +79,7 @@
             >{{ name }}</span>
           </div>
           <div class="turn-foot">
-            <span v-if="store.running[node.sessionId]" class="running-flag">○ 运行中…</span>
+            <span v-if="isNodeRunning(node)" class="running-flag">○ 运行中…</span>
             <span v-else>{{ footMeta(node) }}</span>
             <span
               class="model"
@@ -165,7 +165,7 @@
         :class="{
           stub: n.kind === 'stub',
           on: activePathIds.has(n.id),
-          running: Boolean(store.running[n.sessionId]),
+          running: isNodeRunning(n),
         }"
         :style="mmNodeStyle(n)"
       ></div>
@@ -183,8 +183,10 @@ import {
   activeChain,
   cardHeights,
   deleteSession,
+  deleteTurn,
   dismissDraft,
   isSessionTip,
+  isTurnDelete,
   openDraft,
   selectTurn,
   sendDraft,
@@ -269,8 +271,15 @@ function submitDraft(): void {
   void sendDraft();
 }
 
-/** A card IS a session's turn: deleting it removes the whole branch story. */
+/** 🗑 deletes one turn at the session's tip, the whole session everywhere else. */
 function removeNode(node: TurnNode): void {
+  if (isTurnDelete(node)) {
+    const ok = window.confirm(
+      `删除回合「${node.title}」？\n只删除这一问一答，更早的对话保留。此操作不可撤销。`,
+    );
+    if (ok) void deleteTurn(node);
+    return;
+  }
   const title = node.title || "空会话";
   const ok = window.confirm(
     `删除会话「${title}」？\n它的所有回合都会一起删除（从它分叉出的子分支会保留）。`,
@@ -539,6 +548,15 @@ function footMeta(node: TurnNode): string {
   if (node.durationMs !== null) bits.push(formatDuration(node.durationMs));
   if (node.outputTokens > 0) bits.push(formatTokens(node.outputTokens));
   return bits.join(" · ");
+}
+
+/**
+ * Running is tracked per SESSION, but only the tip card is the run in
+ * progress — lighting every past turn of the session too made finished
+ * cards look stuck at 运行中 while a later turn streams.
+ */
+function isNodeRunning(node: TurnNode): boolean {
+  return Boolean(store.running[node.sessionId]) && isSessionTip(node);
 }
 
 /** Preview line: the live stream while the tip runs, else the reply / failure / stand-in. */

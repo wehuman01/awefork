@@ -26,6 +26,7 @@ declare global {
       models(): Promise<ModelOption[]>;
       fork(sessionId: string, atMessageId: string | null): Promise<SessionSummary>;
       deleteSession(sessionId: string): Promise<string[]>;
+      deleteMessage(sessionId: string, messageId: string): Promise<void>;
       prompt(sessionId: string, text: string, model: ModelChoice | null): Promise<void>;
       abort(sessionId: string): Promise<void>;
       renameSession(sessionId: string, title: string): Promise<void>;

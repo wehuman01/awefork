@@ -118,6 +118,8 @@ export interface AgentAdapter {
   fork(sessionId: string, atMessageId: string | null): Promise<SessionSummary>;
   /** Permanently remove a session (and awefork's lineage record for it). */
   deleteSession(sessionId: string): Promise<void>;
+  /** Remove a single message row through the backend's native API. */
+  deleteMessage(sessionId: string, messageId: string): Promise<void>;
   /** Rename a session through the backend's native API. */
   renameSession(sessionId: string, title: string): Promise<void>;
   /** Fire an agent run; progress arrives through `subscribe`. */

@@ -144,6 +144,10 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
       await removeFork(options.lineagePath, sessionId);
     },
 
+    async deleteMessage(sessionId, messageId) {
+      await client.deleteMessage(sessionId, messageId);
+    },
+
     async renameSession(sessionId, title) {
       await client.renameSession(sessionId, title);
     },
