@@ -3,6 +3,7 @@ import type {
   ChatMessage,
   ModelChoice,
   ModelOption,
+  PromptAttachment,
   SessionSummary,
   TrashEntry,
 } from "../shared/types.js";
@@ -22,8 +23,13 @@ const api = {
     ipcRenderer.invoke("awefork:deleteSession", sessionId),
   deleteMessage: (sessionId: string, messageId: string): Promise<void> =>
     ipcRenderer.invoke("awefork:deleteMessage", sessionId, messageId),
-  prompt: (sessionId: string, text: string, model: ModelChoice | null): Promise<void> =>
-    ipcRenderer.invoke("awefork:prompt", sessionId, text, model),
+  prompt: (
+    sessionId: string,
+    text: string,
+    model: ModelChoice | null,
+    attachments?: PromptAttachment[],
+  ): Promise<void> =>
+    ipcRenderer.invoke("awefork:prompt", sessionId, text, model, attachments),
   abort: (sessionId: string): Promise<void> => ipcRenderer.invoke("awefork:abort", sessionId),
   renameSession: (sessionId: string, title: string): Promise<void> =>
     ipcRenderer.invoke("awefork:renameSession", sessionId, title),

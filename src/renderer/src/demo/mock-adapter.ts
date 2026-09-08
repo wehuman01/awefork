@@ -15,6 +15,7 @@ import type {
   ForkRecord,
   ModelChoice,
   ModelOption,
+  PromptAttachment,
   SessionSummary,
   TrashEntry,
 } from "../../../shared/types.js";
@@ -30,6 +31,10 @@ interface TurnDef {
   minutesAgo: number;
   /** Defaults to flash; pro turns pass "glm-5.3". */
   model?: string;
+  /** Reasoning-effort variant the turn ran with, when one was picked. */
+  variant?: string;
+  /** A file the prompt carried, shown as an attachment chip. */
+  attachment?: string;
 }
 
 interface SessionDef {
@@ -86,6 +91,7 @@ const SESSION_DEFS: SessionDef[] = [
         tokens: 3400,
         minutesAgo: 1380,
         model: "glm-5.3",
+        variant: "high",
       },
       {
         id: "r5",
@@ -95,6 +101,7 @@ const SESSION_DEFS: SessionDef[] = [
         tools: ["bash"],
         tokens: 1800,
         minutesAgo: 900,
+        attachment: "k6-login-500c.png",
       },
       {
         id: "r6",
@@ -224,18 +231,24 @@ const MODELS: ModelOption[] = [
     providerName: "awerouter",
     modelId: "glm-5.3-flash",
     modelName: "GLM 5.3 Flash",
+    variants: ["low", "medium", "high"],
+    attachment: true,
   },
   {
     providerId: "oc-awerouter",
     providerName: "awerouter",
     modelId: "glm-5.3",
     modelName: "GLM 5.3",
+    variants: ["minimal", "low", "medium", "high", "xhigh"],
+    attachment: true,
   },
   {
     providerId: "oc-local",
     providerName: "Ollama 本地",
     modelId: "qwen3-coder",
     modelName: "Qwen3 Coder 30B",
+    variants: [],
+    attachment: false,
   },
 ];
 
@@ -253,6 +266,8 @@ function turnMessages(turn: TurnDef): ChatMessage[] {
       toolNames: [],
       modelId: model,
       providerId: "oc-awerouter",
+      variant: turn.variant ?? null,
+      attachmentNames: turn.attachment ? [turn.attachment] : [],
       createdAt,
       completedAt: null,
       outputTokens: null,
@@ -265,6 +280,8 @@ function turnMessages(turn: TurnDef): ChatMessage[] {
       toolNames: turn.tools ?? [],
       modelId: model,
       providerId: "oc-awerouter",
+      variant: turn.variant ?? null,
+      attachmentNames: [],
       createdAt: createdAt + 2000,
       completedAt: createdAt + 2000 + durationMs,
       outputTokens: turn.tokens ?? 800,
@@ -371,7 +388,7 @@ export function installMockAdapter(): void {
       const index = list.findIndex((m) => m.id === messageId);
       if (index >= 0) list.splice(index, 1);
     },
-    prompt: async (sessionId, text, model) => {
+    prompt: async (sessionId, text, model, attachments) => {
       promptSeq += 1;
       const user: ChatMessage = {
         id: `p${promptSeq}`,
@@ -380,6 +397,8 @@ export function installMockAdapter(): void {
         toolNames: [],
         modelId: model?.modelId ?? "glm-5.3-flash",
         providerId: model?.providerId ?? "oc-awerouter",
+        variant: model?.variant ?? null,
+        attachmentNames: (attachments ?? []).map((a) => a.filename),
         createdAt: Date.now(),
         completedAt: null,
         outputTokens: null,
@@ -393,6 +412,8 @@ export function installMockAdapter(): void {
         toolNames: [],
         modelId: model?.modelId ?? "glm-5.3-flash",
         providerId: model?.providerId ?? "oc-awerouter",
+        variant: model?.variant ?? null,
+        attachmentNames: [],
         createdAt: Date.now(),
         completedAt: Date.now() + 3500,
         outputTokens: 900,

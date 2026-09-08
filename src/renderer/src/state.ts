@@ -21,8 +21,10 @@ import type {
   ForkRecord,
   ModelChoice,
   ModelOption,
+  PromptAttachment,
   SessionSummary,
 } from "../../shared/types";
+import { toPromptAttachments, type DraftAttachment } from "./attachments";
 
 interface DraftState {
   /** Canvas node the composer is attached to. */
@@ -34,6 +36,8 @@ interface DraftState {
   text: string;
   /** Model to run the prompt with; null = the agent's configured default. */
   model: ModelChoice | null;
+  /** Files staged to go out with the next send. */
+  attachments: DraftAttachment[];
 }
 
 interface AppState {
@@ -816,9 +820,14 @@ export function isSessionTip(node: TurnNode): boolean {
   return last != null && last.messageId === node.messageId;
 }
 
-export function openDraft(node: TurnNode): void {
+/** Shared seed of a draft composer: openDraft and the retry paths fill it. */
+function openDraftAt(draft: DraftState): void {
   void ensureModels();
-  state.draft = {
+  state.draft = draft;
+}
+
+export function openDraft(node: TurnNode): void {
+  openDraftAt({
     nodeId: node.id,
     sessionId: node.sessionId,
     // Session tip: keep talking in place; a mid-story turn grows a fork.
@@ -826,7 +835,47 @@ export function openDraft(node: TurnNode): void {
     text: "",
     // Preselect the model that wrote the turn being forked from, when known.
     model: node.kind === "turn" ? node.model : null,
-  };
+    attachments: [],
+  });
+}
+
+/**
+ * Reopen a failed turn's prompt as a draft (pane entry): the composer opens
+ * with the original text and model prefilled, so the user can adjust and
+ * resend — a mid-story turn grows the retry as a new fork, a session-tip
+ * turn resends in place. The failed turn itself is never touched.
+ */
+export function retryTurn(turn: Turn): void {
+  const messages = state.messagesBySession[turn.sessionId] ?? [];
+  const text = messages.find((m) => m.id === turn.messageId)?.text ?? "";
+  if (!text.trim()) return;
+  const turns = buildTurns(turn.sessionId, messages);
+  const last = turns[turns.length - 1];
+  openDraftAt({
+    nodeId: `${turn.sessionId}:${turn.messageId}`,
+    sessionId: turn.sessionId,
+    atMessageId: last != null && last.messageId === turn.messageId ? null : turn.messageId,
+    text,
+    model: turn.model,
+    attachments: [],
+  });
+}
+
+/** Canvas entry for the same move, from a card node. */
+export function retryNode(node: TurnNode): void {
+  if (node.kind !== "turn" || !node.messageId) return;
+  const text =
+    (state.messagesBySession[node.sessionId] ?? []).find((m) => m.id === node.messageId)?.text ??
+    "";
+  if (!text.trim()) return;
+  openDraftAt({
+    nodeId: node.id,
+    sessionId: node.sessionId,
+    atMessageId: isSessionTip(node) ? null : node.messageId,
+    text,
+    model: node.model,
+    attachments: [],
+  });
 }
 
 export function setDraftText(text: string): void {
@@ -835,6 +884,15 @@ export function setDraftText(text: string): void {
 
 export function setDraftModel(model: ModelChoice | null): void {
   if (state.draft) state.draft.model = model;
+}
+
+/** Swap the draft's reasoning-effort variant, keeping its model. */
+export function setDraftVariant(variant: string | null): void {
+  if (state.draft?.model) state.draft.model = { ...state.draft.model, variant };
+}
+
+export function setDraftAttachments(attachments: readonly DraftAttachment[]): void {
+  if (state.draft) state.draft.attachments = [...attachments];
 }
 
 export function dismissDraft(): void {
@@ -862,7 +920,13 @@ async function ensureModels(): Promise<void> {
  * prompt after the fork had already been created.
  */
 function plainModel(model: ModelChoice | null): ModelChoice | null {
-  return model ? { providerId: model.providerId, modelId: model.modelId } : null;
+  return model
+    ? { providerId: model.providerId, modelId: model.modelId, variant: model.variant ?? null }
+    : null;
+}
+
+function plainAttachments(list: DraftAttachment[]): PromptAttachment[] {
+  return toPromptAttachments(list);
 }
 
 /**
@@ -898,8 +962,9 @@ export async function sendDraft(): Promise<void> {
     state.running = { ...state.running, [targetId]: true };
     // Surface the prompt as the target's newest own turn right away; the
     // idle refresh swaps it for the server's row.
-    appendLocalMessage(targetId, text, model);
-    await window.awefork.prompt(targetId, text, model);
+    const attachments = plainAttachments(draft.attachments);
+    appendLocalMessage(targetId, text, model, attachments);
+    await window.awefork.prompt(targetId, text, model, attachments);
     watchCompletion(targetId, sentAt);
     state.draft = null;
   } catch (error) {
@@ -913,12 +978,14 @@ export async function sendDraft(): Promise<void> {
 /**
  * Show a sent prompt immediately; the next server refresh replaces it with
  * the real message row. `model` seeds the canvas card's model chip so the
- * chosen model shows before the server rows arrive.
+ * chosen model shows before the server rows arrive; attachment names render
+ * as chips on the user row.
  */
 function appendLocalMessage(
   sessionId: string,
   text: string,
   model: ModelChoice | null = null,
+  attachments: PromptAttachment[] = [],
 ): void {
   state.messagesBySession = {
     ...state.messagesBySession,
@@ -931,6 +998,8 @@ function appendLocalMessage(
         toolNames: [],
         modelId: model?.modelId ?? null,
         providerId: model?.providerId ?? null,
+        variant: model?.variant ?? null,
+        attachmentNames: attachments.map((a) => a.filename),
         createdAt: Date.now(),
         completedAt: null,
         outputTokens: null,
@@ -945,13 +1014,20 @@ function appendLocalMessage(
  * always continues the branch at its end; the pane follows the newest turn
  * so the reply streams into view.
  */
-export async function sendPanePrompt(text: string): Promise<void> {
+export async function sendPanePrompt(
+  text: string,
+  attachments: PromptAttachment[] = [],
+): Promise<void> {
   if (!state.selectedId || !text.trim()) return;
   state.selectedTurnId = null;
-  await sendPrompt(text, state.paneModels[state.selectedId] ?? null);
+  await sendPrompt(text, state.paneModels[state.selectedId] ?? null, attachments);
 }
 
-export async function sendPrompt(text: string, model: ModelChoice | null = null): Promise<void> {
+export async function sendPrompt(
+  text: string,
+  model: ModelChoice | null = null,
+  attachments: PromptAttachment[] = [],
+): Promise<void> {
   const sessionId = state.selectedId;
   if (!sessionId || !text.trim()) return;
   state.actionError = null;
@@ -962,9 +1038,9 @@ export async function sendPrompt(text: string, model: ModelChoice | null = null)
   await flushPendingDeletes();
   state.running = { ...state.running, [sessionId]: true };
   const sentAt = Date.now();
-  appendLocalMessage(sessionId, text, model);
+  appendLocalMessage(sessionId, text, model, attachments);
   try {
-    await window.awefork.prompt(sessionId, text, plainModel(model));
+    await window.awefork.prompt(sessionId, text, plainModel(model), attachments);
     watchCompletion(sessionId, sentAt);
   } catch (error) {
     const { [sessionId]: stopped, ...rest } = state.running;

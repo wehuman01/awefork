@@ -2151,3 +2151,116 @@ code.md-code {
   font-weight: 700;
   color: var(--ink-soft);
 }
+
+/* ── effort variant picker + composer attachments + failed-turn retry ── */
+
+/* composer attachment chips (pane composer and canvas draft share them) */
+.chat-input-atts,
+.draft-atts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.att-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 180px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  border-radius: 9px;
+  padding: 2px 4px 2px 3px;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ink-soft);
+}
+
+.att-thumb {
+  width: 22px;
+  height: 22px;
+  object-fit: cover;
+  border-radius: 6px;
+  flex: 0 0 auto;
+}
+
+.att-ico {
+  padding: 0 2px;
+}
+
+.att-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.att-x {
+  flex: 0 0 auto;
+  color: var(--ink-faint);
+  font-size: 10px;
+  padding: 1px 4px;
+  border-radius: 6px;
+}
+
+.att-x:hover {
+  background: #fdeceb;
+  color: #c4544a;
+}
+
+.att-notice {
+  font-size: 11px;
+  color: var(--ink-faint);
+}
+
+.chat-input.dragging {
+  outline: 2px dashed var(--primary-border);
+  outline-offset: 2px;
+  border-radius: 14px;
+}
+
+/* message row: attachment chips under a sent prompt */
+.att-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.att-row .att-chip {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--primary-soft);
+  border-color: transparent;
+  color: var(--primary-deep);
+}
+
+/* canvas card: hover-reveal retry on failed turns, beside the delete chip */
+.retry-chip {
+  position: absolute;
+  right: 36px;
+  top: 10px;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  background: transparent;
+  color: #c4544a;
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  opacity: 0;
+  transition:
+    opacity 0.15s,
+    background 0.15s;
+  z-index: 2;
+}
+
+.turn:hover .retry-chip {
+  opacity: 0.85;
+}
+
+.retry-chip:hover {
+  opacity: 1;
+  background: #fdeceb;
+}

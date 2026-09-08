@@ -4,7 +4,7 @@
  * Talked to over fetch so it works in the Electron main process with no
  * SDK dependency and can be tested against a fake server.
  */
-import type { ModelChoice, ModelOption } from "./types.js";
+import type { ModelChoice, ModelOption, PromptAttachment } from "./types.js";
 
 export interface OcSession {
   id: string;
@@ -19,7 +19,15 @@ interface OcProviderList {
   providers?: {
     id: string;
     name?: string;
-    models?: Record<string, { id?: string; name?: string }>;
+    models?: Record<
+      string,
+      {
+        id?: string;
+        name?: string;
+        variants?: Record<string, unknown>;
+        capabilities?: { attachment?: boolean };
+      }
+    >;
   }[];
 }
 
@@ -31,8 +39,10 @@ interface OcMessageInfo {
   modelID?: string;
   /** Provider that served the model, e.g. "oc-awerouter". */
   providerID?: string;
+  /** Present on assistant messages: the reasoning-effort variant the run used. */
+  variant?: string;
   /** User messages record the run's model here instead of top-level modelID. */
-  model?: { providerID?: string; modelID?: string };
+  model?: { providerID?: string; modelID?: string; variant?: string };
   /** Present on assistant messages: {total, input, output, reasoning, cache}. */
   tokens?: { input?: number; output?: number; total?: number };
   /** Set when the run failed; `data.message` carries the human-readable reason. */
@@ -45,6 +55,7 @@ interface OcPart {
   text?: string;
   state?: string;
   tool?: string;
+  filename?: string;
 }
 
 export interface OcMessage {
@@ -69,6 +80,17 @@ export class OpencodeApiError extends Error {
 
 /** Per-request deadline; 0 disables it (only the prompt endpoint needs that). */
 export const DEFAULT_TIMEOUT_MS = 15_000;
+
+/** Known reasoning-effort keys, weakest to strongest; anything else sorts after. */
+const EFFORT_ORDER = ["minimal", "low", "medium", "high", "xhigh", "max"];
+
+function orderVariants(keys: string[]): string[] {
+  const rank = (key: string): number => {
+    const index = EFFORT_ORDER.indexOf(key);
+    return index === -1 ? EFFORT_ORDER.length : index;
+  };
+  return [...keys].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+}
 
 export interface OpencodeClient {
   /**
@@ -95,7 +117,12 @@ export interface OpencodeClient {
    * detach it and follow progress through the event stream. Sent without a
    * deadline: a run can legitimately outlive any timeout.
    */
-  prompt(sessionId: string, text: string, model?: ModelChoice | null): Promise<void>;
+  prompt(
+    sessionId: string,
+    text: string,
+    model?: ModelChoice | null,
+    attachments?: PromptAttachment[],
+  ): Promise<void>;
   abort(sessionId: string): Promise<void>;
 }
 
@@ -160,6 +187,8 @@ export function createOpencodeClient(
             providerName: provider.name || provider.id,
             modelId: id,
             modelName: model.name || id,
+            variants: orderVariants(Object.keys(model.variants ?? {})),
+            attachment: model.capabilities?.attachment === true,
           });
         }
       }
@@ -183,15 +212,25 @@ export function createOpencodeClient(
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ title }),
       }),
-    prompt: async (id, text, model) => {
+    prompt: async (id, text, model, attachments) => {
       await request(
         `/session/${id}/message`,
         {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
-            parts: [{ type: "text", text }],
+            // File parts first, text last — the order opencode's own clients send.
+            parts: [
+              ...(attachments ?? []).map((a) => ({
+                type: "file",
+                mime: a.mime,
+                filename: a.filename,
+                url: a.dataUrl,
+              })),
+              { type: "text", text },
+            ],
             ...(model ? { model: { providerID: model.providerId, modelID: model.modelId } } : {}),
+            ...(model?.variant ? { variant: model.variant } : {}),
           }),
         },
         0,

@@ -10,6 +10,13 @@
       </div>
       <div class="ctx-nav">
         <button
+          v-if="pane?.turn.error"
+          type="button"
+          class="nav-btn"
+          title="重跑这个回合（预填原文，可先换模型/档位）"
+          @click="retry"
+        >↻</button>
+        <button
           type="button"
           class="nav-btn"
           title="克隆当前分支（从最新状态存一个 checkpoint）"
@@ -100,7 +107,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted } from "vue";
 import type { TurnNode } from "../../../shared/canvas-graph";
-import type { ModelChoice } from "../../../shared/types";
+import type { ModelChoice, PromptAttachment } from "../../../shared/types";
 import { formatDuration, formatTokens } from "../format";
 import {
   abortRun,
@@ -108,6 +115,7 @@ import {
   cloneSelectedSession,
   paneMessages,
   paneTurn,
+  retryTurn,
   selectedSession,
   selectTurn,
   sendPanePrompt,
@@ -147,8 +155,8 @@ const turnMeta = computed(() => {
   return bits.join(" · ");
 });
 
-function send(text: string): void {
-  void sendPanePrompt(text);
+function send(text: string, attachments: PromptAttachment[]): void {
+  void sendPanePrompt(text, attachments);
 }
 
 function abort(): void {
@@ -157,6 +165,11 @@ function abort(): void {
 
 function cloneBranch(): void {
   void cloneSelectedSession();
+}
+
+function retry(): void {
+  const current = pane.value;
+  if (current) retryTurn(current.turn);
 }
 
 const paneModel = computed(() =>

@@ -80,7 +80,11 @@ export function buildTurns(sessionId: string, messages: ChatMessage[]): Turn[] {
         modelIds: message.modelId ? [message.modelId] : [],
         model:
           message.modelId && message.providerId
-            ? { providerId: message.providerId, modelId: message.modelId }
+            ? {
+                providerId: message.providerId,
+                modelId: message.modelId,
+                variant: message.variant,
+              }
             : null,
         createdAt: message.createdAt,
         durationMs: null,
@@ -100,7 +104,11 @@ export function buildTurns(sessionId: string, messages: ChatMessage[]): Turn[] {
       current.modelIds.push(message.modelId);
     }
     if (message.modelId && message.providerId) {
-      current.model = { providerId: message.providerId, modelId: message.modelId };
+      current.model = {
+        providerId: message.providerId,
+        modelId: message.modelId,
+        variant: message.variant,
+      };
     }
     if (message.outputTokens !== null) current.outputTokens += message.outputTokens;
     if (message.completedAt !== null) current.durationMs = message.completedAt - current.createdAt;

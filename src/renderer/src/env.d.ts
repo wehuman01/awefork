@@ -13,6 +13,7 @@ import type {
   ForkRecord,
   ModelChoice,
   ModelOption,
+  PromptAttachment,
   SessionSummary,
   TrashEntry,
 } from "../../shared/types";
@@ -27,7 +28,12 @@ declare global {
       fork(sessionId: string, atMessageId: string | null): Promise<SessionSummary>;
       deleteSession(sessionId: string): Promise<string[]>;
       deleteMessage(sessionId: string, messageId: string): Promise<void>;
-      prompt(sessionId: string, text: string, model: ModelChoice | null): Promise<void>;
+      prompt(
+        sessionId: string,
+        text: string,
+        model: ModelChoice | null,
+        attachments?: PromptAttachment[],
+      ): Promise<void>;
       abort(sessionId: string): Promise<void>;
       renameSession(sessionId: string, title: string): Promise<void>;
       pins(): Promise<string[]>;

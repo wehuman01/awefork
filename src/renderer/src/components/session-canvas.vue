@@ -52,6 +52,13 @@
           @click.stop="removeNode(node)"
         >🗑</button>
         <button
+          v-if="node.kind === 'turn' && node.error"
+          type="button"
+          class="retry-chip"
+          title="重跑这个回合（预填原文，可先换模型/档位）"
+          @click.stop="retryNode(node)"
+        >↻</button>
+        <button
           type="button"
           class="add-chip"
           :title="isSessionTip(node) ? '继续这个分支' : '从这里长出新分支'"
@@ -84,8 +91,8 @@
             <span v-else>{{ footMeta(node) }}</span>
             <span
               class="model"
-              :title="node.modelIds.length > 1 ? node.modelIds.join('\n') : undefined"
-            >{{ modelLabel(node.modelIds) }}</span>
+              :title="modelTitle(node)"
+            >{{ modelChip(node) }}</span>
           </div>
         </template>
         <template v-else>
@@ -107,12 +114,25 @@
           <span class="draft-tag">🌱 草稿 · {{ store.draft?.atMessageId == null ? "继续分支" : "新分支" }}</span>
           <button type="button" class="close" @click="dismissDraft">✕</button>
         </div>
+        <div v-if="(store.draft?.attachments.length ?? 0) > 0" class="draft-atts">
+          <span v-for="a in store.draft?.attachments ?? []" :key="a.id" class="att-chip">
+            <img :src="a.dataUrl" class="att-thumb" alt="" />
+            <span class="att-name" :title="a.name">{{ a.name }}</span>
+            <button
+              type="button"
+              class="att-x"
+              title="移除"
+              @click="removeDraftAttachment(a.id)"
+            >✕</button>
+          </span>
+        </div>
         <textarea
           :value="store.draft?.text"
           :placeholder="store.draft?.atMessageId == null ? '描述下一步…（发送后继续这个分支）' : '描述下一步…（发送后从这里长出新分支）'"
           @input="setDraftText(($event.target as HTMLTextAreaElement).value)"
           @keydown.meta.enter.prevent="submitDraft"
           @keydown.ctrl.enter.prevent="submitDraft"
+          @paste="onDraftPaste"
         ></textarea>
         <div class="draft-foot">
           <span class="hint">⌘/Ctrl ⏎ 发送</span>
@@ -122,6 +142,11 @@
             :models="store.models"
             title="用哪个模型跑这条分支"
             @update:model-value="setDraftModel"
+          />
+          <VariantPicker
+            :model="store.draft?.model ?? null"
+            :models="store.models"
+            @select="setDraftVariant"
           />
           <button
             type="button"
@@ -197,17 +222,22 @@ import {
   isSessionTip,
   isTurnDelete,
   openDraft,
+  retryNode,
   selectTurn,
   sendDraft,
+  setDraftAttachments,
   setDraftModel,
   setDraftText,
+  setDraftVariant,
   store,
   storySearchHits,
   turnGraph,
 } from "../state";
+import { countImages, readAttachments, type DraftAttachment } from "../attachments";
 import BranchDigest from "./branch-digest.vue";
 import ModelPicker from "./model-picker.vue";
 import StorySearch from "./story-search.vue";
+import VariantPicker from "./variant-picker.vue";
 
 const viewportEl = ref<HTMLElement | null>(null);
 const scale = ref(1);
@@ -560,6 +590,44 @@ function modelLabel(models: string[]): string {
   const [first, ...rest] = models;
   if (!first) return "opencode";
   return rest.length === 0 ? first : `${first} +${rest.length}`;
+}
+
+/** Foot model chip: the label plus the run's effort variant (e.g. "glm-5.3 · high"). */
+function modelChip(node: TurnNode): string {
+  const base = modelLabel(node.modelIds);
+  return node.model?.variant ? `${base} · ${node.model.variant}` : base;
+}
+
+function modelTitle(node: TurnNode): string | undefined {
+  const ids = node.modelIds.join("\n");
+  return node.modelIds.length > 1 ? ids : ids || undefined;
+}
+
+// ── draft composer attachments ──────────────────────────────────────
+
+function draftAttachments(): DraftAttachment[] {
+  return store.draft?.attachments ?? [];
+}
+
+function onDraftPaste(event: ClipboardEvent): void {
+  const files = event.clipboardData?.files;
+  if (!files || files.length === 0) return;
+  const model = store.draft?.model ?? null;
+  if (model) {
+    const option = store.models.find(
+      (m) => m.providerId === model.providerId && m.modelId === model.modelId,
+    );
+    if (option && !option.attachment) return;
+  }
+  if (countImages(files) === 0) return;
+  event.preventDefault();
+  void readAttachments(files).then((staged) => {
+    setDraftAttachments([...draftAttachments(), ...staged]);
+  });
+}
+
+function removeDraftAttachment(id: string): void {
+  setDraftAttachments(draftAttachments().filter((a) => a.id !== id));
 }
 
 /** Foot left side: tool count plus the run's wall time and output tokens when known. */

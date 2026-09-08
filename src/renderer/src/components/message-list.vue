@@ -6,6 +6,11 @@
         <div class="message-row user-row">
           <div class="user-body">
             <p class="message-text">{{ message.text }}</p>
+            <p v-if="message.attachmentNames.length > 0" class="att-row">
+              <span v-for="name in message.attachmentNames" :key="name" class="att-chip">
+                📎 {{ name }}
+              </span>
+            </p>
           </div>
           <span class="avatar user">🍑</span>
         </div>
@@ -111,4 +116,3 @@ async function copyMessage(message: ReadonlyChatMessage): Promise<void> {
   }
 }
 </script>
-}

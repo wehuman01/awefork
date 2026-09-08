@@ -45,11 +45,18 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
       // Assistant rows report the model top-level; the user row that opened
       // the run carries it nested under `model`. Reading both keeps the model
       // visible even when a run dies before its assistant row reports back.
+      // The reasoning variant rides the same two slots.
       const nested = m.info.model;
       const modelId =
         m.info.modelID ?? (typeof nested?.modelID === "string" ? nested.modelID : null);
       const providerId =
         m.info.providerID ?? (typeof nested?.providerID === "string" ? nested.providerID : null);
+      const variant =
+        typeof m.info.variant === "string"
+          ? m.info.variant
+          : typeof nested?.variant === "string"
+            ? nested.variant
+            : null;
       return {
         id: m.info.id,
         role: m.info.role,
@@ -68,6 +75,10 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
         ],
         modelId,
         providerId,
+        variant,
+        attachmentNames: m.parts
+          .filter((p) => p.type === "file")
+          .map((p) => (typeof p.filename === "string" && p.filename ? p.filename : "附件")),
         createdAt: m.info.time.created,
         completedAt: typeof m.info.time.completed === "number" ? m.info.time.completed : null,
         outputTokens: typeof m.info.tokens?.output === "number" ? m.info.tokens.output : null,
@@ -127,13 +138,13 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
       return { ...mapSession(forked), origin: "fork", parentSessionId: sessionId };
     },
 
-    async prompt(sessionId, text, model) {
+    async prompt(sessionId, text, model, attachments) {
       // Detached on purpose: /message only resolves when the whole run
       // finishes, while progress reaches this adapter through the /event
       // stream. Request-level failures (server gone, unknown session) have no
       // event, so they surface here as server.error — with the session id, so
       // the renderer can settle that run instead of waiting out the watchdog.
-      client.prompt(sessionId, text, model).catch((error) => {
+      client.prompt(sessionId, text, model, attachments).catch((error) => {
         const detail = error instanceof Error ? error.message : String(error);
         emitEvent?.({
           type: "server.error",

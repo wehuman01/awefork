@@ -39,6 +39,10 @@ export interface ChatMessage {
   modelId: string | null;
   /** Provider that served the model (e.g. "oc-awerouter"); null alongside modelId. */
   providerId: string | null;
+  /** Reasoning-effort variant the run used (e.g. "high"); null when none was reported. */
+  variant: string | null;
+  /** Names of files attached to this message, in send order. */
+  attachmentNames: string[];
   createdAt: number;
   /** When the backend finished the message; null while unreported or still running. */
   completedAt: number | null;
@@ -54,12 +58,25 @@ export interface ModelOption {
   providerName: string;
   modelId: string;
   modelName: string;
+  /** Reasoning-effort variants the model offers (e.g. low/medium/high), intensity-ordered. */
+  variants: readonly string[];
+  /** Whether the model accepts file/image attachments. */
+  attachment: boolean;
 }
 
 /** The model to run a prompt with; null = the backend's configured default. */
 export interface ModelChoice {
   providerId: string;
   modelId: string;
+  /** Reasoning-effort variant for the run (e.g. "high"); null/absent = the model's default. */
+  variant?: string | null;
+}
+
+/** An attachment sent with a prompt; `dataUrl` carries the bytes inline. */
+export interface PromptAttachment {
+  mime: string;
+  filename: string;
+  dataUrl: string;
 }
 
 /** Fork lineage recorded by awefork when it forks a session. */
@@ -123,7 +140,12 @@ export interface AgentAdapter {
   /** Rename a session through the backend's native API. */
   renameSession(sessionId: string, title: string): Promise<void>;
   /** Fire an agent run; progress arrives through `subscribe`. */
-  prompt(sessionId: string, text: string, model?: ModelChoice | null): Promise<void>;
+  prompt(
+    sessionId: string,
+    text: string,
+    model?: ModelChoice | null,
+    attachments?: PromptAttachment[],
+  ): Promise<void>;
   abort(sessionId: string): Promise<void>;
   /** Subscribe to the normalized event feed. Returns an unsubscribe function. */
   subscribe(handler: (event: AgentEvent) => void): Promise<() => void>;

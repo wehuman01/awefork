@@ -2,7 +2,13 @@ import { type IpcMainInvokeEvent, ipcMain, shell } from "electron";
 import { readLineage } from "../shared/lineage-store.js";
 import { readPins, writePins } from "../shared/pins-store.js";
 import { readTrash, writeTrash } from "../shared/trash-store.js";
-import type { AgentAdapter, AgentEvent, ModelChoice, TrashEntry } from "../shared/types";
+import type {
+  AgentAdapter,
+  AgentEvent,
+  ModelChoice,
+  PromptAttachment,
+  TrashEntry,
+} from "../shared/types";
 
 /**
  * IPC surface (all invoke-channels, prefixed awefork:):
@@ -13,7 +19,7 @@ import type { AgentAdapter, AgentEvent, ModelChoice, TrashEntry } from "../share
  *   fork       -> SessionSummary          fork (turn-preserving)
  *   deleteSession -> string[]             delete a session, pruned pins back
  *   deleteMessage -> void                 remove one message row (native DELETE)
- *   prompt     -> void                    fire an agent run (optional model)
+ *   prompt     -> void                    fire an agent run (optional model + attachments)
  *   abort      -> void                    abort the running turn
  *   renameSession -> void                rename a session (native PATCH)
  *   pins       -> string[]                pinned session ids
@@ -83,9 +89,10 @@ export function registerIpc(
       sessionId: string,
       text: string,
       model: ModelChoice | null,
+      attachments?: PromptAttachment[],
     ) => {
       const adapter = await withAdapter();
-      await adapter.prompt(sessionId, text, model ?? undefined);
+      await adapter.prompt(sessionId, text, model ?? undefined, attachments);
     },
   );
 
