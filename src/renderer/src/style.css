@@ -670,6 +670,19 @@ textarea {
   border-color: var(--mint);
 }
 
+/* search hits: butter ring on every matching card while a query is live */
+.turn.hit {
+  border-color: var(--butter);
+  box-shadow:
+    0 0 0 4px rgba(255, 209, 102, 0.35),
+    var(--shadow-lift);
+}
+
+/* a hit stays readable even when the active path dims it */
+.turn.hit.dimmed {
+  opacity: 0.8;
+}
+
 .turn.stub {
   border-style: dashed;
   border-color: var(--primary-border);
@@ -1128,6 +1141,12 @@ textarea {
 .mm-node.stub {
   background: #eee6f8;
   border-color: #c9b8f0;
+}
+
+/* search hits, above the active path but below a live run */
+.mm-node.hit {
+  background: var(--butter);
+  border-color: #d9a52e;
 }
 
 /* last so a running node stays visible even when on the active path */

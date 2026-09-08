@@ -72,11 +72,11 @@ function storyNodes(): TurnNode[] {
 }
 
 describe("searchTurns", () => {
-  it("finds a turn by a word in its prompt title", () => {
+  it("finds a turn by a word in its prompt", () => {
     const hits = searchTurns(storyNodes(), "内存泄漏");
     expect(hits).toHaveLength(1);
     expect(hits[0]?.nodeId).toBe("a:u2");
-    expect(hits[0]?.field).toBe("title");
+    expect(hits[0]?.field).toBe("prompt");
     expect(hits[0]?.snippet).toContain("内存泄漏");
   });
 
@@ -119,7 +119,28 @@ describe("searchTurns", () => {
     }).nodes;
     const hits = searchTurns(nodes, "kafka");
     expect(hits.map((h) => h.nodeId)).toEqual(["a:u1", "a:u2"]);
-    expect(hits.map((h) => h.field)).toEqual(["title", "preview"]);
+    expect(hits.map((h) => h.field)).toEqual(["prompt", "preview"]);
+  });
+
+  it("reaches the full multi-line prompt body only when messages are passed", () => {
+    const messages = {
+      a: turnMessages(
+        "u1",
+        "帮我看下这个报错\n完整 stack 指向 rate_limiter.go 第 40 行",
+        "限流器的阈值写死了。",
+      ),
+    };
+    const nodes = buildTurnGraph({
+      sessions: [session("a")],
+      lineage: {},
+      messages,
+    }).nodes;
+    // Without messages the card only knows the prompt's first line.
+    expect(searchTurns(nodes, "rate_limiter")).toHaveLength(0);
+    const hits = searchTurns(nodes, "rate_limiter", messages);
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.nodeId).toBe("a:u1");
+    expect(hits[0]?.field).toBe("prompt");
   });
 
   it("trims long previews to a window around the match, keeping match coordinates", () => {

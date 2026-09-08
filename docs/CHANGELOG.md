@@ -6,6 +6,9 @@ Canvas readability and daily-driver ergonomics on top of v0.1.0.
 
 ### Highlights
 
+- **Canvas story search** — ⌘/Ctrl+F (or the 🔍 搜节点 pill) searches every turn on the canvas: full prompt bodies (multi-line prompts included, not just the rendered first line), reply text, tool names, and failed-run errors. Every matching card gets a butter ring (minimap dots too), and the results list shows a snippet per hit; clicking one selects and centers the turn, across sessions if needed.
+- **Branch digest** — the ⑂ 分支摘要 pill lists one row per branch on the canvas: where it forked from (session + turn), its own turn count, token total, last topic, and an ⚠ for failed runs. When the canvas grows past readability, read the digest first, then click through to the branch tip.
+- **Browser demo mode** — `npm run demo` serves the renderer on localhost:5180 with an in-memory fork story behind a mock adapter, so the canvas, search, and digests can be exercised without Electron or an opencode backend.
 - **Context chain in the pane** — the branch-context pane now lists the turns that lead into the selected one (the same path the canvas highlights), numbered, with cross-session forks marked ⎇; click a card to jump to that turn. More than 12 ancestors collapse into an "earlier turns" note.
 - **Delete from the sidebar** — right-click any session row (forks included) for 删除会话; the same undo toast guards it as the canvas delete.
 - **Undo delete** — deleting a session now hides it instantly with an「已删除 · 撤销」toast; the real server delete only fires when the next operation flushes the pending queue (or the toast's 撤销 / ⌘Z cancels it first). Pending deletes persist in `trash.json` and flush on the next launch, so quitting mid-window still completes the deletion.

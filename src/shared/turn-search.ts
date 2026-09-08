@@ -4,14 +4,17 @@
  * The whole working set lives in memory as TurnNodes, so a plain substring
  * scan is enough — no index to maintain. A turn matches when EVERY
  * whitespace-separated term appears in at least one of its searchable fields
- * (title, reply preview, tool names). The reported hit carries a snippet
+ * (the full prompt body, the reply text, tool names). The card only renders
+ * the prompt's first line, so pass `messages` to search what the user
+ * actually wrote on the later lines too. The reported hit carries a snippet
  * around the best-ranked match so the results list can show context.
  */
 
 import type { TurnNode } from "./canvas-graph.js";
+import type { ChatMessage } from "./types.js";
 
 /** Which field a hit's snippet comes from; also its relevance rank. */
-export type HitField = "title" | "preview" | "tool";
+export type HitField = "prompt" | "preview" | "tool";
 
 export interface TurnSearchHit {
   nodeId: string;
@@ -24,11 +27,15 @@ export interface TurnSearchHit {
   matchLength: number;
 }
 
-const FIELD_RANK: Record<HitField, number> = { title: 0, preview: 1, tool: 2 };
+const FIELD_RANK: Record<HitField, number> = { prompt: 0, preview: 1, tool: 2 };
 /** Characters of context kept on each side of a match inside the snippet. */
 const SNIPPET_RADIUS = 36;
 
-export function searchTurns(nodes: TurnNode[], query: string): TurnSearchHit[] {
+export function searchTurns(
+  nodes: TurnNode[],
+  query: string,
+  messages?: Record<string, ChatMessage[]>,
+): TurnSearchHit[] {
   const terms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
   if (terms.length === 0) return [];
 
@@ -36,7 +43,9 @@ export function searchTurns(nodes: TurnNode[], query: string): TurnSearchHit[] {
   for (const node of nodes) {
     if (node.kind !== "turn") continue;
     const fields: { field: HitField; text: string }[] = [
-      { field: "title", text: node.title },
+      // The card title is only the prompt's first line; with messages in hand
+      // the whole prompt body becomes searchable too.
+      { field: "prompt", text: promptText(node, messages) },
       // A failed run's preview is empty — the error string is its only content.
       { field: "preview", text: node.preview || node.error || "" },
       { field: "tool", text: node.toolNames.join(" ") },
@@ -91,6 +100,13 @@ export function searchTurns(nodes: TurnNode[], query: string): TurnSearchHit[] {
       matchStart: hit.matchStart,
       matchLength: hit.matchLength,
     }));
+}
+
+/** The turn's full prompt body from the message rows; the card title as fallback. */
+function promptText(node: TurnNode, messages?: Record<string, ChatMessage[]>): string {
+  if (!node.messageId) return node.title;
+  const user = messages?.[node.sessionId]?.find((m) => m.id === node.messageId);
+  return user?.text || node.title;
 }
 
 function snippetAround(

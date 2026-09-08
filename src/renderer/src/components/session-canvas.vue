@@ -39,6 +39,7 @@
           running: isNodeRunning(node),
           stub: node.kind === 'stub',
           dimmed: hasActivePath && !activePathIds.has(node.id),
+          hit: searchHitIds.has(node.id),
         }"
         :style="{ left: `${node.x}px`, top: `${node.y}px`, width: `${NODE_WIDTH}px` }"
         @mousedown.stop
@@ -173,6 +174,7 @@
           stub: n.kind === 'stub',
           on: activePathIds.has(n.id),
           running: isNodeRunning(n),
+          hit: searchHitIds.has(n.id),
         }"
         :style="mmNodeStyle(n)"
       ></div>
@@ -200,6 +202,7 @@ import {
   setDraftModel,
   setDraftText,
   store,
+  storySearchHits,
   turnGraph,
 } from "../state";
 import BranchDigest from "./branch-digest.vue";
@@ -233,6 +236,9 @@ const nodeById = computed(() => new Map(graph.value.nodes.map((n) => [n.id, n]))
 const activePathIds = computed(() => new Set(activeChain.value.map((n) => n.id)));
 
 const hasActivePath = computed(() => activeChain.value.length > 0);
+
+/** Story-search matches: while a query is live, every hit card gets a ring. */
+const searchHitIds = computed(() => new Set(storySearchHits.value.map((h) => h.nodeId)));
 
 /** An edge is on the active path when both ends are on it (nodes have one incoming edge). */
 function onActivePath(edge: { from: string; to: string }): boolean {

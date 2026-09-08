@@ -3,7 +3,7 @@
     v-if="!open"
     type="button"
     class="panel-pill"
-    title="搜索这个分支故事里的所有节点（⌘/Ctrl+F）"
+    title="搜索画布上所有节点的正文（⌘/Ctrl+F）"
     @click="openSearch"
   >🔍 搜节点</button>
   <div v-else class="story-search">
@@ -11,17 +11,17 @@
       <span class="ss-icon">🔍</span>
       <input
         ref="inputEl"
-        v-model="query"
+        v-model="searchQuery"
         type="text"
-        placeholder="搜索这个故事里的所有节点（标题 / 回复 / 工具）…"
+        placeholder="搜索画布所有节点（提问 / 回复 / 工具）…"
         @keydown.esc="close"
       />
-      <span v-if="query.trim()" class="ss-count">{{ hits.length }} 命中</span>
+      <span v-if="searchQuery.trim()" class="ss-count">{{ storySearchHits.length }} 命中</span>
       <button type="button" class="ss-close" title="收起（Esc）" @click="close">✕</button>
     </div>
-    <div v-if="query.trim() && hits.length > 0" class="ss-results">
+    <div v-if="searchQuery.trim() && storySearchHits.length > 0" class="ss-results">
       <button
-        v-for="hit in hits"
+        v-for="hit in storySearchHits"
         :key="hit.nodeId"
         type="button"
         class="ss-hit"
@@ -34,7 +34,7 @@
         <span class="ss-snippet">{{ hit.snippet.slice(0, hit.matchStart) }}<mark>{{ hit.snippet.slice(hit.matchStart, hit.matchStart + hit.matchLength) }}</mark>{{ hit.snippet.slice(hit.matchStart + hit.matchLength) }}</span>
       </button>
     </div>
-    <div v-else-if="query.trim()" class="ss-results">
+    <div v-else-if="searchQuery.trim()" class="ss-results">
       <p class="ss-empty">没有命中 — 换个关键词试试</p>
     </div>
   </div>
@@ -43,16 +43,13 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from "vue";
 import type { TurnNode } from "../../../shared/canvas-graph";
-import { searchTurns, type TurnSearchHit } from "../../../shared/turn-search";
-import { selectTurn, turnGraph } from "../state";
+import type { TurnSearchHit } from "../../../shared/turn-search";
+import { searchQuery, selectTurn, storySearchHits, turnGraph } from "../state";
 
 const emit = defineEmits<{ jump: [node: TurnNode] }>();
 
 const open = ref(false);
-const query = ref("");
 const inputEl = ref<HTMLInputElement | null>(null);
-
-const hits = computed(() => searchTurns(turnGraph.value.nodes, query.value));
 
 const nodeById = computed(() => new Map(turnGraph.value.nodes.map((n) => [n.id, n])));
 
@@ -61,7 +58,7 @@ function titleOf(hit: TurnSearchHit): string {
 }
 
 function fieldLabel(field: TurnSearchHit["field"]): string {
-  return field === "title" ? "标题" : field === "preview" ? "回复" : "工具";
+  return field === "prompt" ? "提问" : field === "preview" ? "回复" : "工具";
 }
 
 function openSearch(): void {
@@ -71,7 +68,7 @@ function openSearch(): void {
 
 function close(): void {
   open.value = false;
-  query.value = "";
+  searchQuery.value = "";
 }
 
 function jump(hit: TurnSearchHit): void {

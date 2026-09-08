@@ -1,4 +1,4 @@
-import { computed, reactive, readonly } from "vue";
+import { computed, reactive, readonly, ref } from "vue";
 import {
   buildTurnGraph,
   chainToTip,
@@ -13,6 +13,7 @@ import {
   type SessionGroup,
   type SessionTreeNode,
 } from "../../shared/session-tree";
+import { searchTurns, type TurnSearchHit } from "../../shared/turn-search";
 import { buildTurns, type Turn, turnMessageRange } from "../../shared/turns";
 import type {
   AgentEvent,
@@ -170,6 +171,19 @@ export const turnGraph = computed<TurnGraph>(() =>
     messages: state.messagesBySession,
     heights: cardHeights,
   }),
+);
+
+/**
+ * The canvas story search: the query the search panel edits, and its hits
+ * over every turn on the canvas — full prompt bodies, replies, tool names.
+ * Living in state (not the component) lets the canvas ring every matching
+ * card while the query is active.
+ */
+export const searchQuery = ref("");
+export const storySearchHits = computed<TurnSearchHit[]>(() =>
+  searchQuery.value.trim() === ""
+    ? []
+    : searchTurns(turnGraph.value.nodes, searchQuery.value, state.messagesBySession),
 );
 
 /**
