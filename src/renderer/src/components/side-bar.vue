@@ -81,6 +81,7 @@
       @mousedown.stop
     >
       <button type="button" class="ctx-menu-item" @click="beginRename">✏️ 重命名</button>
+      <button type="button" class="ctx-menu-item" @click="copySessionId">📋 复制会话 ID</button>
       <button type="button" class="ctx-menu-item danger" @click="beginDelete">
         🗑 删除会话…
       </button>
@@ -140,6 +141,14 @@ function commitRename(): void {
   const title = renameText.value.trim();
   if (!title || title === active.title) return;
   void renameSession(active.sessionId, title);
+}
+
+/** Copy the raw session id — for resuming the branch in a terminal. */
+function copySessionId(): void {
+  const active = menu.value;
+  if (!active) return;
+  closeMenu();
+  void navigator.clipboard.writeText(active.sessionId);
 }
 
 /** Same soft delete as the canvas 🗑 chip: confirm, then the undo toast rules. */

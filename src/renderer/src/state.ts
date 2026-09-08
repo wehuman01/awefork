@@ -203,9 +203,16 @@ export const paneTurn = computed<{ turn: Turn; index: number; total: number } | 
   return last ? { turn: last, index: turns.length - 1, total: turns.length } : null;
 });
 
-/** Messages of the pane's turn: from its user prompt up to the next one. */
+/**
+ * Messages of the pane's turn: from its user prompt up to the next one.
+ * Assistant rows without text (tool-call stubs such as "…/model read") are
+ * dropped — the pane shows readable output only. User rows stay; they anchor
+ * the turn, and turn boundaries are user rows, so the filter cannot shift them.
+ */
 export const paneMessages = computed<ChatMessage[]>(() => {
-  const messages = state.messagesBySession[state.selectedId ?? ""] ?? [];
+  const messages = (state.messagesBySession[state.selectedId ?? ""] ?? []).filter(
+    (m) => m.role === "user" || m.text.trim().length > 0,
+  );
   const turn = paneTurn.value?.turn;
   if (!turn) return messages;
   const start = messages.findIndex((m) => m.id === turn.messageId);
