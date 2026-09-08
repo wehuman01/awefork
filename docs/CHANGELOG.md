@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.1.1
 
 Canvas readability and daily-driver ergonomics on top of v0.1.0.
 
