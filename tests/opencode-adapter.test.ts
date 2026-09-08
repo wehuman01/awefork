@@ -25,12 +25,13 @@ interface FakeMessage {
     role: "user" | "assistant";
     modelID?: string;
     providerID?: string;
-    model?: { providerID?: string; modelID?: string };
+    variant?: string;
+    model?: { providerID?: string; modelID?: string; variant?: string };
     tokens?: { input?: number; output?: number; total?: number };
     error?: { name?: string; data?: { message?: string } };
     time: { created: number; completed?: number };
   };
-  parts: { type: string; text?: string; tool?: string }[];
+  parts: { type: string; text?: string; tool?: string; filename?: string }[];
 }
 
 interface FakeSession {
@@ -47,7 +48,15 @@ interface FakeProvider {
   name?: string;
   /** Secrets must never survive the adapter's mapping. */
   key?: string;
-  models: Record<string, { id?: string; name?: string }>;
+  models: Record<
+    string,
+    {
+      id?: string;
+      name?: string;
+      variants?: Record<string, unknown>;
+      capabilities?: { attachment?: boolean };
+    }
+  >;
 }
 
 interface FakeState {
@@ -238,7 +247,13 @@ function baseState(): FakeState {
         name: "Fake Router",
         key: "sk-secret-must-not-leak",
         models: {
-          "glm-5.3-flash": { id: "glm-5.3-flash", name: "GLM 5.3 Flash" },
+          "glm-5.3-flash": {
+            id: "glm-5.3-flash",
+            name: "GLM 5.3 Flash",
+            // deliberately out of intensity order + one unknown key
+            variants: { high: {}, medium: {}, turbo: {}, low: {} },
+            capabilities: { attachment: true },
+          },
           "gpt-5.6-sol": { id: "gpt-5.6-sol", name: "GPT 5.6 Sol" },
         },
       },
@@ -329,7 +344,30 @@ describe("opencode adapter", () => {
     expect(messages[1]?.error).toBe("no active subscription");
   });
 
-  it("lists models with ids and names only — provider secrets dropped", async () => {
+  it("maps the run's effort variant — assistant top-level, user nested", async () => {
+    const state = baseState();
+    const u1 = state.messages.s1?.[0]?.info;
+    if (u1) u1.model = { providerID: "oc-fake", modelID: "glm/glm-5.3-flash", variant: "high" };
+    const a1 = state.messages.s1?.[1]?.info;
+    if (a1) a1.variant = "high";
+    const { adapter } = await newAdapter(state);
+    const messages = await adapter.messages("s1");
+    expect(messages[0]?.variant).toBe("high");
+    expect(messages[1]?.variant).toBe("high");
+    expect(messages[2]?.variant).toBeNull();
+  });
+
+  it("maps file parts to attachment names; blanks become 附件", async () => {
+    const state = baseState();
+    const u1 = state.messages.s1?.[0];
+    u1?.parts.push({ type: "file", filename: "shot.png" }, { type: "file" });
+    const { adapter } = await newAdapter(state);
+    const messages = await adapter.messages("s1");
+    expect(messages[0]?.attachmentNames).toEqual(["shot.png", "附件"]);
+    expect(messages[1]?.attachmentNames).toEqual([]);
+  });
+
+  it("lists models with ids, names, ordered variants and attachment flag — secrets dropped", async () => {
     const state = baseState();
     const { adapter } = await newAdapter(state);
     const models = await adapter.listModels();
@@ -339,18 +377,24 @@ describe("opencode adapter", () => {
         providerName: "Fake Router",
         modelId: "glm-5.3-flash",
         modelName: "GLM 5.3 Flash",
+        variants: ["low", "medium", "high", "turbo"],
+        attachment: true,
       },
       {
         providerId: "oc-fake",
         providerName: "Fake Router",
         modelId: "gpt-5.6-sol",
         modelName: "GPT 5.6 Sol",
+        variants: [],
+        attachment: false,
       },
       {
         providerId: "bare",
         providerName: "bare",
         modelId: "unnamed-model",
         modelName: "unnamed-model",
+        variants: [],
+        attachment: false,
       },
     ]);
     expect(JSON.stringify(models)).not.toContain("sk-secret");
@@ -414,6 +458,27 @@ describe("opencode adapter", () => {
     expect(state.promptCalls[0]?.body.model).toEqual({
       providerID: "oc-fake",
       modelID: "gpt-5.6-sol",
+    });
+    expect(state.promptCalls[0]?.body.variant).toBeUndefined();
+  });
+
+  it("prompt sends the effort variant top-level and file parts before the text", async () => {
+    const state = baseState();
+    const { adapter } = await newAdapter(state);
+    await adapter.prompt(
+      "s1",
+      "look at this",
+      { providerId: "oc-fake", modelId: "glm-5.3-flash", variant: "high" },
+      [{ mime: "image/png", filename: "shot.png", dataUrl: "data:image/png;base64,AAA" }],
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(state.promptCalls[0]?.body).toEqual({
+      parts: [
+        { type: "file", mime: "image/png", filename: "shot.png", url: "data:image/png;base64,AAA" },
+        { type: "text", text: "look at this" },
+      ],
+      model: { providerID: "oc-fake", modelID: "glm-5.3-flash" },
+      variant: "high",
     });
   });
 

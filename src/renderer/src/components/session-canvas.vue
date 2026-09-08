@@ -212,6 +212,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import type { TurnNode } from "../../../shared/canvas-graph";
 import { COL_GAP, NODE_HEIGHT, NODE_WIDTH, ROW_GAP } from "../../../shared/canvas-graph";
+import { countImages, type DraftAttachment, readAttachments } from "../attachments";
 import { formatDuration, formatTokens } from "../format";
 import {
   activeChain,
@@ -233,7 +234,6 @@ import {
   storySearchHits,
   turnGraph,
 } from "../state";
-import { countImages, readAttachments, type DraftAttachment } from "../attachments";
 import BranchDigest from "./branch-digest.vue";
 import ModelPicker from "./model-picker.vue";
 import StorySearch from "./story-search.vue";
@@ -605,7 +605,7 @@ function modelTitle(node: TurnNode): string | undefined {
 
 // ── draft composer attachments ──────────────────────────────────────
 
-function draftAttachments(): DraftAttachment[] {
+function draftAttachments(): readonly DraftAttachment[] {
   return store.draft?.attachments ?? [];
 }
 

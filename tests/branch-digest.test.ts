@@ -24,6 +24,8 @@ function msg(id: string, role: "user" | "assistant", text: string): ChatMessage 
     toolNames: [],
     modelId: role === "assistant" ? "fake/model" : null,
     providerId: role === "assistant" ? "oc-fake" : null,
+    variant: null,
+    attachmentNames: [],
     createdAt: 1000,
     completedAt: role === "assistant" ? 1100 : null,
     outputTokens: role === "assistant" ? 500 : null,

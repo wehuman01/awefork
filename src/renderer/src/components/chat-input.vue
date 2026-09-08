@@ -44,9 +44,9 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import type { ModelChoice, ModelOption, PromptAttachment } from "../../../shared/types";
 import {
   countImages,
+  type DraftAttachment,
   readAttachments,
   toPromptAttachments,
-  type DraftAttachment,
 } from "../attachments";
 import ModelPicker from "./model-picker.vue";
 import VariantPicker from "./variant-picker.vue";
@@ -151,9 +151,8 @@ function onModelPicked(choice: ModelChoice | null): void {
   const previous = props.model?.variant ?? null;
   if (choice && previous) {
     const supported =
-      props.models.find(
-        (m) => m.providerId === choice.providerId && m.modelId === choice.modelId,
-      )?.variants ?? [];
+      props.models.find((m) => m.providerId === choice.providerId && m.modelId === choice.modelId)
+        ?.variants ?? [];
     if (supported.includes(previous)) {
       emit("set-model", { ...choice, variant: previous });
       return;

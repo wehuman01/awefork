@@ -30,6 +30,8 @@ function chain(...pairs: [string, string][]): ChatMessage[] {
       toolNames: [],
       modelId: null,
       providerId: null,
+      variant: null,
+      attachmentNames: [],
       createdAt: i * 10,
       completedAt: null,
       outputTokens: null,
@@ -42,6 +44,8 @@ function chain(...pairs: [string, string][]): ChatMessage[] {
       toolNames: [],
       modelId: `fake/model-${i + 1}`,
       providerId: "oc-fake",
+      variant: null,
+      attachmentNames: [],
       createdAt: i * 10 + 5,
       completedAt: null,
       outputTokens: null,
@@ -79,9 +83,9 @@ describe("buildTurnGraph", () => {
       ["fake/model-3"],
     ]);
     expect(graph.nodes.map((n) => n.model)).toEqual([
-      { providerId: "oc-fake", modelId: "fake/model-1" },
-      { providerId: "oc-fake", modelId: "fake/model-2" },
-      { providerId: "oc-fake", modelId: "fake/model-3" },
+      { providerId: "oc-fake", modelId: "fake/model-1", variant: null },
+      { providerId: "oc-fake", modelId: "fake/model-2", variant: null },
+      { providerId: "oc-fake", modelId: "fake/model-3", variant: null },
     ]);
   });
 

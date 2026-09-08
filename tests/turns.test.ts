@@ -10,6 +10,8 @@ function user(id: string, text: string, createdAt = 1000): ChatMessage {
     toolNames: [],
     modelId: null,
     providerId: null,
+    variant: null,
+    attachmentNames: [],
     createdAt,
     completedAt: null,
     outputTokens: null,
@@ -33,6 +35,8 @@ function assistant(
     toolNames,
     modelId,
     providerId,
+    variant: null,
+    attachmentNames: [],
     createdAt,
     completedAt: null,
     outputTokens: null,
@@ -93,7 +97,35 @@ describe("buildTurns", () => {
       assistant("a1", "", 2000, [], "glm/glm-5.3-flash", "oc-awerouter"),
       assistant("a2", "done", 3000, [], "codex/gpt-5.6-sol", "oc-aweshare"),
     ]);
-    expect(turns[0]?.model).toEqual({ providerId: "oc-aweshare", modelId: "codex/gpt-5.6-sol" });
+    expect(turns[0]?.model).toEqual({
+      providerId: "oc-aweshare",
+      modelId: "codex/gpt-5.6-sol",
+      variant: null,
+    });
+  });
+
+  it("rides the effort variant on the model choice — user seed and assistant override", () => {
+    const turns = buildTurns("s1", [
+      {
+        ...user("u1", "q"),
+        modelId: "glm/glm-5.3-flash",
+        providerId: "oc-awerouter",
+        variant: "high",
+      },
+      assistant("a1", "done", 2000, [], "codex/gpt-5.6-sol", "oc-aweshare", { variant: "medium" }),
+      { ...user("u2", "q2"), modelId: "glm/glm-5.3", providerId: "oc-awerouter", variant: "low" },
+      assistant("a2", "ok", 3000),
+    ]);
+    expect(turns[0]?.model).toEqual({
+      providerId: "oc-aweshare",
+      modelId: "codex/gpt-5.6-sol",
+      variant: "medium",
+    });
+    expect(turns[1]?.model).toEqual({
+      providerId: "oc-awerouter",
+      modelId: "glm/glm-5.3",
+      variant: "low",
+    });
   });
 
   it("keeps model ids empty when the backend reports none", () => {
@@ -111,6 +143,7 @@ describe("buildTurns", () => {
     expect(turns[0]?.model).toEqual({
       providerId: "oc-awerouter",
       modelId: "stepfun-2/step-3.7-flash",
+      variant: null,
     });
   });
 

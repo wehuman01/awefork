@@ -51,6 +51,9 @@ The idea of treating sessions as a branching graph originates from [PiX](https:/
 - **Fork here** — any user turn can seed a new branch. The new session keeps that full turn (question + answer), and awefork lands you in it.
 - **Checkpoint clone** — fork the selected branch's latest state in one click, no turn picking needed.
 - **Model choice** — a searchable picker (70+ models is fine) when starting a branch, plus a per-session picker beside the composer.
+- **Thinking effort** — pick the run's reasoning variant (minimal/low/medium/high…) next to the model; canvas cards show `model · variant` for what each turn actually used.
+- **Image attachments** — paste or drop images into either composer (capability-gated per model); sent rows carry 📎 chips.
+- **Retry failed turns** — the ↻ on a failed turn (card or pane header) reopens its prompt prefilled with the original text and model; edit and resend — mid-story turns retry as a fresh fork, the failed original stays untouched.
 - **Continue** — send messages from awefork; replies stream in live. Replying while an older turn is selected branches from that turn.
 - **Canvas** — selecting a turn highlights its full path from the root and dims the rest; fit view, and an always-on minimap with a live viewport rectangle.
 - **Command palette** — ⌘K / Ctrl+K to jump between sessions and fire actions; drag the column handles to resize, double-click to fold.

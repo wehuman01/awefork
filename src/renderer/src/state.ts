@@ -24,7 +24,7 @@ import type {
   PromptAttachment,
   SessionSummary,
 } from "../../shared/types";
-import { toPromptAttachments, type DraftAttachment } from "./attachments";
+import { type DraftAttachment, toPromptAttachments } from "./attachments";
 
 interface DraftState {
   /** Canvas node the composer is attached to. */

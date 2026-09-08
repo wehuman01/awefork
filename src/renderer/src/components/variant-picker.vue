@@ -72,9 +72,8 @@ const variants = computed(() => {
   const model = props.model;
   if (!model) return [];
   return (
-    props.models.find(
-      (m) => m.providerId === model.providerId && m.modelId === model.modelId,
-    )?.variants ?? []
+    props.models.find((m) => m.providerId === model.providerId && m.modelId === model.modelId)
+      ?.variants ?? []
   );
 });
 
@@ -139,7 +138,7 @@ function onPopKeydown(event: KeyboardEvent): void {
     highlighted.value = ((current + step + size) % size) - 1;
   } else if (event.key === "Enter") {
     event.preventDefault();
-    pick(highlighted.value >= 0 ? variants.value[highlighted.value] ?? null : null);
+    pick(highlighted.value >= 0 ? (variants.value[highlighted.value] ?? null) : null);
   } else if (event.key === "Escape") {
     close();
   }

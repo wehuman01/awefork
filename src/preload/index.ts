@@ -28,8 +28,7 @@ const api = {
     text: string,
     model: ModelChoice | null,
     attachments?: PromptAttachment[],
-  ): Promise<void> =>
-    ipcRenderer.invoke("awefork:prompt", sessionId, text, model, attachments),
+  ): Promise<void> => ipcRenderer.invoke("awefork:prompt", sessionId, text, model, attachments),
   abort: (sessionId: string): Promise<void> => ipcRenderer.invoke("awefork:abort", sessionId),
   renameSession: (sessionId: string, title: string): Promise<void> =>
     ipcRenderer.invoke("awefork:renameSession", sessionId, title),
