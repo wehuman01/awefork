@@ -70,7 +70,11 @@
               </span>
               <span class="chain-preview">{{
                 node.preview ||
-                  (node.toolNames.length > 0 ? `(${node.toolNames.length} 个工具调用，无文本回复)` : "(无文本回复)")
+                  (node.error
+                    ? `⚠ ${node.error}`
+                    : node.toolNames.length > 0
+                      ? `(${node.toolNames.length} 个工具调用，无文本回复)`
+                      : "(无文本回复)")
               }}</span>
             </span>
           </button>

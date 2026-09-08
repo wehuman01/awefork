@@ -44,6 +44,8 @@ export interface ChatMessage {
   completedAt: number | null;
   /** Output tokens of this assistant message; null on user rows or when unreported. */
   outputTokens: number | null;
+  /** Why the run failed (provider/API error reported by the backend); null when it didn't. */
+  error: string | null;
 }
 
 /** A model the agent backend offers, flattened from its provider config. */

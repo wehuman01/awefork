@@ -64,11 +64,8 @@
           </div>
           <div class="turn-body">
             <span class="avatar bot">✨</span>
-            <p class="turn-preview">
-              {{
-                node.preview ||
-                  (node.toolNames.length > 0 ? "(工具调用，无文本回复)" : "(无文本回复)")
-              }}
+            <p class="turn-preview" :class="{ errored: !node.preview && node.error }">
+              {{ previewOf(node) }}
             </p>
           </div>
           <div v-if="node.toolNames.length > 0" class="chips">
@@ -498,6 +495,23 @@ function footMeta(node: TurnNode): string {
   if (node.durationMs !== null) bits.push(formatDuration(node.durationMs));
   if (node.outputTokens > 0) bits.push(formatTokens(node.outputTokens));
   return bits.join(" · ");
+}
+
+/** Preview line: the live stream while the tip runs, else the reply / failure / stand-in. */
+function previewOf(node: TurnNode): string {
+  if (node.kind === "turn" && store.running[node.sessionId] && isSessionTip(node)) {
+    const stream = store.streams[node.sessionId]?.trim();
+    if (stream) return stream;
+    return node.preview || "正在思考…";
+  }
+  return (
+    node.preview ||
+    (node.error
+      ? `⚠ ${node.error}`
+      : node.toolNames.length > 0
+        ? "(工具调用，无文本回复)"
+        : "(无文本回复)")
+  );
 }
 
 function relativeTime(timestamp: number): string {

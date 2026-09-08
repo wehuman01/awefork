@@ -735,6 +735,25 @@ textarea {
   white-space: pre-line;
 }
 
+/* a run that died on the server — the reason must outshine "(无文本回复)" */
+.turn-preview.errored {
+  color: var(--danger);
+}
+
+@keyframes run-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.running-flag {
+  animation: run-pulse 1.6s ease-in-out infinite;
+}
+
 .chips {
   display: flex;
   flex-wrap: wrap;
@@ -1331,6 +1350,11 @@ textarea {
 .pre-wrap {
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* a run that failed server-side — show why, in the danger color */
+.run-error {
+  color: var(--danger);
 }
 
 .user-row {

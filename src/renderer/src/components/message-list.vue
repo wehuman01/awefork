@@ -14,11 +14,10 @@
         <div class="message-row">
           <span class="avatar bot">✨</span>
           <div class="message-body">
-            <p v-if="message.toolNames.length > 0 || message.modelId" class="tool-row">
-              <span v-if="message.modelId" class="tool-chip model">{{ message.modelId }}</span>
-              <span v-for="(name, i) in message.toolNames" :key="name" class="tool-chip" :class="{ lav: i % 2 === 1 }">{{ name }}</span>
-            </p>
             <p v-if="message.text" class="message-text pre-wrap">{{ message.text }}</p>
+            <p v-else-if="message.error" class="message-text run-error">
+              ⚠ 运行失败：{{ message.error }}
+            </p>
           </div>
         </div>
       </template>

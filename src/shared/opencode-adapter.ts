@@ -71,6 +71,7 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
         createdAt: m.info.time.created,
         completedAt: typeof m.info.time.completed === "number" ? m.info.time.completed : null,
         outputTokens: typeof m.info.tokens?.output === "number" ? m.info.tokens.output : null,
+        error: m.info.error?.data?.message ?? m.info.error?.name ?? null,
       };
     });
 

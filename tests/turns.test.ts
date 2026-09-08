@@ -13,6 +13,7 @@ function user(id: string, text: string, createdAt = 1000): ChatMessage {
     createdAt,
     completedAt: null,
     outputTokens: null,
+    error: null,
   };
 }
 
@@ -35,6 +36,7 @@ function assistant(
     createdAt,
     completedAt: null,
     outputTokens: null,
+    error: null,
     ...overrides,
   };
 }
@@ -148,6 +150,17 @@ describe("buildTurns", () => {
     const turns = buildTurns("s1", [user("u1", "q"), assistant("a1", "partial")]);
     expect(turns[0]?.durationMs).toBeNull();
     expect(turns[0]?.outputTokens).toBe(0);
+  });
+
+  it("keeps the run's failure reason on the turn", () => {
+    const turns = buildTurns("s1", [
+      user("u1", "我是谁", 1000),
+      assistant("a1", "", 2000, [], null, null, {
+        error: "you have no active step plan subscription",
+        completedAt: 2500,
+      }),
+    ]);
+    expect(turns[0]?.error).toBe("you have no active step plan subscription");
   });
 
   it("returns no turns for an empty session", () => {

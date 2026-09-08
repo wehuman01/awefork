@@ -35,6 +35,8 @@ interface OcMessageInfo {
   model?: { providerID?: string; modelID?: string };
   /** Present on assistant messages: {total, input, output, reasoning, cache}. */
   tokens?: { input?: number; output?: number; total?: number };
+  /** Set when the run failed; `data.message` carries the human-readable reason. */
+  error?: { name?: string; data?: { message?: string } };
   time: { created: number; completed?: number };
 }
 

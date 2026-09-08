@@ -41,6 +41,8 @@ export interface TurnNode {
   durationMs: number | null;
   /** Output tokens summed across the turn's replies; 0 for stubs. */
   outputTokens: number;
+  /** Why the turn's run failed; null for stubs / successful runs. */
+  error: string | null;
   col: number;
   row: number;
   x: number;
@@ -196,6 +198,7 @@ export function buildTurnGraph(options: BuildGraphOptions): TurnGraph {
         createdAt: session.createdAt,
         durationMs: null,
         outputTokens: 0,
+        error: null,
       });
       connect(sourceNodeId, stub.id, edgeKind);
     }
@@ -215,6 +218,7 @@ export function buildTurnGraph(options: BuildGraphOptions): TurnGraph {
         createdAt: turn.createdAt,
         durationMs: turn.durationMs,
         outputTokens: turn.outputTokens,
+        error: turn.error,
       });
       nodeByMessage.set(turn.messageId, node.id);
       connect(previousId, node.id, index === 0 ? previousKind : "sequence");

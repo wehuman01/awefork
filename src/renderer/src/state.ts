@@ -64,6 +64,8 @@ interface AppState {
   running: Record<string, boolean>;
   /** Live stream text of the selected session only. */
   streamText: string;
+  /** Card-sized tail of every running session's stream, keyed by session id. */
+  streams: Record<string, string>;
   actionError: string | null;
   draft: DraftState | null;
   /** True while the draft's fork+prompt round-trip is in flight. */
@@ -92,6 +94,7 @@ const state = reactive<AppState>({
   models: [],
   running: {},
   streamText: "",
+  streams: {},
   actionError: null,
   draft: null,
   draftSending: false,
@@ -205,13 +208,13 @@ export const paneTurn = computed<{ turn: Turn; index: number; total: number } | 
 
 /**
  * Messages of the pane's turn: from its user prompt up to the next one.
- * Assistant rows without text (tool-call stubs such as "…/model read") are
- * dropped — the pane shows readable output only. User rows stay; they anchor
- * the turn, and turn boundaries are user rows, so the filter cannot shift them.
+ * Assistant rows without text are dropped — except failed runs, whose error
+ * must stay visible. User rows always stay; they anchor the turn, and turn
+ * boundaries are user rows, so the filter cannot shift them.
  */
 export const paneMessages = computed<ChatMessage[]>(() => {
   const messages = (state.messagesBySession[state.selectedId ?? ""] ?? []).filter(
-    (m) => m.role === "user" || m.text.trim().length > 0,
+    (m) => m.role === "user" || m.text.trim().length > 0 || m.error !== null,
   );
   const turn = paneTurn.value?.turn;
   if (!turn) return messages;
@@ -437,6 +440,9 @@ async function pollForCompletion(
 function settleRun(sessionId: string): void {
   activeStreamSessions.delete(sessionId);
   streamBuffers.delete(sessionId);
+  const { [sessionId]: goneStream, ...keptStreams } = state.streams;
+  void goneStream;
+  state.streams = keptStreams;
   const { [sessionId]: finished, ...stillRunning } = state.running;
   void finished;
   state.running = stillRunning;
@@ -457,9 +463,13 @@ function handleEvent(event: AgentEvent): void {
     }
     case "message.delta": {
       const current = streamBuffers.get(event.sessionId) ?? "";
-      streamBuffers.set(event.sessionId, current + event.delta);
+      const merged = current + event.delta;
+      streamBuffers.set(event.sessionId, merged);
+      // Card-sized tail for every running session — capped so long runs
+      // cannot grow reactive state without bound.
+      state.streams = { ...state.streams, [event.sessionId]: merged.slice(-400) };
       if (event.sessionId === state.selectedId) {
-        state.streamText = streamBuffers.get(event.sessionId) ?? "";
+        state.streamText = merged;
       }
       break;
     }
@@ -639,6 +649,9 @@ async function hardDeleteSession(sessionId: string): Promise<void> {
   const { [sessionId]: goneMessages, ...keptMessages } = state.messagesBySession;
   void goneMessages;
   state.messagesBySession = keptMessages;
+  const { [sessionId]: goneStream, ...keptStreams } = state.streams;
+  void goneStream;
+  state.streams = keptStreams;
   attemptedMessages.delete(sessionId);
   activeStreamSessions.delete(sessionId);
   const { [sessionId]: goneRunning, ...keptRunning } = state.running;
@@ -756,6 +769,7 @@ export async function sendDraft(): Promise<void> {
   const text = draft.text.trim();
   state.actionError = null;
   state.draftSending = true;
+  let targetId: string | null = null;
   try {
     const model = plainModel(draft.model);
     const sentAt = Date.now();
@@ -763,24 +777,24 @@ export async function sendDraft(): Promise<void> {
       const forked = await window.awefork.fork(draft.sessionId, draft.atMessageId);
       await refreshSessions();
       await selectSession(forked.id, { focus: true });
-      // Mark the new branch running before the request goes out, like
-      // sendPrompt does — the canvas card and delete guard must not wait on
-      // the first SSE busy frame.
-      activeStreamSessions.add(forked.id);
-      state.running = { ...state.running, [forked.id]: true };
-      await window.awefork.prompt(forked.id, text, model);
-      watchCompletion(forked.id, sentAt);
-      // Surface the carried-over prompt as the branch's first own turn right
-      // away; the idle refresh swaps it for the server's row.
-      appendLocalMessage(forked.id, text, model);
+      targetId = forked.id;
     } else {
       await selectSession(draft.sessionId, { focus: true });
-      await window.awefork.prompt(draft.sessionId, text, model);
-      watchCompletion(draft.sessionId, sentAt);
-      appendLocalMessage(draft.sessionId, text, model);
+      targetId = draft.sessionId;
     }
+    // Mark the target running before the request goes out, like sendPrompt
+    // does — continuing and forking must share the same waiting UI, and the
+    // canvas card and delete guard must not wait on the first SSE busy frame.
+    activeStreamSessions.add(targetId);
+    state.running = { ...state.running, [targetId]: true };
+    // Surface the prompt as the target's newest own turn right away; the
+    // idle refresh swaps it for the server's row.
+    appendLocalMessage(targetId, text, model);
+    await window.awefork.prompt(targetId, text, model);
+    watchCompletion(targetId, sentAt);
     state.draft = null;
   } catch (error) {
+    if (targetId) settleRun(targetId);
     state.actionError = error instanceof Error ? error.message : String(error);
   } finally {
     state.draftSending = false;
@@ -811,6 +825,7 @@ function appendLocalMessage(
         createdAt: Date.now(),
         completedAt: null,
         outputTokens: null,
+        error: null,
       },
     ],
   };

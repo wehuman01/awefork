@@ -27,6 +27,8 @@ export interface Turn {
   durationMs: number | null;
   /** Output tokens summed across the turn's replies. */
   outputTokens: number;
+  /** Why the turn's run failed (last reported error); null when it succeeded. */
+  error: string | null;
 }
 
 /**
@@ -62,6 +64,7 @@ export function buildTurns(sessionId: string, messages: ChatMessage[]): Turn[] {
         createdAt: message.createdAt,
         durationMs: null,
         outputTokens: 0,
+        error: null,
       };
       turns.push(current);
       continue;
@@ -80,6 +83,7 @@ export function buildTurns(sessionId: string, messages: ChatMessage[]): Turn[] {
     }
     if (message.outputTokens !== null) current.outputTokens += message.outputTokens;
     if (message.completedAt !== null) current.durationMs = message.completedAt - current.createdAt;
+    if (message.error) current.error = message.error;
   }
 
   // Blank prompts (agent-side nudges, interrupted sends) get a stand-in title

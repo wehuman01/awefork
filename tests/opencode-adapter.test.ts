@@ -27,6 +27,7 @@ interface FakeMessage {
     providerID?: string;
     model?: { providerID?: string; modelID?: string };
     tokens?: { input?: number; output?: number; total?: number };
+    error?: { name?: string; data?: { message?: string } };
     time: { created: number; completed?: number };
   };
   parts: { type: string; text?: string; tool?: string }[];
@@ -302,6 +303,16 @@ describe("opencode adapter", () => {
     const messages = await adapter.messages("s1");
     expect(messages[0]?.outputTokens).toBeNull();
     expect(messages[1]?.outputTokens).toBe(29);
+  });
+
+  it("maps a failed run's error reason; successful rows carry null", async () => {
+    const state = baseState();
+    const a1 = state.messages.s1?.[1]?.info;
+    if (a1) a1.error = { name: "APIError", data: { message: "no active subscription" } };
+    const { adapter } = await newAdapter(state);
+    const messages = await adapter.messages("s1");
+    expect(messages[0]?.error).toBeNull();
+    expect(messages[1]?.error).toBe("no active subscription");
   });
 
   it("lists models with ids and names only — provider secrets dropped", async () => {

@@ -27,6 +27,7 @@ function chain(...pairs: [string, string][]): ChatMessage[] {
       createdAt: i * 10,
       completedAt: null,
       outputTokens: null,
+      error: null,
     },
     {
       id: assistantId,
@@ -38,6 +39,7 @@ function chain(...pairs: [string, string][]): ChatMessage[] {
       createdAt: i * 10 + 5,
       completedAt: null,
       outputTokens: null,
+      error: null,
     },
   ]);
 }
