@@ -5,7 +5,7 @@
       :placeholder="inputPlaceholder"
       :disabled="running"
       rows="2"
-      @keydown.enter.exact.prevent="submit"
+      @keydown.enter.exact="onEnterKey"
     ></textarea>
     <div class="chat-input-foot">
       <ModelPicker
@@ -42,6 +42,16 @@ const inputPlaceholder = computed(() => {
   if (props.running) return "Agent is running…";
   return "继续这条分支…";
 });
+
+/**
+ * 组输入（中文输入法）期间的回车在确认候选词，不是发送；keyCode 229 兜住
+ * Safari——它在提交流的那次 keydown 上不设 isComposing。
+ */
+function onEnterKey(event: KeyboardEvent): void {
+  if (event.isComposing || event.keyCode === 229) return;
+  event.preventDefault();
+  submit();
+}
 
 function submit(): void {
   const value = text.value.trim();

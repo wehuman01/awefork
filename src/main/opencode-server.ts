@@ -37,28 +37,43 @@ export function buildSpawnEnv(
 /**
  * Reuse a running `opencode serve` on the port when possible; otherwise
  * spawn one as a child of this app and keep it alive until quit.
+ * `spawnFn` is injectable for tests.
  */
-export async function ensureOpencodeServer(port: number): Promise<EnsureServerResult> {
+export async function ensureOpencodeServer(
+  port: number,
+  spawnFn: typeof spawn = spawn,
+): Promise<EnsureServerResult> {
   const baseUrl = `http://127.0.0.1:${port}`;
   const client = createOpencodeClient(baseUrl);
   if (await isReachable(client)) {
     return { spawned: false, baseUrl };
   }
 
-  const child = spawn("opencode", ["serve", "--port", String(port), "--hostname", "127.0.0.1"], {
+  const child = spawnFn("opencode", ["serve", "--port", String(port), "--hostname", "127.0.0.1"], {
     stdio: "ignore",
     detached: false,
     cwd: homedir(),
     env: buildSpawnEnv(process.env),
   });
+  // A failed spawn (ENOENT — CLI not on PATH) emits "error" and NEVER sets
+  // exitCode, so the loop must watch this flag or it idles the full 30 s.
+  // Held on an object: a plain let gets narrowed to its initializer because
+  // the assignment lives in a callback TypeScript's flow analysis never runs.
+  const spawnFailure = { error: null as Error | null };
   child.on("error", (error) => {
-    console.error(`opencode serve failed to start: ${error.message}`);
+    spawnFailure.error = error;
   });
   registerCleanup(child);
 
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     await sleep(500);
+    const spawnError = spawnFailure.error;
+    if (spawnError) {
+      throw new Error(
+        `Could not start opencode serve: ${spawnError.message}. Is the "opencode" CLI on PATH? Install it, or start it manually with: opencode serve --port ${port}`,
+      );
+    }
     if (child.exitCode !== null) break;
     if (await isReachable(client)) {
       return { spawned: true, baseUrl };

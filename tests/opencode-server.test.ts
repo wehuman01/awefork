@@ -1,8 +1,10 @@
+import type { ChildProcess, spawn } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "vitest";
-import { buildSpawnEnv } from "../src/main/opencode-server.js";
+import { buildSpawnEnv, ensureOpencodeServer } from "../src/main/opencode-server.js";
 
 function fakeHome(): string {
   const home = mkdtempSync(join(tmpdir(), "awefork-home-"));
@@ -36,5 +38,22 @@ describe("buildSpawnEnv", () => {
     const env = buildSpawnEnv({ PATH: "/usr/bin:/bin", HOME: home }, home);
     expect(env.PATH).not.toContain(home);
     expect(env.PATH?.endsWith("/usr/bin:/bin")).toBe(true);
+  });
+});
+
+describe("ensureOpencodeServer", () => {
+  test("reports a failed spawn immediately instead of idling to the 30s deadline", async () => {
+    // A CLI missing from PATH: spawn emits "error" and never sets exitCode.
+    const spawnFn: typeof spawn = (() => {
+      const child = new EventEmitter() as unknown as ChildProcess;
+      child.exitCode = null;
+      queueMicrotask(() => child.emit("error", new Error("spawn opencode ENOENT")));
+      return child;
+    }) as typeof spawn;
+    // Port 0: nothing can listen there, so the reachability probe fails and
+    // the spawn path actually runs.
+    await expect(ensureOpencodeServer(0, spawnFn)).rejects.toThrow(
+      /Could not start opencode serve.*ENOENT/,
+    );
   });
 });

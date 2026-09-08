@@ -8,7 +8,7 @@ Canvas readability and daily-driver ergonomics on top of v0.1.0.
 
 - **Context chain in the pane** — the branch-context pane now lists the turns that lead into the selected one (the same path the canvas highlights), numbered, with cross-session forks marked ⎇; click a card to jump to that turn. More than 12 ancestors collapse into an "earlier turns" note.
 - **Delete from the sidebar** — right-click any session row (forks included) for 删除会话; the same undo toast guards it as the canvas delete.
-- **Undo delete** — deleting a session now hides it instantly with an「已删除 · 撤销」toast; the real server delete only fires after an 8-second grace window, so one click puts the session (and its pin) back. Pending deletes persist in `trash.json` and flush on the next launch, so quitting mid-window still completes the deletion.
+- **Undo delete** — deleting a session now hides it instantly with an「已删除 · 撤销」toast; the real server delete only fires when the next operation flushes the pending queue (or the toast's 撤销 / ⌘Z cancels it first). Pending deletes persist in `trash.json` and flush on the next launch, so quitting mid-window still completes the deletion.
 - **Delete stays in place** — after deleting, the selection moves to whatever session now occupies the deleted row's spot in the sidebar (next, else previous) instead of jumping back to the newest conversation.
 - **Model picker scrolls** — the mouse wheel inside the searchable model list scrolls the list again instead of zooming the canvas underneath.
 - **Active path highlight** — selecting a turn lights up the whole lineage from the story's root to that card (edges included); everything else dims. Branch-heavy canvases now answer "which line am I on".
@@ -21,6 +21,13 @@ Canvas readability and daily-driver ergonomics on top of v0.1.0.
 - **Resizable shell** — drag the handles between columns to resize the sidebar and pane; double-click a handle to fold/unfold. Widths persist in localStorage.
 - **Canvas minimap** — working sets beyond the overview threshold get a minimap with a live viewport rectangle; click or drag it to pan.
 - **Command palette** — ⌘K / Ctrl+K (or the topbar button) to jump between sessions and fire actions (fit view, clone, refresh, fold panels).
+
+### Fixes
+
+- **IME-safe Enter** — composing with an IME (Chinese input) no longer triggers actions: Enter confirms the candidate instead of sending a half-typed prompt, picking a palette/model item, or committing a rename; arrows and Esc during composition belong to the candidate window too.
+- **Long runs stay running** — streamed deltas now count as proof of life: they keep the run state lit and reset its poll watchdog, so a run can no longer be force-settled (card flipping to「无文本回复」mid-flight) while it is still streaming, and runs whose busy frame was missed heal on the first delta.
+- **Fast failure without the opencode CLI** — a failed spawn (CLI not on PATH) now surfaces its error within a second instead of idling out the 30-second startup window.
+- **API requests time out** — a half-dead opencode server (port open, never responding) now fails requests after 15s with a clear message instead of hanging the UI forever. The prompt endpoint deliberately stays untimed: its response only arrives when the whole run finishes.
 
 ## v0.1.0
 

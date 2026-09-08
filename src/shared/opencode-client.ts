@@ -67,6 +67,9 @@ export class OpencodeApiError extends Error {
   }
 }
 
+/** Per-request deadline; 0 disables it (only the prompt endpoint needs that). */
+export const DEFAULT_TIMEOUT_MS = 15_000;
+
 export interface OpencodeClient {
   /**
    * GET /session is scoped to the server's current project (resolved from its
@@ -89,20 +92,37 @@ export interface OpencodeClient {
    * Fire a run on POST /session/:id/message. This endpoint resolves only when
    * the whole run finishes — and unlike prompt_async it publishes the run's
    * events on /event (opencode 1.18: prompt_async publishes none), so callers
-   * detach it and follow progress through the event stream.
+   * detach it and follow progress through the event stream. Sent without a
+   * deadline: a run can legitimately outlive any timeout.
    */
   prompt(sessionId: string, text: string, model?: ModelChoice | null): Promise<void>;
   abort(sessionId: string): Promise<void>;
 }
 
-export function createOpencodeClient(baseUrl: string): OpencodeClient {
+export function createOpencodeClient(
+  baseUrl: string,
+  config: { timeoutMs?: number } = {},
+): OpencodeClient {
   const url = (path: string) => `${baseUrl.replace(/\/$/, "")}${path}`;
 
-  async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  async function request<T>(
+    path: string,
+    init?: RequestInit,
+    timeoutMs: number = config.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+  ): Promise<T> {
     let response: Response;
+    // Without a deadline, a half-dead server (port open, never responding)
+    // hangs the IPC call — and with it the UI — forever.
+    const timer = timeoutMs > 0 ? AbortSignal.timeout(timeoutMs) : null;
     try {
-      response = await fetch(url(path), init);
+      response = await fetch(url(path), { ...init, signal: timer ?? init?.signal });
     } catch (error) {
+      if (timer?.aborted) {
+        throw new OpencodeApiError(
+          0,
+          `opencode API ${path} timed out after ${timeoutMs}ms — the server is not responding. Restart it with: opencode serve --port 4096`,
+        );
+      }
       const reason = error instanceof Error ? error.message : String(error);
       throw new OpencodeApiError(
         0,
@@ -164,14 +184,18 @@ export function createOpencodeClient(baseUrl: string): OpencodeClient {
         body: JSON.stringify({ title }),
       }),
     prompt: async (id, text, model) => {
-      await request(`/session/${id}/message`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          parts: [{ type: "text", text }],
-          ...(model ? { model: { providerID: model.providerId, modelID: model.modelId } } : {}),
-        }),
-      });
+      await request(
+        `/session/${id}/message`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            parts: [{ type: "text", text }],
+            ...(model ? { model: { providerID: model.providerId, modelID: model.modelId } } : {}),
+          }),
+        },
+        0,
+      );
     },
     abort: (id) => request(`/session/${id}/abort`, { method: "POST" }),
   };

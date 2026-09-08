@@ -247,7 +247,10 @@ const completionWatches = new Map<
   { timer: ReturnType<typeof setInterval>; sentAt: number; ticks: number }
 >();
 const WATCH_INTERVAL_MS = 1500;
-const WATCH_MAX_TICKS = 160; // give up after ~4 minutes; SSE busy frames re-set running anyway
+// Give up after ~4 minutes with no completion AND no streamed delta — every
+// delta resets the ticks, so only a run that went fully silent (or a lost
+// connection) can reach the cap; settling is then the right backstop.
+const WATCH_MAX_TICKS = 160;
 
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -462,6 +465,15 @@ function handleEvent(event: AgentEvent): void {
       break;
     }
     case "message.delta": {
+      // A delta is proof the run is alive. It re-lights a session whose busy
+      // frame never arrived (or that a silent stretch let the watchdog settle)
+      // and resets the watchdog so streaming runs cannot time out mid-flight.
+      if (!state.running[event.sessionId]) {
+        state.running = { ...state.running, [event.sessionId]: true };
+      }
+      const watch = completionWatches.get(event.sessionId);
+      if (watch) watch.ticks = 0;
+      else watchCompletion(event.sessionId, Date.now());
       const current = streamBuffers.get(event.sessionId) ?? "";
       const merged = current + event.delta;
       streamBuffers.set(event.sessionId, merged);

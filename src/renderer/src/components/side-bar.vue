@@ -42,8 +42,8 @@
               v-model="renameText"
               class="sess-rename"
               :style="{ marginLeft: `${8 + row.depth * 14}px` }"
-              @keydown.enter.prevent="commitRename"
-              @keydown.esc.stop.prevent="cancelRename"
+              @keydown.enter="onRenameEnter"
+              @keydown.esc.stop="onRenameEsc"
               @mousedown.stop
               @blur="commitRename"
             />
@@ -132,6 +132,20 @@ function beginRename(): void {
 
 function cancelRename(): void {
   renaming.value = null;
+}
+
+/** 组输入期间的回车在确认候选词，不是提交重命名（见 chat-input 的 onEnterKey）。 */
+function onRenameEnter(event: KeyboardEvent): void {
+  if (event.isComposing || event.keyCode === 229) return;
+  event.preventDefault();
+  commitRename();
+}
+
+/** 组输入期间的 Esc 在关候选词窗，第一次不该顺手关掉重命名。 */
+function onRenameEsc(event: KeyboardEvent): void {
+  if (event.isComposing || event.keyCode === 229) return;
+  event.preventDefault();
+  cancelRename();
 }
 
 function commitRename(): void {

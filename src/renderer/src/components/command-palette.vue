@@ -137,6 +137,9 @@ async function jumpToSession(session: SessionSummary): Promise<void> {
 }
 
 function onInputKeydown(event: KeyboardEvent): void {
+  // 组输入（中文输入法）期间的按键在操作候选词窗：Enter 确认候选、方向键
+  // 移动候选，都不该触发面板导航。keyCode 229 兜住 Safari 的合成键。
+  if (event.isComposing || event.keyCode === 229) return;
   if (event.key === "ArrowDown" || event.key === "ArrowUp") {
     event.preventDefault();
     const size = items.value.length;

@@ -131,6 +131,8 @@ function pickChoice(m: ModelOption): void {
 }
 
 function onSearchKeydown(event: KeyboardEvent): void {
+  // 组输入期间的按键在操作候选词窗（见 chat-input 的 onEnterKey），跳过。
+  if (event.isComposing || event.keyCode === 229) return;
   if (event.key === "ArrowDown" || event.key === "ArrowUp") {
     event.preventDefault();
     const size = filtered.value.length + 1; // + the default row at -1
