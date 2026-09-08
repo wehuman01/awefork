@@ -31,6 +31,8 @@
       <article
         v-for="node in graph.nodes"
         :key="node.id"
+        :ref="cardRef"
+        :data-node-id="node.id"
         class="turn"
         :class="{
           selected: node.id === selectedTurnId,
@@ -160,7 +162,11 @@
         v-for="n in graph.nodes"
         :key="`mm-${n.id}`"
         class="mm-node"
-        :class="{ stub: n.kind === 'stub', on: activePathIds.has(n.id) }"
+        :class="{
+          stub: n.kind === 'stub',
+          on: activePathIds.has(n.id),
+          running: Boolean(store.running[n.sessionId]),
+        }"
         :style="mmNodeStyle(n)"
       ></div>
       <div class="mm-view" :style="mmViewStyle"></div>
@@ -175,6 +181,7 @@ import { COL_GAP, NODE_HEIGHT, NODE_WIDTH, ROW_GAP } from "../../../shared/canva
 import { formatDuration, formatTokens } from "../format";
 import {
   activeChain,
+  cardHeights,
   deleteSession,
   dismissDraft,
   isSessionTip,
@@ -203,7 +210,7 @@ const worldStyle = computed(() => ({
 
 const svgSize = computed(() => {
   const maxX = Math.max(0, ...graph.value.nodes.map((n) => n.x + NODE_WIDTH + 100));
-  const maxY = Math.max(0, ...graph.value.nodes.map((n) => n.y + NODE_HEIGHT + 100));
+  const maxY = Math.max(0, ...graph.value.nodes.map((n) => n.y + n.height + 100));
   return { w: maxX, h: maxY };
 });
 
@@ -228,9 +235,9 @@ const edgesWithPoints = computed(() =>
     const to = nodeById.value.get(edge.to);
     if (!from || !to) return [];
     const x1 = from.x + NODE_WIDTH;
-    const y1 = from.y + NODE_HEIGHT / 2;
+    const y1 = from.y + from.height / 2;
     const x2 = to.x;
-    const y2 = to.y + NODE_HEIGHT / 2;
+    const y2 = to.y + to.height / 2;
     const bend = Math.max(46, (x2 - x1) / 2);
     return [
       {
@@ -250,7 +257,9 @@ const draftNode = computed(() =>
   store.draft ? (nodeById.value.get(store.draft.nodeId) ?? null) : null,
 );
 const draftX = computed(() => (draftNode.value?.x ?? 0) + 56);
-const draftY = computed(() => (draftNode.value?.y ?? 0) + NODE_HEIGHT + 40);
+const draftY = computed(
+  () => (draftNode.value?.y ?? 0) + (draftNode.value?.height ?? NODE_HEIGHT) + 40,
+);
 
 function selectNode(node: TurnNode): void {
   void selectTurn(node);
@@ -319,7 +328,7 @@ function fitView(): void {
   const minX = Math.min(...graph.value.nodes.map((n) => n.x));
   const minY = Math.min(...graph.value.nodes.map((n) => n.y));
   const maxX = Math.max(...graph.value.nodes.map((n) => n.x + NODE_WIDTH));
-  const maxY = Math.max(...graph.value.nodes.map((n) => n.y + NODE_HEIGHT));
+  const maxY = Math.max(...graph.value.nodes.map((n) => n.y + n.height));
   const padding = 48;
   const boundsW = maxX - minX + padding * 2;
   const boundsH = maxY - minY + padding * 2;
@@ -335,7 +344,7 @@ function centerOnSession(sessionId: string): void {
   if (!node || !rect) return;
   scale.value = Math.max(scale.value, 0.85);
   tx.value = rect.width / 2 - (node.x + NODE_WIDTH / 2) * scale.value;
-  ty.value = rect.height / 2 - (node.y + NODE_HEIGHT / 2) * scale.value;
+  ty.value = rect.height / 2 - (node.y + node.height / 2) * scale.value;
 }
 
 // Real directories can hold hundreds of sessions — fitting everything would
@@ -411,6 +420,28 @@ const minimapEl = ref<HTMLElement | null>(null);
 const viewportSize = ref({ w: 0, h: 0 });
 let resizeObserver: ResizeObserver | null = null;
 
+// ── card heights feed the layout ────────────────────────────────────
+// ResizeObserver reports pre-transform layout size, so zoom doesn't skew
+// measurements. Height depends only on content + fixed card width, never on
+// the row a card lands in — measure → re-layout settles in one pass.
+// Created in setup (not onMounted): template refs fire during mount, before
+// mounted hooks run, so the observer must already exist to catch them.
+const cardObserver = new ResizeObserver((entries) => {
+  for (const entry of entries) {
+    const card = entry.target as HTMLElement;
+    const id = card.dataset.nodeId;
+    if (!id) continue;
+    const height = Math.round(entry.borderBoxSize?.[0]?.blockSize ?? card.offsetHeight);
+    if (cardHeights[id] !== height) cardHeights[id] = height;
+  }
+});
+
+/** Template ref for turn cards: observe them and record measured heights. */
+function cardRef(el: unknown): void {
+  const card = el as HTMLElement | null;
+  if (card?.dataset.nodeId) cardObserver.observe(card);
+}
+
 onMounted(() => {
   resizeObserver = new ResizeObserver((entries) => {
     const rect = entries[0]?.contentRect;
@@ -418,7 +449,20 @@ onMounted(() => {
   });
   if (viewportEl.value) resizeObserver.observe(viewportEl.value);
 });
-onUnmounted(() => resizeObserver?.disconnect());
+onUnmounted(() => {
+  resizeObserver?.disconnect();
+  cardObserver.disconnect();
+});
+
+// Drop measurements for nodes that left the graph (deleted sessions, project
+// switches). Deleting may recompute the graph once; the next pass finds
+// nothing to remove, so the loop settles.
+watch(graph, (g) => {
+  const live = new Set(g.nodes.map((n) => n.id));
+  for (const id of Object.keys(cardHeights)) {
+    if (!live.has(id)) delete cardHeights[id];
+  }
+});
 
 const showMinimap = computed(() => graph.value.nodes.length > OVERVIEW_NODE_LIMIT);
 
@@ -428,7 +472,7 @@ const minimapGeometry = computed(() => {
   const minX = Math.min(...nodes.map((n) => n.x));
   const minY = Math.min(...nodes.map((n) => n.y));
   const worldW = Math.max(...nodes.map((n) => n.x + NODE_WIDTH)) - minX || 1;
-  const worldH = Math.max(...nodes.map((n) => n.y + NODE_HEIGHT)) - minY || 1;
+  const worldH = Math.max(...nodes.map((n) => n.y + n.height)) - minY || 1;
   const s = Math.min(MM_WIDTH / worldW, MM_HEIGHT / worldH);
   return { minX, minY, s, offX: (MM_WIDTH - worldW * s) / 2, offY: (MM_HEIGHT - worldH * s) / 2 };
 });
@@ -440,7 +484,7 @@ function mmNodeStyle(node: TurnNode): Record<string, string> {
     left: `${g.offX + (node.x - g.minX) * g.s}px`,
     top: `${g.offY + (node.y - g.minY) * g.s}px`,
     width: `${Math.max(3, NODE_WIDTH * g.s)}px`,
-    height: `${Math.max(2, NODE_HEIGHT * g.s)}px`,
+    height: `${Math.max(2, node.height * g.s)}px`,
   };
 }
 

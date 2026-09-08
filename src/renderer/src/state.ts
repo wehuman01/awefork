@@ -156,11 +156,19 @@ const canvasSessions = computed<SessionSummary[]>(() =>
   ),
 );
 
+/**
+ * Rendered card heights the canvas has measured (node id → px). Feeding them
+ * back into the graph lets row bands follow real content; height depends only
+ * on content + fixed card width, so measure → re-layout converges in one pass.
+ */
+export const cardHeights = reactive<Record<string, number>>({});
+
 export const turnGraph = computed<TurnGraph>(() =>
   buildTurnGraph({
     sessions: canvasSessions.value,
     lineage: state.lineage,
     messages: state.messagesBySession,
+    heights: cardHeights,
   }),
 );
 

@@ -1129,6 +1129,12 @@ textarea {
   border-color: #c9b8f0;
 }
 
+/* last so a running node stays visible even when on the active path */
+.mm-node.running {
+  background: var(--mint);
+  border-color: #4e8f45;
+}
+
 .mm-view {
   position: absolute;
   border: 1.5px solid var(--primary-deep);

@@ -1,4 +1,6 @@
 node_modules/
+# the worktree setup symlinks node_modules, which git tracks as a plain file
+node_modules
 out/
 dist/
 *.log

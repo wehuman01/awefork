@@ -47,6 +47,8 @@ export interface TurnNode {
   row: number;
   x: number;
   y: number;
+  /** Rendered card height: the measured value when reported, else NODE_HEIGHT. */
+  height: number;
 }
 
 export interface GraphEdge {
@@ -89,6 +91,10 @@ export interface BuildGraphOptions {
   lineage: LineageMap;
   /** Messages per session id; missing entries render as stubs. */
   messages: Record<string, ChatMessage[]>;
+  /** Measured card heights by node id; unmeasured ids keep NODE_HEIGHT.
+   *  Rows band by their tallest card, so tool-heavy turns don't collide with
+   *  the row below and stub-only rows collapse toward their real size. */
+  heights?: Record<string, number>;
 }
 
 export function buildTurnGraph(options: BuildGraphOptions): TurnGraph {
@@ -154,7 +160,7 @@ export function buildTurnGraph(options: BuildGraphOptions): TurnGraph {
     session: SessionSummary,
     col: number,
     fromRow: number,
-    data: Omit<TurnNode, "col" | "row" | "x" | "y" | "sessionId">,
+    data: Omit<TurnNode, "col" | "row" | "x" | "y" | "height" | "sessionId">,
   ): TurnNode => {
     const row = findFreeRow(col, fromRow);
     const node: TurnNode = {
@@ -163,7 +169,10 @@ export function buildTurnGraph(options: BuildGraphOptions): TurnGraph {
       col,
       row,
       x: col * (NODE_WIDTH + COL_GAP),
+      // Grid estimate; the row-band sweep below replaces it once every node
+      // (and therefore every row's tallest card) is known.
       y: row * (NODE_HEIGHT + ROW_GAP),
+      height: options.heights?.[data.id] ?? NODE_HEIGHT,
     };
     nodes.push(node);
     nodeById.set(node.id, node);
@@ -258,6 +267,21 @@ export function buildTurnGraph(options: BuildGraphOptions): TurnGraph {
     visit(root, 0, cursorRow, null, "sequence");
     cursorRow = maxRow + 2;
   }
+
+  // Row bands: a row is exactly as tall as its tallest card. Unmeasured
+  // nodes already carry NODE_HEIGHT, so only fully measured rows can shrink
+  // below it; node-less rows (the gap between root stories) keep the default.
+  const rowHeight = new Map<number, number>();
+  for (const node of nodes) {
+    rowHeight.set(node.row, Math.max(rowHeight.get(node.row) ?? 0, node.height));
+  }
+  const rowTop = new Map<number, number>();
+  let top = 0;
+  for (let row = 0; row <= maxRow; row += 1) {
+    rowTop.set(row, top);
+    top += (rowHeight.get(row) ?? NODE_HEIGHT) + ROW_GAP;
+  }
+  for (const node of nodes) node.y = rowTop.get(node.row) ?? 0;
 
   return { nodes, edges };
 }
