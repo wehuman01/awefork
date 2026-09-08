@@ -96,10 +96,14 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
       const [current, projects] = await Promise.all([client.listSessions(), client.listProjects()]);
       const byId = new Map(current.map((s) => [s.id, s]));
       const otherWorktrees = projects.filter((p) => p.id !== "global" && p.worktree);
-      for (const project of otherWorktrees) {
-        for (const session of await client.listSessions(project.worktree)) {
-          byId.set(session.id, session);
-        }
+      // One request per worktree, in parallel — the serial loop made every
+      // debounced refresh pay the sum of all worktree round-trips. Array
+      // order preserves the later-wins overwrite of duplicate ids.
+      const perWorktree = await Promise.all(
+        otherWorktrees.map((project) => client.listSessions(project.worktree)),
+      );
+      for (const sessions of perWorktree) {
+        for (const session of sessions) byId.set(session.id, session);
       }
       return [...byId.values()].map(mapSession).sort((a, b) => b.updatedAt - a.updatedAt);
     },

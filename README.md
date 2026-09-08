@@ -29,6 +29,8 @@ awefork is a non-linear workbench for local coding agents. Today it supports [op
 
 It is intentionally scoped: read-only projection of your real agent sessions, fork/continue through the agent's native API, nothing invented in between. No storage hacking, no lock-in — every session it creates is a plain opencode session you can keep using anywhere.
 
+The idea of treating sessions as a branching graph originates from [PiX](https://github.com/huang-sh/PiX), which first explored this non-linear interaction model for AI agent workbenches. awefork adapts it for opencode: read-only projection, native fork API, zero storage lock-in.
+
 ## How It Works
 
 ```text
@@ -50,7 +52,7 @@ It is intentionally scoped: read-only projection of your real agent sessions, fo
 - **Checkpoint clone** — fork the selected branch's latest state in one click, no turn picking needed.
 - **Model choice** — a searchable picker (70+ models is fine) when starting a branch, plus a per-session picker beside the composer.
 - **Continue** — send messages from awefork; replies stream in live. Replying while an older turn is selected branches from that turn.
-- **Canvas** — selecting a turn highlights its full path from the root and dims the rest; fit view, and a minimap once the working set grows.
+- **Canvas** — selecting a turn highlights its full path from the root and dims the rest; fit view, and an always-on minimap with a live viewport rectangle.
 - **Command palette** — ⌘K / Ctrl+K to jump between sessions and fire actions; drag the column handles to resize, double-click to fold.
 - **Native sessions** — forking calls `opencode serve`'s fork API; the result is a real session (open it in the TUI anytime).
 

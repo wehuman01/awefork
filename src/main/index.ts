@@ -36,9 +36,10 @@ async function createWindow(): Promise<void> {
       sandbox: false,
     },
   });
-
-  forwardEvents(adapterPromise, (event: AgentEvent) => {
-    mainWindow?.webContents.send("awefork:event", event);
+  // macOS keeps the app alive after the window closes; a stale reference
+  // would throw "Object has been destroyed" on the next forwarded event.
+  mainWindow.on("closed", () => {
+    mainWindow = null;
   });
 
   if (process.env.ELECTRON_RENDERER_URL) {
@@ -47,6 +48,13 @@ async function createWindow(): Promise<void> {
     await mainWindow.loadFile(join(__dirname, "../renderer/index.html"));
   }
 }
+
+// Subscribed exactly once, outside createWindow: a macOS Dock re-open runs
+// createWindow again, and a second subscribe would leave the first reconnect
+// loop alive — every event would then arrive twice and double the streams.
+forwardEvents(adapterPromise, (event: AgentEvent) => {
+  mainWindow?.webContents.send("awefork:event", event);
+});
 
 app.whenReady().then(() => {
   void createWindow();

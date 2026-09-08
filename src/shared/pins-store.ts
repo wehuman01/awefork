@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import { dirname } from "node:path";
+import { writeFileAtomic } from "./atomic-write.js";
 
 /**
  * Pin store: the session ids the user explicitly saved to the canvas.
@@ -26,5 +27,5 @@ export async function readPins(filePath: string): Promise<string[]> {
 
 export async function writePins(filePath: string, pins: string[]): Promise<void> {
   await fs.mkdir(dirname(filePath), { recursive: true });
-  await fs.writeFile(filePath, `${JSON.stringify(pins, null, 2)}\n`, "utf8");
+  await writeFileAtomic(filePath, `${JSON.stringify(pins, null, 2)}\n`);
 }

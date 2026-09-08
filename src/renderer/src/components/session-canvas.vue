@@ -151,6 +151,13 @@
       <button type="button" class="fit-btn" title="适配视图" @click="fitView">⛶</button>
     </div>
 
+    <!-- Search & digest overlays: mousedown/wheel stay inside them so pans and
+         zooms never fire while the user works the lists. -->
+    <div class="canvas-panels" @mousedown.stop @wheel.stop>
+      <StorySearch @jump="centerOnNode" />
+      <BranchDigest @jump="centerOnNode" />
+    </div>
+
     <div
       v-if="showMinimap"
       ref="minimapEl"
@@ -195,7 +202,9 @@ import {
   store,
   turnGraph,
 } from "../state";
+import BranchDigest from "./branch-digest.vue";
 import ModelPicker from "./model-picker.vue";
+import StorySearch from "./story-search.vue";
 
 const viewportEl = ref<HTMLElement | null>(null);
 const scale = ref(1);
@@ -348,9 +357,14 @@ function fitView(): void {
 }
 
 function centerOnSession(sessionId: string): void {
-  const rect = viewportEl.value?.getBoundingClientRect();
   const node = nodesOf(sessionId)[nodesOf(sessionId).length - 1];
-  if (!node || !rect) return;
+  if (node) centerOnNode(node);
+}
+
+/** Search hits and digest rows land here: put one node in the middle of view. */
+function centerOnNode(node: TurnNode): void {
+  const rect = viewportEl.value?.getBoundingClientRect();
+  if (!rect) return;
   scale.value = Math.max(scale.value, 0.85);
   tx.value = rect.width / 2 - (node.x + NODE_WIDTH / 2) * scale.value;
   ty.value = rect.height / 2 - (node.y + node.height / 2) * scale.value;
@@ -473,7 +487,7 @@ watch(graph, (g) => {
   }
 });
 
-const showMinimap = computed(() => graph.value.nodes.length > OVERVIEW_NODE_LIMIT);
+const showMinimap = computed(() => graph.value.nodes.length > 0);
 
 const minimapGeometry = computed(() => {
   const nodes = graph.value.nodes;

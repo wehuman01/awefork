@@ -49,9 +49,17 @@ const props = defineProps<{
 
 const listEl = ref<HTMLElement | null>(null);
 
+// Follow the stream only while the reader sits at the bottom; scrolling up
+// to reread must survive the next streamed frame. Measured pre-render, so
+// "near the bottom" means near the bottom of what the reader last saw.
+const STICK_DISTANCE_PX = 40;
+
 watch(
   () => [props.messages.length, props.streamText],
   () => {
+    const list = listEl.value;
+    if (!list) return;
+    if (list.scrollHeight - list.scrollTop - list.clientHeight > STICK_DISTANCE_PX) return;
     void nextTick(() => {
       listEl.value?.scrollTo({ top: listEl.value.scrollHeight });
     });

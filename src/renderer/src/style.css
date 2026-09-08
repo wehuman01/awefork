@@ -1096,7 +1096,8 @@ textarea {
   border-color: var(--primary-border);
 }
 
-/* minimap — appears once the working set outgrows the overview heuristic */
+/* minimap — always on while the canvas has nodes; doubles as an overview for
+   small graphs, a finder for large ones */
 
 .minimap {
   position: absolute;
@@ -1641,4 +1642,262 @@ textarea {
 
 .undo-btn:hover {
   border-color: var(--primary);
+}
+
+/* ── story search & branch digest overlays ────────────────────────── */
+
+.canvas-panels {
+  position: absolute;
+  top: 12px;
+  left: 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  z-index: 5;
+  max-width: 380px;
+}
+
+.panel-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--ink-soft);
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(4px);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px 13px;
+}
+
+.panel-pill:hover {
+  color: var(--primary-deep);
+  border-color: var(--primary-border);
+}
+
+/* story search */
+
+.ss-box {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(4px);
+  border: 1.5px solid var(--primary-border);
+  border-radius: 14px;
+  padding: 8px 12px;
+  box-shadow: var(--shadow-card);
+}
+
+.ss-icon {
+  font-size: 13px;
+  flex: 0 0 auto;
+}
+
+.ss-box input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 13px;
+}
+
+.ss-count {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--ink-faint);
+  flex: 0 0 auto;
+}
+
+.ss-close {
+  color: var(--ink-faint);
+  font-size: 11px;
+  flex: 0 0 auto;
+}
+
+.ss-close:hover {
+  color: var(--primary-deep);
+}
+
+.ss-results {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(4px);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: var(--shadow-lift);
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.ss-hit {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 10px;
+}
+
+.ss-hit:hover {
+  background: var(--primary-soft);
+}
+
+.ss-hit-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.ss-field {
+  font-size: 10px;
+  font-weight: 800;
+  padding: 1.5px 7px;
+  border-radius: 999px;
+  background: var(--mint-soft);
+  color: #4e8f45;
+  flex: 0 0 auto;
+}
+
+.ss-field.preview {
+  background: var(--lavender-soft);
+  color: #7a66d6;
+}
+
+.ss-field.tool {
+  background: #fff3d6;
+  color: #8a6d1a;
+}
+
+.ss-hit-title {
+  font-size: 12.5px;
+  font-weight: 800;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ss-snippet {
+  font-size: 11.5px;
+  color: var(--ink-soft);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-all;
+}
+
+.ss-snippet mark {
+  background: var(--primary-soft);
+  color: var(--primary-deep);
+  border-radius: 3px;
+  padding: 0 1px;
+}
+
+.ss-empty {
+  padding: 12px;
+  font-size: 12px;
+  color: var(--ink-faint);
+  text-align: center;
+}
+
+/* branch digest */
+
+.digest-panel {
+  width: 100%;
+  background: rgba(255, 255, 255, 0.95);
+  backdrop-filter: blur(4px);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: var(--shadow-lift);
+  overflow: hidden;
+}
+
+.digest-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 12px;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--ink);
+  border-bottom: 1px solid var(--line);
+}
+
+.digest-head button {
+  color: var(--ink-faint);
+  font-size: 11px;
+}
+
+.digest-head button:hover {
+  color: var(--primary-deep);
+}
+
+.digest-list {
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.digest-row {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 10px;
+}
+
+.digest-row:hover {
+  background: var(--primary-soft);
+}
+
+.digest-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.digest-glyph {
+  font-size: 12px;
+  color: var(--primary);
+  flex: 0 0 auto;
+}
+
+.digest-glyph.root {
+  color: var(--mint);
+}
+
+.digest-title {
+  font-size: 12.5px;
+  font-weight: 800;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.digest-fork {
+  font-size: 11px;
+  color: var(--ink-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.digest-meta {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--ink-soft);
 }

@@ -147,7 +147,7 @@ export const pinnedSessions = computed<SessionSummary[]>(() =>
  * What the canvas draws: pinned branch stories plus the selected session's
  * neighborhood. The full session list stays in the sidebar.
  */
-const canvasSessions = computed<SessionSummary[]>(() =>
+export const canvasSessions = computed<SessionSummary[]>(() =>
   selectCanvasSessions(
     directorySessions.value,
     state.lineage,
@@ -230,7 +230,6 @@ export const paneMessages = computed<ChatMessage[]>(() => {
   return range ? messages.slice(range.start, range.end) : messages;
 });
 
-const activeStreamSessions = new Set<string>();
 const streamBuffers = new Map<string, string>();
 /** Sessions whose messages have been requested (or are already cached). */
 const attemptedMessages = new Set<string>();
@@ -441,7 +440,6 @@ async function pollForCompletion(
 
 /** Shared run-finished cleanup, driven by SSE idle or the poll watchdog. */
 function settleRun(sessionId: string): void {
-  activeStreamSessions.delete(sessionId);
   streamBuffers.delete(sessionId);
   const { [sessionId]: goneStream, ...keptStreams } = state.streams;
   void goneStream;
@@ -460,7 +458,6 @@ function handleEvent(event: AgentEvent): void {
       break;
     }
     case "message.started": {
-      activeStreamSessions.add(event.sessionId);
       state.running = { ...state.running, [event.sessionId]: true };
       break;
     }
@@ -747,7 +744,6 @@ async function hardDeleteSession(sessionId: string): Promise<void> {
   void goneStream;
   state.streams = keptStreams;
   attemptedMessages.delete(sessionId);
-  activeStreamSessions.delete(sessionId);
   const { [sessionId]: goneRunning, ...keptRunning } = state.running;
   void goneRunning;
   state.running = keptRunning;
@@ -885,7 +881,6 @@ export async function sendDraft(): Promise<void> {
     // Mark the target running before the request goes out, like sendPrompt
     // does — continuing and forking must share the same waiting UI, and the
     // canvas card and delete guard must not wait on the first SSE busy frame.
-    activeStreamSessions.add(targetId);
     state.running = { ...state.running, [targetId]: true };
     // Surface the prompt as the target's newest own turn right away; the
     // idle refresh swaps it for the server's row.
@@ -951,7 +946,6 @@ export async function sendPrompt(text: string, model: ModelChoice | null = null)
   // the prompt must reach the session the composer was typing into, even
   // if the user switches selection mid-flush.
   await flushPendingDeletes();
-  activeStreamSessions.add(sessionId);
   state.running = { ...state.running, [sessionId]: true };
   const sentAt = Date.now();
   appendLocalMessage(sessionId, text, model);
@@ -959,7 +953,6 @@ export async function sendPrompt(text: string, model: ModelChoice | null = null)
     await window.awefork.prompt(sessionId, text, plainModel(model));
     watchCompletion(sessionId, sentAt);
   } catch (error) {
-    activeStreamSessions.delete(sessionId);
     const { [sessionId]: stopped, ...rest } = state.running;
     void stopped;
     state.running = rest;

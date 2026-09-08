@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import { dirname } from "node:path";
+import { writeFileAtomic } from "./atomic-write.js";
 import type { TrashEntry } from "./types.js";
 
 /**
@@ -35,5 +36,5 @@ export async function readTrash(filePath: string): Promise<TrashEntry[]> {
 
 export async function writeTrash(filePath: string, entries: TrashEntry[]): Promise<void> {
   await fs.mkdir(dirname(filePath), { recursive: true });
-  await fs.writeFile(filePath, `${JSON.stringify(entries, null, 2)}\n`, "utf8");
+  await writeFileAtomic(filePath, `${JSON.stringify(entries, null, 2)}\n`);
 }

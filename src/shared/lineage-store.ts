@@ -1,5 +1,6 @@
 import { promises as fs } from "node:fs";
 import { dirname } from "node:path";
+import { writeFileAtomic } from "./atomic-write.js";
 import type { ForkRecord, LineageMap } from "./types.js";
 
 /**
@@ -40,7 +41,7 @@ export async function recordFork(
   const map = await readLineage(filePath);
   map[forkedSessionId] = record;
   await fs.mkdir(dirname(filePath), { recursive: true });
-  await fs.writeFile(filePath, `${JSON.stringify(map, null, 2)}\n`, "utf8");
+  await writeFileAtomic(filePath, `${JSON.stringify(map, null, 2)}\n`);
 }
 
 /** Forget a session's own fork record (its children keep theirs, pointing at
@@ -49,5 +50,5 @@ export async function removeFork(filePath: string, sessionId: string): Promise<v
   const map = await readLineage(filePath);
   if (!(sessionId in map)) return;
   delete map[sessionId];
-  await fs.writeFile(filePath, `${JSON.stringify(map, null, 2)}\n`, "utf8");
+  await writeFileAtomic(filePath, `${JSON.stringify(map, null, 2)}\n`);
 }
