@@ -498,6 +498,10 @@ function handleEvent(event: AgentEvent): void {
       if (event.sessionId) {
         stopWatch(event.sessionId);
         settleRun(event.sessionId);
+        // Reload so the optimistic local prompt row disappears if the
+        // request never reached the server, and a mid-flight failure's ⚠
+        // row shows now instead of waiting out the watchdog.
+        void loadSessionMessages(event.sessionId);
         void refreshSessions();
       }
       break;
@@ -507,6 +511,8 @@ function handleEvent(event: AgentEvent): void {
 
 /** Pin or unpin a session: pinned branch stories stay on the canvas. */
 export async function togglePin(sessionId: string): Promise<void> {
+  // Pinning is a new operation: older pending deletes become final.
+  await flushPendingDeletes();
   try {
     state.pins = await window.awefork.togglePin(sessionId);
     await ensureCanvasMessages();
@@ -516,12 +522,12 @@ export async function togglePin(sessionId: string): Promise<void> {
 }
 
 /**
- * Soft-delete a session: it vanishes from every view at once, but the server
- * delete only fires after a grace window (DELETE_GRACE_MS), during which the
- * toast's 撤销 button puts it back untouched. Once the window lapses,
- * `hardDeleteSession` performs the old eager delete: prunes pins, drops
- * caches; child forks survive and re-root themselves. Refused while the
- * session has a run in flight.
+ * Soft-delete a session: it vanishes from every view at once and stays
+ * undoable (the toast's 撤销 button or Ctrl+Z) until the user starts a new
+ * operation, which flushes pending deletes for real. The toast text fades on
+ * its own short schedule — fading never finalizes the delete. Flushing prunes
+ * pins, drops caches; child forks survive and re-root themselves. Refused
+ * while the session has a run in flight.
  */
 export async function deleteSession(sessionId: string): Promise<void> {
   if (state.running[sessionId]) {
@@ -532,6 +538,8 @@ export async function deleteSession(sessionId: string): Promise<void> {
   const session = state.sessions.find((s) => s.id === sessionId);
   if (!session) return;
   state.actionError = null;
+  // Deleting is itself a new operation: older pending deletes become final.
+  await flushPendingDeletes();
 
   // Neighbor comes from the pre-delete sidebar order: whatever row now sits
   // where the deleted one was, so the selection doesn't jump across the list.
@@ -554,10 +562,11 @@ export async function deleteSession(sessionId: string): Promise<void> {
     return;
   }
 
-  // Toast + timer first: the undo window must be armed even if the
-  // neighbor-selection round-trip below fails.
-  state.deletedToast = { sessionId, title: session.title };
-  scheduleHardDelete(sessionId);
+  // Toast + pending entry first: the undo window must be armed even if the
+  // neighbor-selection round-trip below fails. The window stays open until
+  // the next operation flushes it — even after the toast text has faded.
+  showDeleteToast(sessionId, session.title);
+  pendingDeletes.push(sessionId);
 
   if (state.selectedId === sessionId) {
     state.selectedId = null;
@@ -598,61 +607,88 @@ function flatDirectorySessionIds(): string[] {
   return ids;
 }
 
-/** Undo a pending delete: cancel the hard delete, put the session back. */
+/** Undo a pending delete: drop it from the queue, put the session back. */
 export async function undoDelete(sessionId: string): Promise<void> {
-  const timer = pendingHardDeletes.get(sessionId);
-  if (timer) {
-    clearTimeout(timer);
-    pendingHardDeletes.delete(sessionId);
-  }
   if (state.deletedToast?.sessionId === sessionId) state.deletedToast = null;
   try {
     state.trash = (await window.awefork.trashRemove(sessionId)).map((entry) => entry.id);
   } catch (error) {
+    // The record survived, so the delete is still pending — leave it
+    // queued and a later Ctrl+Z can retry the undo.
     state.actionError = error instanceof Error ? error.message : String(error);
     return;
   }
+  removePendingDelete(sessionId);
   // The session was never server-deleted; walk straight back into it.
   if (state.sessions.some((s) => s.id === sessionId)) {
     await selectSession(sessionId, { focus: true });
   }
 }
 
-const DELETE_GRACE_MS = 8000;
-const pendingHardDeletes = new Map<string, ReturnType<typeof setTimeout>>();
+const TOAST_MS = 6000;
+/** Sessions soft-deleted and still undoable, oldest first; Ctrl+Z pops LIFO. */
+const pendingDeletes: string[] = [];
 
 /**
- * Most recent soft delete still inside its undo window; null once the hard
- * delete has fired. Ctrl+Z walks these LIFO — one press per delete.
+ * Most recent soft delete still undoable; null once flushed (or undone).
+ * Ctrl+Z walks these LIFO — one press per delete.
  */
 export function latestPendingDeleteId(): string | null {
-  let latest: string | null = null;
-  for (const id of pendingHardDeletes.keys()) {
-    if (state.trash.includes(id)) latest = id;
+  for (let i = pendingDeletes.length - 1; i >= 0; i -= 1) {
+    const id = pendingDeletes[i];
+    if (id !== undefined && state.trash.includes(id)) return id;
   }
-  return latest;
+  return null;
 }
 
-function scheduleHardDelete(sessionId: string): void {
-  const timer = setTimeout(() => {
-    void hardDeleteSession(sessionId);
-  }, DELETE_GRACE_MS);
-  pendingHardDeletes.set(sessionId, timer);
+function removePendingDelete(sessionId: string): void {
+  const index = pendingDeletes.indexOf(sessionId);
+  if (index >= 0) pendingDeletes.splice(index, 1);
+}
+
+/**
+ * Finalize the pending soft deletes: the user just started a new operation,
+ * which closes the undo window for the older ones. Best effort per session —
+ * a failed server delete involuntarily restores that one (hardDeleteSession),
+ * the rest still flush.
+ */
+async function flushPendingDeletes(): Promise<void> {
+  for (const sessionId of [...pendingDeletes]) {
+    await hardDeleteSession(sessionId);
+  }
+}
+
+/** The toast is pure UI: fading it must never finalize the delete beneath. */
+function showDeleteToast(sessionId: string, title: string): void {
+  state.deletedToast = { sessionId, title };
+  setTimeout(() => {
+    if (state.deletedToast?.sessionId === sessionId) state.deletedToast = null;
+  }, TOAST_MS);
 }
 
 async function hardDeleteSession(sessionId: string): Promise<void> {
-  pendingHardDeletes.delete(sessionId);
+  // Leaves the pending queue only when the outcome is decided: restored,
+  // deleted, or (below) still pending after a double failure.
   if (state.deletedToast?.sessionId === sessionId) state.deletedToast = null;
   try {
     state.pins = await window.awefork.deleteSession(sessionId);
   } catch (error) {
-    // The server delete failed: put the session back and say so. An
-    // involuntary undo beats a session stuck invisible with no recovery.
-    state.trash = state.trash.filter((id) => id !== sessionId);
-    state.actionError = error instanceof Error ? error.message : String(error);
-    void window.awefork.trashRemove(sessionId).catch(() => {});
+    // The server delete failed. An involuntary undo beats a session stuck
+    // invisible — but the pending-delete record must be cleared first, or
+    // the next startup flush would destroy the session we just restored.
+    const reason = error instanceof Error ? error.message : String(error);
+    try {
+      state.trash = (await window.awefork.trashRemove(sessionId)).map((entry) => entry.id);
+      removePendingDelete(sessionId);
+      state.actionError = `删除失败，已把会话放回：${reason}`;
+    } catch {
+      // Record could not be cleared either: stay hidden and stay queued,
+      // so Ctrl+Z can still undo and the next flush can still retry.
+      state.actionError = `删除失败：${reason}（记录无法清除，会话暂时保持隐藏，可 Ctrl+Z 撤销）`;
+    }
     return;
   }
+  removePendingDelete(sessionId);
   stopWatch(sessionId);
   const { [sessionId]: goneMessages, ...keptMessages } = state.messagesBySession;
   void goneMessages;
@@ -684,6 +720,8 @@ export async function cloneSelectedSession(): Promise<void> {
   const sessionId = state.selectedId;
   if (!sessionId || state.running[sessionId]) return;
   state.actionError = null;
+  // Cloning is a new operation: older pending deletes become final.
+  await flushPendingDeletes();
   try {
     const forked = await window.awefork.fork(sessionId, null);
     await refreshSessions();
@@ -697,6 +735,8 @@ export async function cloneSelectedSession(): Promise<void> {
 export async function renameSession(sessionId: string, title: string): Promise<void> {
   const trimmed = title.trim();
   if (!trimmed) return;
+  // Renaming is a new operation: older pending deletes become final.
+  await flushPendingDeletes();
   try {
     await window.awefork.renameSession(sessionId, trimmed);
     state.sessions = state.sessions.map((s) => (s.id === sessionId ? { ...s, title: trimmed } : s));
@@ -779,6 +819,8 @@ export async function sendDraft(): Promise<void> {
   state.draftSending = true;
   let targetId: string | null = null;
   try {
+    // Sending is a new operation: older pending deletes become final.
+    await flushPendingDeletes();
     const model = plainModel(draft.model);
     const sentAt = Date.now();
     if (draft.atMessageId) {
@@ -851,11 +893,16 @@ export async function sendPanePrompt(text: string): Promise<void> {
 }
 
 export async function sendPrompt(text: string, model: ModelChoice | null = null): Promise<void> {
-  if (!state.selectedId || !text.trim()) return;
-  state.actionError = null;
-  activeStreamSessions.add(state.selectedId);
-  state.running = { ...state.running, [state.selectedId]: true };
   const sessionId = state.selectedId;
+  if (!sessionId || !text.trim()) return;
+  state.actionError = null;
+  // Sending is a new operation: older pending deletes become final. The
+  // session is captured before the flush because the flush awaits IPC —
+  // the prompt must reach the session the composer was typing into, even
+  // if the user switches selection mid-flush.
+  await flushPendingDeletes();
+  activeStreamSessions.add(sessionId);
+  state.running = { ...state.running, [sessionId]: true };
   const sentAt = Date.now();
   appendLocalMessage(sessionId, text, model);
   try {

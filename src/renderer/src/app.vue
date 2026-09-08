@@ -55,8 +55,10 @@ onMounted(() => {
 });
 onUnmounted(() => window.removeEventListener("keydown", onKeydown));
 
-// ── Ctrl/⌘+Z: undo the most recent delete still in its grace window ──
-// While typing, the keystroke stays a native text undo.
+// ── Ctrl/⌘+Z: undo the most recent delete still awaiting its flush ──
+// Works even after the toast has faded; the undo window only closes when a
+// new operation flushes the pending deletes. While typing, the keystroke
+// stays a native text undo.
 
 function onKeydown(event: KeyboardEvent): void {
   if (event.key.toLowerCase() !== "z" || !(event.metaKey || event.ctrlKey)) return;
