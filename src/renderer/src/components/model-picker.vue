@@ -1,12 +1,13 @@
 <template>
   <div ref="rootEl" class="mp">
-    <button type="button" class="mp-btn" :title="title" @click="toggle">
+    <button ref="btnEl" type="button" class="mp-btn" :title="title" @click="toggle">
       <span class="mp-label">{{ label }}</span>
       <span class="mp-chev">{{ open ? "⌃" : "⌄" }}</span>
     </button>
-    <!-- wheel.stop: 画布在 viewport 上用 @wheel.prevent 缩放；不拦截的话弹层里
-         滚动列表会变成缩放画布。 -->
-    <div v-if="open" class="mp-pop" @wheel.stop>
+    <!-- teleport 出去：面板和画布 viewport 都有 overflow:hidden / transform，
+         弹层留在组件树里会被裁剪或跟着缩放 -->
+    <Teleport to="body">
+      <div v-if="open" ref="popEl" class="mp-pop" :style="popStyle">
       <input
         ref="searchEl"
         v-model="query"
@@ -38,7 +39,8 @@
         </button>
         <p v-if="filtered.length === 0" class="mp-empty">没有匹配的模型</p>
       </div>
-    </div>
+      </div>
+    </Teleport>
   </div>
 </template>
 
@@ -58,7 +60,17 @@ const query = ref("");
 /** -1 = the "agent default" row; otherwise an index into `filtered`. */
 const highlighted = ref(-1);
 const rootEl = ref<HTMLElement | null>(null);
+const btnEl = ref<HTMLElement | null>(null);
 const searchEl = ref<HTMLInputElement | null>(null);
+const popEl = ref<HTMLElement | null>(null);
+
+/** 弹层是 fixed 定位（teleport 到 body），坐标在打开时按按钮位置算。 */
+const POP_WIDTH = 300;
+const SCREEN_EDGE = 8;
+const popStyle = ref<{ left: string; top?: string; bottom?: string }>({
+  left: "0px",
+  bottom: "0px",
+});
 
 const label = computed(() => {
   const model = props.modelValue;
@@ -81,11 +93,28 @@ function toggle(): void {
   open.value ? close() : show();
 }
 
+function place(): void {
+  const btn = btnEl.value;
+  if (!btn) return;
+  const r = btn.getBoundingClientRect();
+  const left = Math.min(Math.max(SCREEN_EDGE, r.left), window.innerWidth - POP_WIDTH - SCREEN_EDGE);
+  popStyle.value = { left: `${left}px`, bottom: `${window.innerHeight - r.top + SCREEN_EDGE}px` };
+}
+
 function show(): void {
+  place();
   open.value = true;
   query.value = "";
   highlighted.value = props.modelValue ? 0 : -1;
-  void nextTick(() => searchEl.value?.focus());
+  void nextTick(() => {
+    searchEl.value?.focus();
+    // 按钮离窗口顶部太近、向上放不下时翻到按钮下方
+    const pop = popEl.value;
+    if (pop && pop.getBoundingClientRect().top < SCREEN_EDGE) {
+      const r = btnEl.value?.getBoundingClientRect();
+      if (r) popStyle.value = { left: popStyle.value.left, top: `${r.bottom + SCREEN_EDGE}px` };
+    }
+  });
 }
 
 function close(): void {
@@ -118,7 +147,10 @@ function onSearchKeydown(event: KeyboardEvent): void {
 }
 
 function onDocMousedown(event: MouseEvent): void {
-  if (open.value && rootEl.value && !rootEl.value.contains(event.target as Node)) close();
+  if (!open.value) return;
+  const target = event.target as Node;
+  if (rootEl.value?.contains(target) || popEl.value?.contains(target)) return;
+  close();
 }
 
 onMounted(() => document.addEventListener("mousedown", onDocMousedown));
@@ -162,9 +194,7 @@ onUnmounted(() => document.removeEventListener("mousedown", onDocMousedown));
 }
 
 .mp-pop {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 8px);
+  position: fixed;
   width: 300px;
   background: var(--card);
   border: 1px solid var(--line);

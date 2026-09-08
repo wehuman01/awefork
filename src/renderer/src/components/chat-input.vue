@@ -14,7 +14,6 @@
         title="用哪个模型继续这条分支"
         @update:model-value="(choice) => emit('set-model', choice)"
       />
-      <span class="hint">⏎ 发送</span>
       <button v-if="!running" type="submit" class="send" :disabled="!text.trim()">发送 ➤</button>
       <button v-else type="button" class="abort" @click="$emit('abort')">■ 停止</button>
     </div>

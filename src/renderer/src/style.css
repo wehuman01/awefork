@@ -1434,12 +1434,6 @@ textarea {
   margin-top: 8px;
 }
 
-.chat-input-foot .hint {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--ink-faint);
-}
-
 .chat-input .send {
   margin-left: auto;
   background: linear-gradient(135deg, var(--primary), #ffa26b);
