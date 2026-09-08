@@ -48,15 +48,15 @@
           title="删除这个会话（整条分支故事）"
           @click.stop="removeNode(node)"
         >🗑</button>
+        <button
+          type="button"
+          class="add-chip"
+          :title="isSessionTip(node) ? '继续这个分支' : '从这里长出新分支'"
+          @click.stop="openDraft(node)"
+        >
+          ＋
+        </button>
         <template v-if="node.kind === 'turn'">
-          <button
-            type="button"
-            class="add-chip"
-            title="从这里长出新分支"
-            @click.stop="openDraft(node)"
-          >
-            ＋
-          </button>
           <div class="turn-head">
             <span class="avatar user">🍑</span>
             <span class="turn-title" :title="node.title">{{ node.title }}</span>
@@ -104,12 +104,12 @@
         @mousedown.stop
       >
         <div class="draft-head">
-          <span class="draft-tag">🌱 草稿 · {{ draftNode.kind === "stub" ? "继续分支" : "新分支" }}</span>
+          <span class="draft-tag">🌱 草稿 · {{ store.draft?.atMessageId == null ? "继续分支" : "新分支" }}</span>
           <button type="button" class="close" @click="dismissDraft">✕</button>
         </div>
         <textarea
           :value="store.draft?.text"
-          placeholder="描述下一步…（发送后从这里长出新分支）"
+          :placeholder="store.draft?.atMessageId == null ? '描述下一步…（发送后继续这个分支）' : '描述下一步…（发送后从这里长出新分支）'"
           @input="setDraftText(($event.target as HTMLTextAreaElement).value)"
           @keydown.meta.enter.prevent="submitDraft"
           @keydown.ctrl.enter.prevent="submitDraft"
@@ -180,6 +180,7 @@ import {
   activeChain,
   deleteSession,
   dismissDraft,
+  isSessionTip,
   openDraft,
   selectTurn,
   sendDraft,

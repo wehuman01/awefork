@@ -518,6 +518,9 @@ export async function deleteSession(sessionId: string): Promise<void> {
   // Neighbor comes from the pre-delete sidebar order: whatever row now sits
   // where the deleted one was, so the selection doesn't jump across the list.
   const neighbor = pickNeighborId(flatDirectorySessionIds(), sessionId);
+  // Same-story landing (fork parent, else oldest child), computed before the
+  // trash push hides the deleted session from the directory pool.
+  const landing = landingAfterDelete(sessionId);
 
   state.trash = [...state.trash, sessionId];
   if (state.draft?.sessionId === sessionId) state.draft = null;
@@ -541,9 +544,25 @@ export async function deleteSession(sessionId: string): Promise<void> {
   if (state.selectedId === sessionId) {
     state.selectedId = null;
     state.selectedTurnId = null;
-    const target = neighbor ?? latestSessionId(directorySessions.value);
+    const target = landing ?? neighbor ?? latestSessionId(directorySessions.value);
     if (target) await selectSession(target);
   }
+}
+
+/**
+ * Where to land after deleting the open session so the view stays inside the
+ * same story: the branch it forked from, else its oldest child (which re-roots
+ * in place). Both keep the canvas showing the tree the user was looking at;
+ * falls through to null → the caller's sidebar neighbor order.
+ */
+function landingAfterDelete(deletedId: string): string | null {
+  const pool = directorySessions.value.filter((s) => s.origin !== "subagent");
+  const parent = pool.find((s) => s.id === deletedId)?.parentSessionId ?? null;
+  if (parent && pool.some((s) => s.id === parent)) return parent;
+  const children = pool
+    .filter((s) => s.parentSessionId === deletedId)
+    .sort((a, b) => a.createdAt - b.createdAt);
+  return children[0]?.id ?? null;
 }
 
 /** Current directory's sessions flattened in sidebar display order. */
@@ -583,6 +602,18 @@ export async function undoDelete(sessionId: string): Promise<void> {
 
 const DELETE_GRACE_MS = 8000;
 const pendingHardDeletes = new Map<string, ReturnType<typeof setTimeout>>();
+
+/**
+ * Most recent soft delete still inside its undo window; null once the hard
+ * delete has fired. Ctrl+Z walks these LIFO — one press per delete.
+ */
+export function latestPendingDeleteId(): string | null {
+  let latest: string | null = null;
+  for (const id of pendingHardDeletes.keys()) {
+    if (state.trash.includes(id)) latest = id;
+  }
+  return latest;
+}
 
 function scheduleHardDelete(sessionId: string): void {
   const timer = setTimeout(() => {
@@ -653,12 +684,24 @@ export async function renameSession(sessionId: string, title: string): Promise<v
   }
 }
 
+/**
+ * True when the node sits at the tip of its session (stubs always do): the ＋
+ * composer then continues that session in place instead of forking it.
+ */
+export function isSessionTip(node: TurnNode): boolean {
+  if (node.kind !== "turn") return true;
+  const turns = buildTurns(node.sessionId, state.messagesBySession[node.sessionId] ?? []);
+  const last = turns[turns.length - 1];
+  return last != null && last.messageId === node.messageId;
+}
+
 export function openDraft(node: TurnNode): void {
   void ensureModels();
   state.draft = {
     nodeId: node.id,
     sessionId: node.sessionId,
-    atMessageId: node.messageId,
+    // Session tip: keep talking in place; a mid-story turn grows a fork.
+    atMessageId: isSessionTip(node) ? null : node.messageId,
     text: "",
     // Preselect the model that wrote the turn being forked from, when known.
     model: node.kind === "turn" ? node.model : null,
@@ -702,10 +745,10 @@ function plainModel(model: ModelChoice | null): ModelChoice | null {
 }
 
 /**
- * Send the draft: on a turn node this forks the session at that turn AND
- * fires the prompt on the new branch; on a stub node it simply continues the
- * (so far turn-less) branch. Either way the app lands IN the target session
- * with the pane following its newest turn.
+ * Send the draft: a mid-story turn forks the session at that turn and prompts
+ * the new branch; a session tip (or a stub) simply continues that session in
+ * place. Either way the app lands IN the target session with the pane
+ * following its newest turn.
  */
 export async function sendDraft(): Promise<void> {
   const draft = state.draft;

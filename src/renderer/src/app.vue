@@ -28,7 +28,7 @@
       {{ store.actionError }}（点击关闭）
     </div>
     <div v-if="store.deletedToast" class="toast banner-undo" role="status">
-      <span class="undo-text">已删除「{{ store.deletedToast.title }}」</span>
+      <span class="undo-text">已删除「{{ store.deletedToast.title }}」（⌘/Ctrl+Z 也可撤销）</span>
       <button
         type="button"
         class="undo-btn"
@@ -40,18 +40,39 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted } from "vue";
+import { onMounted, onUnmounted } from "vue";
 import BranchContext from "./components/branch-context.vue";
 import CommandPalette from "./components/command-palette.vue";
 import SessionCanvas from "./components/session-canvas.vue";
 import SideBar from "./components/side-bar.vue";
 import TopBar from "./components/top-bar.vue";
 import { PANEL_LIMITS, panelStyle, panels, persistLayout, togglePanel } from "./layout";
-import { dismissActionError, init, store, undoDelete } from "./state";
+import { dismissActionError, init, latestPendingDeleteId, store, undoDelete } from "./state";
 
 onMounted(() => {
   void init();
+  window.addEventListener("keydown", onKeydown);
 });
+onUnmounted(() => window.removeEventListener("keydown", onKeydown));
+
+// ── Ctrl/⌘+Z: undo the most recent delete still in its grace window ──
+// While typing, the keystroke stays a native text undo.
+
+function onKeydown(event: KeyboardEvent): void {
+  if (event.key.toLowerCase() !== "z" || !(event.metaKey || event.ctrlKey)) return;
+  if (event.shiftKey || event.altKey) return;
+  const target = event.target as HTMLElement | null;
+  if (
+    target &&
+    (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
+  ) {
+    return;
+  }
+  const sessionId = latestPendingDeleteId();
+  if (!sessionId) return;
+  event.preventDefault();
+  void undoDelete(sessionId);
+}
 
 // ── panel drag handles ───────────────────────────────────────────────
 
