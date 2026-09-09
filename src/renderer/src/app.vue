@@ -1,6 +1,21 @@
 <template>
   <div class="app">
     <TopBar />
+    <div
+      v-if="store.updateLatest && !store.updateBannerDismissed"
+      class="update-banner"
+      role="status"
+    >
+      <span class="update-banner-icon">⬆</span>
+      <span class="update-banner-text">
+        v{{ store.updateLatest }} available · current v{{ store.currentVersion }}
+      </span>
+      <div class="update-banner-actions">
+        <button type="button" class="update-banner-btn" @click="openReleaseNotes()">Release Notes ↗</button>
+        <button type="button" class="update-banner-btn" @click="skipUpdateVersion()">Skip this version</button>
+        <button type="button" class="update-banner-x" @click="dismissUpdateBanner()">✕</button>
+      </div>
+    </div>
     <div class="shell">
       <SideBar :style="panelStyle('sidebar')" />
       <div
@@ -36,6 +51,9 @@
         @click="undoDelete(store.deletedToast.sessionId)"
       >撤销</button>
     </div>
+    <div v-if="store.updateToast" class="toast banner-update" role="status">
+      {{ store.updateToast }}
+    </div>
   </div>
 </template>
 
@@ -47,7 +65,16 @@ import SessionCanvas from "./components/session-canvas.vue";
 import SideBar from "./components/side-bar.vue";
 import TopBar from "./components/top-bar.vue";
 import { PANEL_LIMITS, panelStyle, panels, persistLayout, togglePanel } from "./layout";
-import { dismissActionError, init, latestPendingDeleteId, store, undoDelete } from "./state";
+import {
+  dismissActionError,
+  dismissUpdateBanner,
+  init,
+  latestPendingDeleteId,
+  openReleaseNotes,
+  skipUpdateVersion,
+  store,
+  undoDelete,
+} from "./state";
 
 onMounted(() => {
   void init();

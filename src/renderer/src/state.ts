@@ -88,6 +88,16 @@ interface AppState {
   focusRequest: { sessionId: string; nonce: number } | null;
   /** Bumped to ask the canvas to fit the whole working set in view. */
   fitRequest: number | null;
+  /** Installed app version, filled in by the first update check (or the last one). */
+  currentVersion: string | null;
+  /** Newest release on GitHub; non-null while an update is available. */
+  updateLatest: string | null;
+  /** True while an update check round-trip is in flight. */
+  checkingUpdates: boolean;
+  /** The user closed the current update banner. In-memory only, no persistence. */
+  updateBannerDismissed: boolean;
+  /** One-line feedback for manual update checks; auto-clears like the undo toast. */
+  updateToast: string | null;
 }
 
 const state = reactive<AppState>({
@@ -114,6 +124,11 @@ const state = reactive<AppState>({
   paneModels: {},
   focusRequest: null,
   fitRequest: null,
+  currentVersion: null,
+  updateLatest: null,
+  checkingUpdates: false,
+  updateBannerDismissed: false,
+  updateToast: null,
 });
 
 export const store = readonly(state);
@@ -322,6 +337,9 @@ const WATCH_MAX_TICKS = 160;
 
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
+/** Pause before the silent startup update check; the server needs a moment. */
+const UPDATE_CHECK_DELAY_MS = 3000;
+
 /** Trailing debounce: one refresh per burst of session events. */
 function scheduleRefresh(delay = 400): void {
   if (refreshTimer) return;
@@ -355,6 +373,12 @@ export async function init(): Promise<void> {
   await flushTrash();
   await refreshSessions();
   window.awefork.onEvent(handleEvent);
+  // New-version check once startup settles: the agent server has just come up,
+  // so give the handshake a beat. Fire-and-forget — never blocks first paint,
+  // and every failure path stays silent.
+  setTimeout(() => {
+    void checkForUpdates("startup").catch(() => null);
+  }, UPDATE_CHECK_DELAY_MS);
 }
 
 /**
@@ -906,6 +930,17 @@ function showDeleteToast(sessionId: string, title: string): void {
   }, TOAST_MS);
 }
 
+/**
+ * One-line update-channel toast (manual check progress/result). Auto-clears on
+ * the same timer as the undo toast; a newer message simply replaces the text.
+ */
+function showUpdateToast(text: string): void {
+  state.updateToast = text;
+  setTimeout(() => {
+    if (state.updateToast === text) state.updateToast = null;
+  }, TOAST_MS);
+}
+
 async function hardDeleteSession(sessionId: string): Promise<void> {
   // Leaves the pending queue only when the outcome is decided: restored,
   // deleted, or (below) still pending after a double failure.
@@ -1271,6 +1306,60 @@ export async function abortRun(): Promise<void> {
 
 export function dismissActionError(): void {
   state.actionError = null;
+}
+
+/**
+ * Check for a new release. `startup` respects the user's previous skip choice
+ * and stays silent no matter the outcome; `manual` narrates the round-trip as
+ * toasts. Every failure path is swallowed here so callers can fire-and-forget.
+ */
+export async function checkForUpdates(source: "startup" | "manual"): Promise<void> {
+  state.checkingUpdates = true;
+  if (source === "manual") showUpdateToast("Checking for updates…");
+  try {
+    const result = await window.awefork.checkUpdates(source === "startup");
+    state.currentVersion = result.currentVersion;
+    if (result.updateAvailable && result.latest) {
+      state.updateLatest = result.latest;
+      // A fresh check re-opens the banner even if the user closed it before.
+      state.updateBannerDismissed = false;
+    } else if (source === "manual") {
+      showUpdateToast(`awefork is up to date (v${result.currentVersion})`);
+    }
+  } catch {
+    if (source === "manual") showUpdateToast("Couldn't check for updates");
+  } finally {
+    state.checkingUpdates = false;
+  }
+}
+
+/** Collapse the update-available banner; a later check may bring it back. */
+export function dismissUpdateBanner(): void {
+  state.updateBannerDismissed = true;
+}
+
+/** Record the pending release as skipped; the banner leaves on server agreement. */
+export async function skipUpdateVersion(): Promise<void> {
+  const version = state.updateLatest;
+  if (!version) return;
+  try {
+    const result = await window.awefork.skipUpdate(version);
+    if (result.ok) state.updateLatest = null;
+  } catch {
+    // The skip wasn't recorded server-side — keep the banner so it can retry.
+  }
+}
+
+/** Open the release-notes page for the pending update. */
+export async function openReleaseNotes(): Promise<void> {
+  const version = state.updateLatest;
+  if (!version) return;
+  try {
+    const result = await window.awefork.openRelease(version);
+    if (!result.ok) showUpdateToast("Couldn't open release page");
+  } catch {
+    showUpdateToast("Couldn't open release page");
+  }
 }
 
 function latestSessionId(sessions: SessionSummary[]): string | null {

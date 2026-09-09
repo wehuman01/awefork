@@ -243,6 +243,66 @@ textarea {
   box-shadow: 0 0 0 3px #fbe3df;
 }
 
+/* version pill + its one-item menu (Check for updates) */
+
+.version-wrap {
+  position: relative;
+}
+
+.version-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 9px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--ink-soft);
+  background: var(--card);
+  border: 1px solid var(--line);
+}
+
+.version-btn:hover {
+  border-color: var(--primary-border);
+  color: var(--primary-deep);
+}
+
+.version-chev {
+  font-size: 10px;
+  color: var(--ink-faint);
+}
+
+.version-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 180px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lift);
+  padding: 5px;
+  z-index: 50;
+}
+
+.version-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--ink-soft);
+  white-space: nowrap;
+}
+
+.version-item:hover {
+  background: var(--primary-soft);
+  color: var(--primary-deep);
+}
+
 /* ── sidebar ───────────────────────────────────────────────────────── */
 
 .sidebar {
@@ -1921,6 +1981,72 @@ code.md-code {
 
 /* ── banners & toasts ──────────────────────────────────────────────── */
 
+/* New-version banner: its own slim single-line row under the top bar, in flow
+   so it never overlaps the canvas below it. */
+.update-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 10px 16px 0;
+  padding: 8px 12px;
+  border-radius: 12px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-card);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.update-banner-icon {
+  flex: 0 0 auto;
+  color: var(--primary-deep);
+}
+
+.update-banner-text {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.update-banner-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.update-banner-btn {
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--primary-border);
+  background: var(--primary-soft);
+  color: var(--primary-deep);
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+.update-banner-btn:hover {
+  border-color: var(--primary);
+}
+
+.update-banner-x {
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  color: var(--ink-faint);
+  font-size: 12px;
+  display: grid;
+  place-items: center;
+}
+
+.update-banner-x:hover {
+  background: var(--primary-soft);
+  color: var(--primary-deep);
+}
+
 .banner {
   margin: 10px 16px 0;
   padding: 8px 12px;
@@ -1982,6 +2108,21 @@ code.md-code {
 
 .undo-btn:hover {
   border-color: var(--primary);
+}
+
+/* Version-channel toast: same anatomy as the undo toast, text-only. */
+.banner-update {
+  padding: 9px 16px;
+  border-radius: 12px;
+  font-size: 12.5px;
+  font-weight: 700;
+  background: var(--card);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  cursor: default;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ── story search & branch digest overlays ────────────────────────── */

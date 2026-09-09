@@ -516,6 +516,14 @@ export function installMockAdapter(): void {
       window.open(url, "_blank", "noopener");
     },
     convertDocument: async (filename) => `（demo：${filename} 提取出的文本内容）`,
+    // The demo app never has anything newer than itself: no banner, no skip.
+    checkUpdates: async () => ({
+      currentVersion: "0.1.6",
+      latest: null,
+      updateAvailable: false,
+    }),
+    skipUpdate: async () => ({ ok: true }),
+    openRelease: async () => ({ ok: true }),
     onEvent: (handler) => {
       handlers.add(handler);
       return () => handlers.delete(handler);

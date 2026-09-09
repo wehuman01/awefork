@@ -35,6 +35,15 @@
       title="命令面板（⌘K / Ctrl+K）"
       @click="togglePalette()"
     >⌘K</button>
+    <div class="version-wrap" @click.stop>
+      <button type="button" class="version-btn" @click="toggleVersionMenu">
+        <span>{{ versionLabel }}</span>
+        <span class="version-chev">▾</span>
+      </button>
+      <div v-if="versionOpen" class="version-menu">
+        <button type="button" class="version-item" @click="runManualCheck">Check for updates</button>
+      </div>
+    </div>
   </header>
 </template>
 
@@ -42,19 +51,32 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import logoUrl from "../assets/logo.svg";
 import { togglePalette } from "../layout";
-import { directories, store, switchDirectory } from "../state";
+import { checkForUpdates, directories, store, switchDirectory } from "../state";
 
 const open = ref(false);
+const versionOpen = ref(false);
 const currentDirectory = computed(() => store.selectedDirectory ?? "");
 const connectionError = computed(() => store.connectionError);
+// The version button is always there (so manual checks stay reachable); a
+// placeholder stands in until the first check fills the real version in.
+const versionLabel = computed(() => `v${store.currentVersion ?? "—"}`);
 
 function toggleOpen(): void {
   open.value = !open.value;
 }
 
+function toggleVersionMenu(): void {
+  versionOpen.value = !versionOpen.value;
+}
+
 async function pick(directory: string): Promise<void> {
   open.value = false;
   await switchDirectory(directory);
+}
+
+async function runManualCheck(): Promise<void> {
+  versionOpen.value = false;
+  await checkForUpdates("manual");
 }
 
 function shortPath(directory: string): string {
@@ -64,6 +86,7 @@ function shortPath(directory: string): string {
 
 function closeOnOutsideClick(): void {
   open.value = false;
+  versionOpen.value = false;
 }
 
 onMounted(() => document.addEventListener("click", closeOnOutsideClick));

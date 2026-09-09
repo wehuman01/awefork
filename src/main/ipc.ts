@@ -12,6 +12,7 @@ import type {
   TrashEntry,
 } from "../shared/types";
 import { convertDocumentToText } from "./document-convert.js";
+import { checkForUpdates, openRelease, skipUpdate } from "./update-check.js";
 
 /**
  * IPC surface (all invoke-channels, prefixed awefork:):
@@ -36,6 +37,9 @@ import { convertDocumentToText } from "./document-convert.js";
  *   archiveRemove -> ArchiveState         restore a session/directory, state back
  *   openExternal -> void                  open a reply link in the system browser
  *   convertDocument -> string             Word/RTF attachment → plain text (textutil)
+ *   checkUpdates  -> CheckUpdatesResult   latest release vs installed version
+ *   skipUpdate    -> { ok, error? }       persist a version as "don't nag again"
+ *   openRelease   -> { ok, error? }       open the release tag page in the browser
  * Events are forwarded on channel "awefork:event".
  */
 export function registerIpc(
@@ -206,6 +210,22 @@ export function registerIpc(
     }
     void shell.openExternal(parsed.href);
   });
+
+  // Release checks are main-process-side: the renderer never talks to the
+  // GitHub API and only receives a raw version number back.
+  ipcMain.handle("awefork:check-updates", (_event: IpcMainInvokeEvent, respectSkip: boolean) =>
+    checkForUpdates(Boolean(respectSkip)),
+  );
+
+  ipcMain.handle("awefork:skip-update", (_event: IpcMainInvokeEvent, version: string) =>
+    skipUpdate(version),
+  );
+
+  // The URL is assembled here, not by the renderer — an arbitrary link never
+  // reaches shell.openExternal this way.
+  ipcMain.handle("awefork:open-release", (_event: IpcMainInvokeEvent, version: string) =>
+    openRelease(version),
+  );
 }
 
 export function forwardEvents(

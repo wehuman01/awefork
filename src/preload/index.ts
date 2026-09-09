@@ -1,5 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
+import type { AweforkApi, CheckUpdatesResult } from "../shared/awefork-api.js";
 import type {
+  AgentEvent,
   ArchiveKind,
   ArchiveState,
   ChatMessage,
@@ -10,7 +12,7 @@ import type {
   TrashEntry,
 } from "../shared/types.js";
 
-const api = {
+const api: AweforkApi = {
   ready: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke("awefork:ready"),
   sessions: (): Promise<{
     sessions: SessionSummary[];
@@ -52,8 +54,14 @@ const api = {
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke("awefork:openExternal", url),
   convertDocument: (filename: string, bytes: Uint8Array): Promise<string> =>
     ipcRenderer.invoke("awefork:convertDocument", filename, bytes),
-  onEvent: (handler: (event: unknown) => void): (() => void) => {
-    const listener = (_event: unknown, payload: unknown) => handler(payload);
+  checkUpdates: (respectSkip: boolean): Promise<CheckUpdatesResult> =>
+    ipcRenderer.invoke("awefork:check-updates", respectSkip),
+  skipUpdate: (version: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke("awefork:skip-update", version),
+  openRelease: (version: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke("awefork:open-release", version),
+  onEvent: (handler: (event: AgentEvent) => void): (() => void) => {
+    const listener = (_event: unknown, payload: unknown) => handler(payload as AgentEvent);
     ipcRenderer.on("awefork:event", listener);
     return () => ipcRenderer.removeListener("awefork:event", listener);
   },
