@@ -272,6 +272,7 @@ function turnMessages(turn: TurnDef): ChatMessage[] {
       attachmentNames: turn.attachment ? [turn.attachment] : [],
       createdAt,
       completedAt: null,
+      finish: null,
       outputTokens: null,
       error: null,
     },
@@ -287,6 +288,7 @@ function turnMessages(turn: TurnDef): ChatMessage[] {
       attachmentNames: [],
       createdAt: createdAt + 2000,
       completedAt: createdAt + 2000 + durationMs,
+      finish: "stop",
       outputTokens: turn.tokens ?? 800,
       error: null,
     },
@@ -432,6 +434,7 @@ export function installMockAdapter(): void {
         attachmentNames: (attachments ?? []).map((a) => a.filename),
         createdAt: Date.now(),
         completedAt: null,
+        finish: null,
         outputTokens: null,
         error: null,
       };
@@ -449,6 +452,7 @@ export function installMockAdapter(): void {
         attachmentNames: [],
         createdAt: Date.now(),
         completedAt: Date.now() + 3500,
+        finish: "stop",
         outputTokens: 900,
         error: null,
       };

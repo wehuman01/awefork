@@ -92,6 +92,7 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
           .map((p) => (typeof p.filename === "string" && p.filename ? p.filename : "附件")),
         createdAt: m.info.time.created,
         completedAt: typeof m.info.time.completed === "number" ? m.info.time.completed : null,
+        finish: typeof m.info.finish === "string" ? m.info.finish : null,
         outputTokens: typeof m.info.tokens?.output === "number" ? m.info.tokens.output : null,
         error: m.info.error?.data?.message ?? m.info.error?.name ?? null,
       };

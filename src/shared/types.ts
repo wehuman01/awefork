@@ -48,6 +48,12 @@ export interface ChatMessage {
   createdAt: number;
   /** When the backend finished the message; null while unreported or still running. */
   completedAt: number | null;
+  /**
+   * Why the backend stopped this assistant step ("stop", "tool-calls", …).
+   * "tool-calls" means another step of the same run is still coming; null on
+   * user rows and when the backend reports none.
+   */
+  finish: string | null;
   /** Output tokens of this assistant message; null on user rows or when unreported. */
   outputTokens: number | null;
   /** Why the run failed (provider/API error reported by the backend); null when it didn't. */

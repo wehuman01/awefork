@@ -421,6 +421,13 @@ function centerOnNode(node: TurnNode): void {
 const OVERVIEW_NODE_LIMIT = 18;
 let centeredFor: string | null = null;
 let pendingFocus: string | null = null;
+// A context-chain jump still waiting for its node to land on the canvas — the
+// branch switch can be loading messages / re-laying-out the graph.
+let pendingJump: string | null = null;
+// fitView() as the initial overview leaves centeredFor null — remember it ran,
+// so later graph changes (a branch switch reshaping the canvas) never re-fit
+// and flash the whole-graph view before a jump lands.
+let overviewShown = false;
 
 function nodesOf(sessionId: string | null): TurnNode[] {
   if (!sessionId) return [];
@@ -431,6 +438,7 @@ function openInitialView(): void {
   if (graph.value.nodes.length === 0) return;
   if (graph.value.nodes.length <= OVERVIEW_NODE_LIMIT) {
     fitView();
+    overviewShown = true;
     return;
   }
   if (store.selectedId && nodesOf(store.selectedId).length > 0) {
@@ -444,28 +452,38 @@ function focusNow(sessionId: string): void {
   pendingFocus = null;
 }
 
+/** Center on the pending chain jump once its node exists; false = still waiting. */
+function resolvePendingJump(): boolean {
+  if (!pendingJump) return true;
+  const node = nodeById.value.get(pendingJump);
+  if (!node) return false;
+  centerOnNode(node);
+  pendingJump = null;
+  return true;
+}
+
 watch(graph, () => {
   // Wait for the directory's message batch to finish — every merge re-lays
   // out the whole graph, so centering mid-load lands on a stale position.
   if (store.loadingMessages) return;
   if (pendingJump) {
-    const node = nodeById.value.get(pendingJump);
-    if (node) {
-      centerOnNode(node);
-      pendingJump = null;
-    }
+    resolvePendingJump();
     return;
   }
   if (pendingFocus) {
     if (nodesOf(pendingFocus).length > 0) focusNow(pendingFocus);
     return;
   }
-  if (centeredFor === null) openInitialView();
+  if (centeredFor === null && !overviewShown) openInitialView();
 });
 watch(
   () => store.loadingMessages,
   (loading, was) => {
-    if (was && !loading && centeredFor === null && pendingFocus === null) {
+    if (!was || loading) return;
+    // The last merge's graph pass ran while still loading — finish a pending
+    // chain jump here, or the view would wait on a graph change that never comes.
+    if (!resolvePendingJump()) return;
+    if (centeredFor === null && pendingFocus === null && !overviewShown) {
       openInitialView();
     }
   },
@@ -489,19 +507,12 @@ watch(
 // Context-chain cards land here: center the view on the picked turn. Right
 // after a branch switch the node can still be missing (messages loading,
 // layout not settled) — stash it and jump on the first graph pass that has it.
-let pendingJump: string | null = null;
-
 watch(
   () => store.turnJumpRequest,
   (request) => {
     if (!request) return;
-    const node = nodeById.value.get(request.nodeId);
-    if (node) {
-      centerOnNode(node);
-      pendingJump = null;
-    } else {
-      pendingJump = request.nodeId;
-    }
+    pendingJump = request.nodeId;
+    resolvePendingJump();
   },
 );
 

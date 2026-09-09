@@ -47,6 +47,8 @@ interface OcMessageInfo {
   tokens?: { input?: number; output?: number; total?: number };
   /** Set when the run failed; `data.message` carries the human-readable reason. */
   error?: { name?: string; data?: { message?: string } };
+  /** Why this assistant step stopped: "stop", "tool-calls", "length", … */
+  finish?: string;
   time: { created: number; completed?: number };
 }
 

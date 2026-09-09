@@ -349,14 +349,23 @@ const attemptedMessages = new Set<string>();
  * until the run's assistant row reports a completion time. Whichever signal
  * lands first settles the run; the other becomes a no-op.
  */
-const completionWatches = new Map<
-  string,
-  { timer: ReturnType<typeof setInterval>; sentAt: number; ticks: number }
->();
+interface CompletionWatch {
+  timer: ReturnType<typeof setInterval>;
+  /** When the prompt was sent; only rows completed after this count. */
+  sentAt: number;
+  /** Polls since the last liveness sign (delta or observable message growth). */
+  ticks: number;
+  /** Last observed message-list fingerprint; a change is liveness. */
+  signature: string;
+}
+
+const completionWatches = new Map<string, CompletionWatch>();
 const WATCH_INTERVAL_MS = 1500;
-// Give up after ~4 minutes with no completion AND no streamed delta — every
-// delta resets the ticks, so only a run that went fully silent (or a lost
-// connection) can reach the cap; settling is then the right backstop.
+// Give up after ~4 minutes with no completion AND no liveness sign — every
+// delta resets the ticks, and so does any poll that observes the message list
+// still growing (some opencode builds stream no deltas at all), so only a run
+// that went fully silent (or a lost connection) can reach the cap; settling is
+// then the right backstop.
 const WATCH_MAX_TICKS = 160;
 
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -595,7 +604,7 @@ function watchCompletion(sessionId: string, sentAt: number): void {
     watch.ticks += 1;
     void pollForCompletion(sessionId, watch);
   }, WATCH_INTERVAL_MS);
-  completionWatches.set(sessionId, { timer, sentAt, ticks: 0 });
+  completionWatches.set(sessionId, { timer, sentAt, ticks: 0, signature: "" });
 }
 
 function stopWatch(sessionId: string): void {
@@ -606,15 +615,29 @@ function stopWatch(sessionId: string): void {
   }
 }
 
-async function pollForCompletion(
-  sessionId: string,
-  watch: { sentAt: number; ticks: number },
-): Promise<void> {
+async function pollForCompletion(sessionId: string, watch: CompletionWatch): Promise<void> {
   const messages = await loadSessionMessages(sessionId, false);
   // idle may have stopped the watch while the fetch was in flight.
   if (!completionWatches.has(sessionId)) return;
+  // Message rows still appearing is liveness too — on opencode builds that
+  // stream no deltas, this is the only progress signal the watchdog sees.
+  const last = messages?.[messages.length - 1];
+  const signature = `${messages?.length ?? 0}:${last?.id ?? ""}:${last?.completedAt ?? ""}`;
+  if (signature !== watch.signature) {
+    watch.ticks = 0;
+    watch.signature = signature;
+  }
+  // A multi-step run completes one assistant row per step; a step that ended
+  // in "tool-calls" is mid-run, not done. Treating it as finished settled the
+  // run early and froze the turn at "(工具调用，无文本回复)" while the
+  // follow-up step was still thinking — with no idle event ever coming on
+  // this opencode build, nothing reloaded the final text.
   const done = messages?.some(
-    (m) => m.role === "assistant" && m.completedAt !== null && m.completedAt >= watch.sentAt,
+    (m) =>
+      m.role === "assistant" &&
+      m.completedAt !== null &&
+      m.completedAt >= watch.sentAt &&
+      m.finish !== "tool-calls",
   );
   if (done || watch.ticks >= WATCH_MAX_TICKS) {
     stopWatch(sessionId);
@@ -1339,6 +1362,7 @@ function appendLocalMessage(
         attachmentNames: attachments.map((a) => a.filename),
         createdAt: Date.now(),
         completedAt: null,
+        finish: null,
         outputTokens: null,
         error: null,
       },

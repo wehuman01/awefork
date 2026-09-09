@@ -29,6 +29,7 @@ interface FakeMessage {
     model?: { providerID?: string; modelID?: string; variant?: string };
     tokens?: { input?: number; output?: number; total?: number };
     error?: { name?: string; data?: { message?: string } };
+    finish?: string;
     time: { created: number; completed?: number };
   };
   parts: {
@@ -368,6 +369,23 @@ describe("opencode adapter", () => {
     const messages = await adapter.messages("s1");
     expect(messages[0]?.outputTokens).toBeNull();
     expect(messages[1]?.outputTokens).toBe(29);
+  });
+
+  it("maps each step's finish reason; user and unreported rows carry null", async () => {
+    // Multi-step run: the tool-calls step is mid-run, the stop step is the end.
+    // The renderer's run watchdog settles on finish !== "tool-calls" — a mapped
+    // finish is what keeps a mid-run step from looking like the final reply.
+    const state = baseState();
+    const a1 = state.messages.s1?.[1]?.info;
+    if (a1) a1.finish = "tool-calls";
+    const a2 = state.messages.s1?.[3]?.info;
+    if (a2) a2.finish = "stop";
+    const { adapter } = await newAdapter(state);
+    const messages = await adapter.messages("s1");
+    expect(messages[0]?.finish).toBeNull();
+    expect(messages[1]?.finish).toBe("tool-calls");
+    expect(messages[3]?.finish).toBe("stop");
+    expect(messages[5]?.finish).toBeNull();
   });
 
   it("maps a failed run's error reason; successful rows carry null", async () => {
