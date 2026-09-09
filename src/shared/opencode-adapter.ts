@@ -1,7 +1,13 @@
 import { recordFork, removeFork } from "./lineage-store.js";
 import { createOpencodeClient, type OpencodeClient } from "./opencode-client.js";
 import { createSseParser } from "./sse.js";
-import type { AgentAdapter, AgentEvent, ChatMessage, SessionSummary } from "./types.js";
+import type {
+  AgentAdapter,
+  AgentEvent,
+  ChatMessage,
+  PromptAttachment,
+  SessionSummary,
+} from "./types.js";
 
 export interface OpenCodeAdapterOptions {
   baseUrl: string;
@@ -121,6 +127,22 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
 
     async messages(sessionId) {
       return mapMessages(await client.messages(sessionId));
+    },
+
+    async messageAttachments(sessionId, messageId) {
+      const raw = await client.messages(sessionId);
+      const target = raw.find((m) => m.info.id === messageId);
+      if (!target) return [];
+      // The stored file part keeps the url it was sent with (a data URL here),
+      // so the parts round-trip as attachments again; parts that lost their
+      // url are dropped rather than resent as empty files.
+      return target.parts
+        .filter((p) => p.type === "file" && typeof p.url === "string" && p.url)
+        .map((p) => ({
+          mime: typeof p.mime === "string" ? p.mime : "application/octet-stream",
+          filename: typeof p.filename === "string" && p.filename ? p.filename : "附件",
+          dataUrl: p.url as string,
+        }));
     },
 
     listModels() {

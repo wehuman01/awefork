@@ -155,6 +155,12 @@ export interface AgentAdapter {
   readonly kind: string;
   listSessions(): Promise<SessionSummary[]>;
   messages(sessionId: string): Promise<ChatMessage[]>;
+  /**
+   * One message's file parts as sendable attachments — the data retry
+   * prefills the composer with. Backends that don't keep file bytes return
+   * an empty list.
+   */
+  messageAttachments(sessionId: string, messageId: string): Promise<PromptAttachment[]>;
   /** Models the backend offers (from its provider config). */
   listModels(): Promise<ModelOption[]>;
   fork(sessionId: string, atMessageId: string | null): Promise<SessionSummary>;

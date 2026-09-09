@@ -19,6 +19,7 @@ import { convertDocumentToText } from "./document-convert.js";
  *   sessions   -> SessionSummary[]        sessions + lineage merged
  *   messages   -> ChatMessage[]           flat message list of a session
  *   models     -> ModelOption[]           models offered by the agent config
+ *   messageAttachments -> PromptAttachment[]  one message's file parts (retry)
  *   fork       -> SessionSummary          fork (turn-preserving)
  *   deleteSession -> string[]             delete a session, pruned pins back
  *   deleteMessage -> void                 remove one message row (native DELETE)
@@ -71,6 +72,16 @@ export function registerIpc(
     const adapter = await withAdapter();
     return adapter.listModels();
   });
+
+  // Retry prefill: the composer asks for a message's original file parts so a
+  // retried prompt carries the same attachments.
+  ipcMain.handle(
+    "awefork:messageAttachments",
+    async (_event: IpcMainInvokeEvent, sessionId: string, messageId: string) => {
+      const adapter = await withAdapter();
+      return adapter.messageAttachments(sessionId, messageId);
+    },
+  );
 
   ipcMain.handle(
     "awefork:fork",

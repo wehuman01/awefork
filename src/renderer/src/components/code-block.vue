@@ -11,7 +11,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from "vue";
+import { onUnmounted, ref } from "vue";
 
 const props = defineProps<{
   lang: string;
@@ -33,4 +33,10 @@ async function copy(): Promise<void> {
     // Clipboard denied — the text is still selectable; nothing to recover to.
   }
 }
+
+// A streaming reply swaps code blocks wholesale; drop the pending reset so
+// the timer can't flip `copied` on a block that no longer exists.
+onUnmounted(() => {
+  if (timer) clearTimeout(timer);
+});
 </script>

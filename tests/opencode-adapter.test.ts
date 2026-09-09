@@ -31,7 +31,14 @@ interface FakeMessage {
     error?: { name?: string; data?: { message?: string } };
     time: { created: number; completed?: number };
   };
-  parts: { type: string; text?: string; tool?: string; filename?: string }[];
+  parts: {
+    type: string;
+    text?: string;
+    tool?: string;
+    filename?: string;
+    mime?: string;
+    url?: string;
+  }[];
 }
 
 interface FakeSession {
@@ -365,6 +372,29 @@ describe("opencode adapter", () => {
     const messages = await adapter.messages("s1");
     expect(messages[0]?.attachmentNames).toEqual(["shot.png", "附件"]);
     expect(messages[1]?.attachmentNames).toEqual([]);
+  });
+
+  it("messageAttachments hands a message's file parts back as sendable attachments", async () => {
+    const state = baseState();
+    state.messages.s1?.[0]?.parts.push(
+      { type: "file", filename: "shot.png", mime: "image/png", url: "data:image/png;base64,AAA" },
+      // filename lost server-side → the same 附件 fallback the names mapping uses
+      { type: "file", mime: "text/plain", url: "data:text/plain;base64,Qg==" },
+      // url lost → resending an empty file would fail the run, so it's dropped
+      { type: "file", filename: "gone.txt", mime: "text/plain" },
+    );
+    const { adapter } = await newAdapter(state);
+    const attachments = await adapter.messageAttachments("s1", "u1");
+    expect(attachments).toEqual([
+      { mime: "image/png", filename: "shot.png", dataUrl: "data:image/png;base64,AAA" },
+      { mime: "text/plain", filename: "附件", dataUrl: "data:text/plain;base64,Qg==" },
+    ]);
+  });
+
+  it("messageAttachments of an unknown message is an empty list", async () => {
+    const state = baseState();
+    const { adapter } = await newAdapter(state);
+    expect(await adapter.messageAttachments("s1", "nope")).toEqual([]);
   });
 
   it("lists models with ids, names, ordered variants and attachment flag — secrets dropped", async () => {

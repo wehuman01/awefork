@@ -27,6 +27,7 @@ declare global {
       sessions(): Promise<{ sessions: SessionSummary[]; lineage: Record<string, ForkRecord> }>;
       messages(sessionId: string): Promise<ChatMessage[]>;
       models(): Promise<ModelOption[]>;
+      messageAttachments(sessionId: string, messageId: string): Promise<PromptAttachment[]>;
       fork(sessionId: string, atMessageId: string | null): Promise<SessionSummary>;
       deleteSession(sessionId: string): Promise<string[]>;
       deleteMessage(sessionId: string, messageId: string): Promise<void>;

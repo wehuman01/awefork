@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
   type DocumentTextExtractor,
+  draftFromPrompt,
   MAX_TEXT_BYTES,
   readAttachments,
   toPromptAttachments,
@@ -147,5 +148,15 @@ describe("toPromptAttachments", () => {
     expect(list).toEqual([
       { filename: "a.md", mime: "text/plain", dataUrl: "data:text/plain;base64,eA==" },
     ]);
+  });
+});
+
+describe("draftFromPrompt", () => {
+  test("wraps a sent attachment as a chip that round-trips back unchanged", () => {
+    const sent = { mime: "image/png", filename: "shot.png", dataUrl: "data:image/png;base64,AAA" };
+    const chip = draftFromPrompt(sent);
+    expect(chip).toMatchObject({ name: "shot.png", mime: "image/png", dataUrl: sent.dataUrl });
+    expect(typeof chip.id).toBe("string");
+    expect(toPromptAttachments([chip])).toEqual([sent]);
   });
 });

@@ -56,6 +56,10 @@ interface OcPart {
   state?: string;
   tool?: string;
   filename?: string;
+  /** File parts only: the mime they were sent with. */
+  mime?: string;
+  /** File parts only: the data URL (or remote URL) they were sent with. */
+  url?: string;
 }
 
 export interface OcMessage {

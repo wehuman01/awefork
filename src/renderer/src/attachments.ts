@@ -119,3 +119,16 @@ export async function readAttachments(
 export function toPromptAttachments(list: DraftAttachment[]): PromptAttachment[] {
   return list.map((a) => ({ mime: a.mime, filename: a.name, dataUrl: a.dataUrl }));
 }
+
+/**
+ * Wrap an already-sent attachment (pulled back from the backend for a retry)
+ * as a draft chip, so it renders and re-flattens like a freshly staged one.
+ */
+export function draftFromPrompt(attachment: PromptAttachment): DraftAttachment {
+  return {
+    id: nextId(),
+    name: attachment.filename,
+    mime: attachment.mime,
+    dataUrl: attachment.dataUrl,
+  };
+}

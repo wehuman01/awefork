@@ -35,6 +35,11 @@ async function createWindow(): Promise<void> {
       preload: join(__dirname, "../preload/index.js"),
       contextIsolation: true,
       nodeIntegration: false,
+      // Load-bearing, not an oversight: the preload is built as ESM
+      // (package.json has "type": "module"), and Electron only loads ESM
+      // preload scripts with the sandbox disabled. The renderer still gets
+      // no Node access — contextIsolation on, nodeIntegration off, and the
+      // preload does nothing but bridge ipcRenderer.invoke channels.
       sandbox: false,
     },
   });

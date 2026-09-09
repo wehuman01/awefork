@@ -359,6 +359,16 @@ export function installMockAdapter(): void {
     ready: async () => ({ ok: true }),
     sessions: async () => ({ sessions: summaries(), lineage: { ...lineage } }),
     messages: async (sessionId) => ensureMessages(sessionId).map((m) => ({ ...m })),
+    // The demo keeps only attachment names; hand back readable stand-ins so
+    // the retry prefill path still shows chips and resends.
+    messageAttachments: async (sessionId, messageId) => {
+      const message = ensureMessages(sessionId).find((m) => m.id === messageId);
+      return (message?.attachmentNames ?? []).map((name) => ({
+        mime: "text/plain",
+        filename: name,
+        dataUrl: `data:text/plain;base64,${btoa(`demo:${name}`)}`,
+      }));
+    },
     models: async () => MODELS,
     fork: async (sessionId, atMessageId) => {
       promptSeq += 1;

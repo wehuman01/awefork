@@ -26,7 +26,7 @@ import type {
   PromptAttachment,
   SessionSummary,
 } from "../../shared/types";
-import { type DraftAttachment, toPromptAttachments } from "./attachments";
+import { type DraftAttachment, draftFromPrompt, toPromptAttachments } from "./attachments";
 
 interface DraftState {
   /** Canvas node the composer is attached to. */
@@ -424,6 +424,18 @@ export async function switchDirectory(directory: string): Promise<void> {
   await ensureCanvasMessages();
 }
 
+/**
+ * The open project's last visible session went away (deleted or archived):
+ * move to the busiest remaining directory, or drop to the empty state when
+ * none is left — the same view a fresh install shows. refreshSessions re-picks
+ * a directory as soon as one becomes visible again (e.g. after a restore).
+ */
+async function leaveEmptiedDirectory(): Promise<void> {
+  const next = directories.value.find((d) => d !== state.selectedDirectory);
+  if (next) await switchDirectory(next);
+  else state.selectedDirectory = null;
+}
+
 export async function selectSession(
   sessionId: string | null,
   options: { focus?: boolean } = {},
@@ -661,6 +673,7 @@ export async function deleteSession(sessionId: string): Promise<void> {
     state.selectedTurnId = null;
     const target = landing ?? neighbor ?? latestSessionId(directorySessions.value);
     if (target) await selectSession(target);
+    else await leaveEmptiedDirectory();
   }
 }
 
@@ -711,6 +724,7 @@ export async function archiveSession(sessionId: string): Promise<void> {
     state.selectedTurnId = null;
     const target = landing ?? neighbor ?? latestSessionId(directorySessions.value);
     if (target) await selectSession(target);
+    else await leaveEmptiedDirectory();
   }
 }
 
@@ -743,9 +757,9 @@ export async function archiveDirectory(directory: string): Promise<void> {
   state.selectedId = null;
   state.selectedTurnId = null;
   if (state.selectedDirectory === directory) {
-    // The open project went away — move to the busiest remaining directory.
-    const next = directories.value.find((d) => d !== directory);
-    if (next) await switchDirectory(next);
+    // The open project went away — move to the busiest remaining directory,
+    // or the empty state when it was the last one.
+    await leaveEmptiedDirectory();
   } else {
     // Only the selected session lived under the archived path; stay in the
     // current project and land on its latest session.
@@ -1012,14 +1026,16 @@ export function retryTurn(turn: Turn): void {
   if (!text.trim()) return;
   const turns = buildTurns(turn.sessionId, messages);
   const last = turns[turns.length - 1];
+  const nodeId = `${turn.sessionId}:${turn.messageId}`;
   openDraftAt({
-    nodeId: `${turn.sessionId}:${turn.messageId}`,
+    nodeId,
     sessionId: turn.sessionId,
     atMessageId: last != null && last.messageId === turn.messageId ? null : turn.messageId,
     text,
     model: turn.model,
     attachments: [],
   });
+  void restoreDraftAttachments(nodeId, turn.sessionId, turn.messageId);
 }
 
 /** Canvas entry for the same move, from a card node. */
@@ -1037,6 +1053,29 @@ export function retryNode(node: TurnNode): void {
     model: node.model,
     attachments: [],
   });
+  void restoreDraftAttachments(node.id, node.sessionId, node.messageId);
+}
+
+/**
+ * Retry keeps the original attachments: the backend still holds the sent file
+ * parts, so pull them back and drop them into the just-opened draft as chips.
+ * The draft opens immediately (the fetch may take a moment); a failed fetch
+ * only costs the prefilled chips, the retried text goes out either way.
+ */
+async function restoreDraftAttachments(
+  nodeId: string,
+  sessionId: string,
+  messageId: string,
+): Promise<void> {
+  try {
+    const attachments = await window.awefork.messageAttachments(sessionId, messageId);
+    if (attachments.length === 0) return;
+    const draft = state.draft;
+    if (draft?.nodeId !== nodeId) return;
+    draft.attachments = attachments.map(draftFromPrompt);
+  } catch {
+    // Server hiccups shouldn't block the retry; the composer just starts empty.
+  }
 }
 
 export function setDraftText(text: string): void {
