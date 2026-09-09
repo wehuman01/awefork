@@ -1560,6 +1560,55 @@ textarea {
   color: var(--ink-soft);
 }
 
+.thought {
+  margin: 0 0 9px;
+  border: 1px solid var(--lavender-soft);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--lavender-soft) 45%, transparent);
+  overflow: hidden;
+}
+
+.thought-toggle {
+  cursor: pointer;
+  padding: 6px 9px;
+  color: #7a66d6;
+  font-size: 11px;
+  font-weight: 800;
+  list-style: none;
+  user-select: none;
+}
+
+.thought-toggle::-webkit-details-marker {
+  display: none;
+}
+
+.thought-toggle::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 6px;
+  transition: transform 0.15s ease;
+}
+
+.thought[open] .thought-toggle::before {
+  transform: rotate(90deg);
+}
+
+.thought-body {
+  padding: 0 9px 8px 15px;
+  border-left: 2px solid var(--lavender);
+  margin: 0 9px 8px;
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-style: italic;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+
+.streaming-thought .thought-body {
+  color: var(--ink);
+}
+
 /* blinking block that trails the streaming reply */
 .stream-caret {
   display: inline-block;

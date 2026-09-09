@@ -51,6 +51,7 @@
       :messages="paneMessages"
       :running="isRunning"
       :stream-text="store.streamText"
+      :stream-thinking="store.streamThinking"
       :error="null"
     >
       <template v-if="contextTurns.length > 0 || omittedCount > 0" #context>
