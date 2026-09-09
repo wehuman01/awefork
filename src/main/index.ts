@@ -1,5 +1,6 @@
+import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, nativeImage } from "electron";
 import { createOpencodeAdapter } from "../shared/opencode-adapter.js";
 import type { AgentEvent } from "../shared/types.js";
 import { forwardEvents, registerIpc } from "./ipc.js";
@@ -10,6 +11,7 @@ const PORT = 4096;
 const lineagePath = join(app.getPath("userData"), "lineage.json");
 const pinsPath = join(app.getPath("userData"), "pins.json");
 const trashPath = join(app.getPath("userData"), "trash.json");
+const archivePath = join(app.getPath("userData"), "archive.json");
 
 const adapterPromise = ensureOpencodeServer(PORT)
   .then(({ baseUrl }) => createOpencodeAdapter({ baseUrl, lineagePath }))
@@ -18,7 +20,7 @@ const adapterPromise = ensureOpencodeServer(PORT)
     throw error instanceof Error ? error : new Error(String(error));
   });
 
-registerIpc(adapterPromise, lineagePath, pinsPath, trashPath);
+registerIpc(adapterPromise, lineagePath, pinsPath, trashPath, archivePath);
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -57,6 +59,18 @@ forwardEvents(adapterPromise, (event: AgentEvent) => {
 });
 
 app.whenReady().then(() => {
+  // Packaged builds take the Dock icon from the bundle; dev would show the
+  // stock Electron one otherwise. Electron can't decode .icns, so hand it the
+  // PNG master — a missing or bad icon must never block startup.
+  if (!app.isPackaged && process.platform === "darwin" && app.dock) {
+    try {
+      const iconPath = join(app.getAppPath(), "assets/icon/icon.png");
+      const image = existsSync(iconPath) ? nativeImage.createFromPath(iconPath) : null;
+      if (image && !image.isEmpty()) app.dock.setIcon(image);
+    } catch {
+      // cosmetic in dev; ignore
+    }
+  }
   void createWindow();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) void createWindow();

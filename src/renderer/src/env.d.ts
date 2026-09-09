@@ -9,6 +9,8 @@ declare module "*.vue" {
 
 import type {
   AgentEvent,
+  ArchiveKind,
+  ArchiveState,
   ChatMessage,
   ForkRecord,
   ModelChoice,
@@ -41,6 +43,9 @@ declare global {
       trash(): Promise<TrashEntry[]>;
       trashAdd(sessionId: string, title: string): Promise<TrashEntry[]>;
       trashRemove(sessionId: string): Promise<TrashEntry[]>;
+      archive(): Promise<ArchiveState>;
+      archiveAdd(kind: ArchiveKind, key: string): Promise<ArchiveState>;
+      archiveRemove(kind: ArchiveKind, key: string): Promise<ArchiveState>;
       openExternal(url: string): Promise<void>;
       onEvent(handler: (event: AgentEvent) => void): () => void;
     };

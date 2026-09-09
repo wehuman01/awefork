@@ -1,5 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type {
+  ArchiveKind,
+  ArchiveState,
   ChatMessage,
   ModelChoice,
   ModelOption,
@@ -40,6 +42,11 @@ const api = {
     ipcRenderer.invoke("awefork:trashAdd", sessionId, title),
   trashRemove: (sessionId: string): Promise<TrashEntry[]> =>
     ipcRenderer.invoke("awefork:trashRemove", sessionId),
+  archive: (): Promise<ArchiveState> => ipcRenderer.invoke("awefork:archive"),
+  archiveAdd: (kind: ArchiveKind, key: string): Promise<ArchiveState> =>
+    ipcRenderer.invoke("awefork:archiveAdd", kind, key),
+  archiveRemove: (kind: ArchiveKind, key: string): Promise<ArchiveState> =>
+    ipcRenderer.invoke("awefork:archiveRemove", kind, key),
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke("awefork:openExternal", url),
   onEvent: (handler: (event: unknown) => void): (() => void) => {
     const listener = (_event: unknown, payload: unknown) => handler(payload);

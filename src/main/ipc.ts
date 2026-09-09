@@ -1,10 +1,12 @@
 import { type IpcMainInvokeEvent, ipcMain, shell } from "electron";
+import { readArchive, setArchived } from "../shared/archive-store.js";
 import { readLineage } from "../shared/lineage-store.js";
 import { readPins, writePins } from "../shared/pins-store.js";
 import { readTrash, writeTrash } from "../shared/trash-store.js";
 import type {
   AgentAdapter,
   AgentEvent,
+  ArchiveKind,
   ModelChoice,
   PromptAttachment,
   TrashEntry,
@@ -27,6 +29,9 @@ import type {
  *   trash      -> TrashEntry[]            sessions awaiting their hard delete
  *   trashAdd   -> TrashEntry[]            queue a pending delete, list back
  *   trashRemove-> TrashEntry[]            un-queue (undo), list back
+ *   archive    -> ArchiveState            archived sessions + directories
+ *   archiveAdd -> ArchiveState            archive a session/directory, state back
+ *   archiveRemove -> ArchiveState         restore a session/directory, state back
  *   openExternal -> void                  open a reply link in the system browser
  * Events are forwarded on channel "awefork:event".
  */
@@ -35,6 +40,7 @@ export function registerIpc(
   lineagePath: string,
   pinsPath: string,
   trashPath: string,
+  archivePath: string,
 ): void {
   const withAdapter = async (): Promise<AgentAdapter> => adapterPromise;
 
@@ -145,6 +151,20 @@ export function registerIpc(
     await writeTrash(trashPath, entries);
     return entries;
   });
+
+  ipcMain.handle("awefork:archive", async () => readArchive(archivePath));
+
+  ipcMain.handle(
+    "awefork:archiveAdd",
+    async (_event: IpcMainInvokeEvent, kind: ArchiveKind, key: string) =>
+      setArchived(archivePath, kind, key, true),
+  );
+
+  ipcMain.handle(
+    "awefork:archiveRemove",
+    async (_event: IpcMainInvokeEvent, kind: ArchiveKind, key: string) =>
+      setArchived(archivePath, kind, key, false),
+  );
 
   // Markdown links in replies route through here — shell.openExternal is the
   // only sanctioned way out of the app window, and the scheme gate keeps

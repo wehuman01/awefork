@@ -10,7 +10,11 @@
     </div>
     <nav class="session-list">
       <template v-for="group in visibleGroups" :key="group.directory">
-        <div class="proj-row" :class="{ active: group.directory === selectedDirectory }">
+        <div
+          class="proj-row"
+          :class="{ active: group.directory === selectedDirectory }"
+          @contextmenu.prevent="openDirMenu(group.directory, $event)"
+        >
           <button
             type="button"
             class="proj-caret"
@@ -74,6 +78,36 @@
       <p v-if="visibleGroups.length === 0" class="group-empty">没有匹配的会话</p>
     </nav>
 
+    <div class="archive-zone">
+      <button type="button" class="archive-head" @click="archiveOpen = !archiveOpen">
+        <span class="archive-caret">{{ archiveOpen ? "▾" : "▸" }}</span>
+        <span>📦 归档</span>
+        <span v-if="archiveCount > 0" class="proj-count">{{ archiveCount }}</span>
+      </button>
+      <div v-if="archiveOpen" class="archive-list">
+        <div v-for="dir in archivedDirectoryViews" :key="`dir:${dir.path}`" class="arch-row">
+          <span class="arch-name" :title="dir.path">📁 {{ shortPath(dir.path) }}</span>
+          <span class="arch-count" :title="`${dir.hiddenCount} 个会话被隐藏`">{{ dir.hiddenCount }}</span>
+          <button
+            type="button"
+            class="arch-restore"
+            title="恢复这个目录（含以后新增的会话）"
+            @click="onRestoreDirectory(dir.path)"
+          >↩</button>
+        </div>
+        <div v-for="sess in archivedSessionViews" :key="`sess:${sess.id}`" class="arch-row">
+          <span class="arch-name" :title="sess.title">{{ sess.title }}</span>
+          <button
+            type="button"
+            class="arch-restore"
+            title="恢复这个会话"
+            @click="onRestoreSession(sess.id)"
+          >↩</button>
+        </div>
+        <p v-if="archiveCount === 0" class="group-empty">归档区是空的</p>
+      </div>
+    </div>
+
     <div
       v-if="menu"
       class="ctx-menu"
@@ -82,8 +116,20 @@
     >
       <button type="button" class="ctx-menu-item" @click="beginRename">✏️ 重命名</button>
       <button type="button" class="ctx-menu-item" @click="copySessionId">📋 复制会话 ID</button>
+      <button type="button" class="ctx-menu-item" @click="beginArchive">📦 归档会话</button>
       <button type="button" class="ctx-menu-item danger" @click="beginDelete">
         🗑 删除会话…
+      </button>
+    </div>
+
+    <div
+      v-if="dirMenu"
+      class="ctx-menu"
+      :style="{ left: `${dirMenu.x}px`, top: `${dirMenu.y}px` }"
+      @mousedown.stop
+    >
+      <button type="button" class="ctx-menu-item" @click="beginDirArchive">
+        📦 归档这个目录…
       </button>
     </div>
   </aside>
@@ -94,9 +140,15 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 import type { SessionGroup, SessionTreeNode } from "../../../shared/session-tree";
 import type { SessionSummary } from "../../../shared/types";
 import {
+  archiveDirectory,
+  archivedDirectoryViews,
+  archivedSessionViews,
+  archiveSession,
   deleteSession,
   refreshSessions,
   renameSession,
+  restoreDirectory,
+  restoreSession,
   selectSession,
   sessionGroups,
   store,
@@ -113,13 +165,21 @@ const expandedOverride = ref<Record<string, boolean>>({});
 const menu = ref<{ sessionId: string; title: string; x: number; y: number } | null>(null);
 const renaming = ref<{ sessionId: string; title: string } | null>(null);
 const renameText = ref("");
+const dirMenu = ref<{ directory: string; x: number; y: number } | null>(null);
 
 function openMenu(session: SessionSummary, event: MouseEvent): void {
+  dirMenu.value = null;
   menu.value = { sessionId: session.id, title: session.title, x: event.clientX, y: event.clientY };
 }
 
 function closeMenu(): void {
   menu.value = null;
+  dirMenu.value = null;
+}
+
+function openDirMenu(directory: string, event: MouseEvent): void {
+  menu.value = null;
+  dirMenu.value = { directory, x: event.clientX, y: event.clientY };
 }
 
 function beginRename(): void {
@@ -176,6 +236,42 @@ function beginDelete(): void {
   );
   if (!ok) return;
   void deleteSession(active.sessionId);
+}
+
+/** Archive is fully reversible — no confirm, the archive section undoes it. */
+function beginArchive(): void {
+  const active = menu.value;
+  if (!active) return;
+  closeMenu();
+  void archiveSession(active.sessionId);
+}
+
+/** Whole-directory archive hides a lot at once — confirm before the move. */
+function beginDirArchive(): void {
+  const active = dirMenu.value;
+  if (!active) return;
+  closeMenu();
+  const ok = window.confirm(
+    `归档目录「${shortPath(active.directory)}」？\n它下面的所有会话（包括以后新增的）都会隐藏，随时可在侧栏底部的归档区恢复。`,
+  );
+  if (!ok) return;
+  void archiveDirectory(active.directory);
+}
+
+// ── archive section ─────────────────────────────────────────────────
+
+const archiveOpen = ref(false);
+
+const archiveCount = computed(
+  () => archivedDirectoryViews.value.length + archivedSessionViews.value.length,
+);
+
+function onRestoreDirectory(directory: string): void {
+  void restoreDirectory(directory);
+}
+
+function onRestoreSession(sessionId: string): void {
+  void restoreSession(sessionId);
 }
 
 /** Function ref: focus (and select) the rename input the moment it mounts. */

@@ -11,6 +11,7 @@
 
 import type {
   AgentEvent,
+  ArchiveState,
   ChatMessage,
   ForkRecord,
   ModelChoice,
@@ -346,6 +347,7 @@ export function installMockAdapter(): void {
 
   let pins: string[] = [];
   let trash: TrashEntry[] = [];
+  let archive: ArchiveState = { sessions: [], directories: [] };
   const handlers = new Set<(event: AgentEvent) => void>();
   const emit = (event: AgentEvent): void => {
     for (const handler of handlers) handler(event);
@@ -472,6 +474,33 @@ export function installMockAdapter(): void {
     trashRemove: async (sessionId) => {
       trash = trash.filter((t) => t.id !== sessionId);
       return trash;
+    },
+    archive: async () => archive,
+    archiveAdd: async (kind, key) => {
+      archive =
+        kind === "session"
+          ? {
+              ...archive,
+              sessions: [
+                ...archive.sessions.filter((e) => e.id !== key),
+                { id: key, archivedAt: Date.now() },
+              ],
+            }
+          : {
+              ...archive,
+              directories: [
+                ...archive.directories.filter((e) => e.path !== key),
+                { path: key, archivedAt: Date.now() },
+              ],
+            };
+      return archive;
+    },
+    archiveRemove: async (kind, key) => {
+      archive =
+        kind === "session"
+          ? { ...archive, sessions: archive.sessions.filter((e) => e.id !== key) }
+          : { ...archive, directories: archive.directories.filter((e) => e.path !== key) };
+      return archive;
     },
     openExternal: async (url) => {
       window.open(url, "_blank", "noopener");

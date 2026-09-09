@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildSessionTree, pickNeighborId } from "../src/shared/session-tree";
-import type { LineageMap, SessionSummary } from "../src/shared/types";
+import { buildSessionTree, pickNeighborId, withoutArchived } from "../src/shared/session-tree";
+import type { ArchiveState, LineageMap, SessionSummary } from "../src/shared/types";
 
 function session(partial: Partial<SessionSummary> & { id: string }): SessionSummary {
   return {
@@ -79,5 +79,58 @@ describe("pickNeighborId", () => {
   it("returns null for the last survivor and for unknown ids", () => {
     expect(pickNeighborId(["a"], "a")).toBeNull();
     expect(pickNeighborId(ids, "zzz")).toBeNull();
+  });
+});
+
+describe("withoutArchived", () => {
+  const sessions: SessionSummary[] = [
+    session({ id: "a", updatedAt: 10 }),
+    session({ id: "b", updatedAt: 20, directory: "/other" }),
+    session({ id: "c", updatedAt: 30, directory: "/other" }),
+  ];
+
+  it("returns the input untouched when nothing is archived", () => {
+    expect(withoutArchived(sessions, { sessions: [], directories: [] })).toBe(sessions);
+  });
+
+  it("hides an individually archived session, others stay", () => {
+    const archive: ArchiveState = {
+      sessions: [{ id: "b", archivedAt: 1 }],
+      directories: [],
+    };
+    expect(withoutArchived(sessions, archive).map((s) => s.id)).toEqual(["a", "c"]);
+  });
+
+  it("hides every session under an archived directory — including later ones", () => {
+    const archive: ArchiveState = {
+      sessions: [],
+      directories: [{ path: "/other", archivedAt: 1 }],
+    };
+    const withNewcomer = [...sessions, session({ id: "new", directory: "/other", updatedAt: 99 })];
+    expect(withoutArchived(withNewcomer, archive).map((s) => s.id)).toEqual(["a"]);
+  });
+
+  it("restoring a directory leaves individually archived sessions hidden", () => {
+    // "b" was archived on its own before the whole directory went in.
+    const whileArchived = withoutArchived(sessions, {
+      sessions: [{ id: "b", archivedAt: 1 }],
+      directories: [{ path: "/other", archivedAt: 2 }],
+    });
+    expect(whileArchived.map((s) => s.id)).toEqual(["a"]);
+
+    // Directory restored (its entry drops out); "b" keeps its own.
+    const afterRestore = withoutArchived(sessions, {
+      sessions: [{ id: "b", archivedAt: 1 }],
+      directories: [],
+    });
+    expect(afterRestore.map((s) => s.id)).toEqual(["a", "c"]);
+  });
+
+  it("both lists combine: union of hidden sessions", () => {
+    const archive: ArchiveState = {
+      sessions: [{ id: "a", archivedAt: 1 }],
+      directories: [{ path: "/other", archivedAt: 2 }],
+    };
+    expect(withoutArchived(sessions, archive)).toEqual([]);
   });
 });

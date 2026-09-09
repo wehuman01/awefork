@@ -1,4 +1,4 @@
-import type { LineageMap, SessionSummary } from "./types.js";
+import type { ArchiveState, LineageMap, SessionSummary } from "./types.js";
 
 export interface SessionGroup {
   directory: string;
@@ -104,4 +104,21 @@ export function pickNeighborId(orderedIds: string[], deletedId: string): string 
   if (index === -1) return null;
   const rest = orderedIds.filter((id) => id !== deletedId);
   return rest[index] ?? rest[index - 1] ?? null;
+}
+
+/**
+ * Drop archived sessions from the sidebar pool. A session is hidden when its
+ * own id is archived OR its whole directory is; directories match by path at
+ * read time, so sessions created under an archived directory later are hidden
+ * too. The two lists combine independently: restoring a directory leaves
+ * individually archived sessions archived.
+ */
+export function withoutArchived(
+  sessions: SessionSummary[],
+  archive: ArchiveState,
+): SessionSummary[] {
+  if (archive.sessions.length === 0 && archive.directories.length === 0) return sessions;
+  const ids = new Set(archive.sessions.map((entry) => entry.id));
+  const dirs = new Set(archive.directories.map((entry) => entry.path));
+  return sessions.filter((s) => !ids.has(s.id) && !dirs.has(s.directory));
 }

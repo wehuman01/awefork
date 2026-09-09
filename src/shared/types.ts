@@ -102,6 +102,31 @@ export interface TrashEntry {
   deletedAt: number;
 }
 
+/** Which archive list an entry belongs to; sessions key on id, directories on path. */
+export type ArchiveKind = "session" | "directory";
+
+/** A session individually hidden from the sidebar (archive.json). */
+export interface ArchivedSessionEntry {
+  id: string;
+  archivedAt: number;
+}
+
+/**
+ * A project directory hidden as a whole: every session under the path —
+ * including ones created after archiving — stays hidden until the directory
+ * is restored.
+ */
+export interface ArchivedDirectoryEntry {
+  path: string;
+  archivedAt: number;
+}
+
+/** Archive store content (archive.json). Awefork-side overlay; the agent never sees it. */
+export interface ArchiveState {
+  sessions: ArchivedSessionEntry[];
+  directories: ArchivedDirectoryEntry[];
+}
+
 /**
  * Normalized event feed forwarded to the renderer.
  * Kept intentionally small: the UI only needs to know what changed.

@@ -12,11 +12,13 @@ import {
   pickNeighborId,
   type SessionGroup,
   type SessionTreeNode,
+  withoutArchived,
 } from "../../shared/session-tree";
 import { searchTurns, type TurnSearchHit } from "../../shared/turn-search";
 import { buildTurns, type Turn, turnMessageRange } from "../../shared/turns";
 import type {
   AgentEvent,
+  ArchiveState,
   ChatMessage,
   ForkRecord,
   ModelChoice,
@@ -53,6 +55,11 @@ interface AppState {
   lineage: Record<string, ForkRecord>;
   /** Session ids the user saved to the canvas (persisted in pins.json). */
   pins: string[];
+  /**
+   * Sessions and directories tucked away (persisted in archive.json).
+   * Pure awefork overlay: the data keeps living in the agent backend.
+   */
+  archive: ArchiveState;
   selectedDirectory: string | null;
   selectedId: string | null;
   /**
@@ -90,6 +97,7 @@ const state = reactive<AppState>({
   deletedToast: null,
   lineage: {},
   pins: [],
+  archive: { sessions: [], directories: [] },
   selectedDirectory: null,
   selectedId: null,
   selectedTurnId: null,
@@ -113,10 +121,13 @@ export const store = readonly(state);
 /** Readonly shape of a chat message as seen by components. */
 export type ReadonlyChatMessage = (typeof store)["messagesBySession"][string][number];
 
-/** Sessions still shown: everything outside the delete grace window. */
+/** Sessions still shown: everything outside the delete grace window and the archive. */
 export const visibleSessions = computed<SessionSummary[]>(() => {
   const trashed = new Set(state.trash);
-  return state.sessions.filter((s) => !trashed.has(s.id));
+  return withoutArchived(
+    state.sessions.filter((s) => !trashed.has(s.id)),
+    state.archive,
+  );
 });
 
 export const sessionGroups = computed<SessionGroup[]>(() =>
@@ -130,6 +141,46 @@ export const directories = computed<string[]>(() => {
   }
   return [...latest.keys()].sort((a, b) => (latest.get(b) ?? 0) - (latest.get(a) ?? 0));
 });
+
+/** An archived directory as the sidebar's archive section shows it. */
+export interface ArchivedDirectoryView {
+  path: string;
+  archivedAt: number;
+  /** Sessions currently hidden under the path (live server state, trash excluded). */
+  hiddenCount: number;
+}
+
+/** An individually archived session as the archive section shows it. */
+export interface ArchivedSessionView {
+  id: string;
+  archivedAt: number;
+  title: string;
+  directory: string;
+}
+
+export const archivedDirectoryViews = computed<ArchivedDirectoryView[]>(() =>
+  state.archive.directories
+    .map((entry) => ({
+      ...entry,
+      hiddenCount: state.sessions.filter(
+        (s) => s.directory === entry.path && !state.trash.includes(s.id),
+      ).length,
+    }))
+    .sort((a, b) => b.archivedAt - a.archivedAt),
+);
+
+export const archivedSessionViews = computed<ArchivedSessionView[]>(() =>
+  state.archive.sessions
+    .map((entry) => {
+      const session = state.sessions.find((s) => s.id === entry.id);
+      return {
+        ...entry,
+        title: session?.title || "(已删除)",
+        directory: session?.directory ?? "",
+      };
+    })
+    .sort((a, b) => b.archivedAt - a.archivedAt),
+);
 
 const enrichedSessions = computed<SessionSummary[]>(() =>
   enrichSessions(visibleSessions.value, state.lineage),
@@ -292,6 +343,11 @@ export async function init(): Promise<void> {
     state.pins = [];
   }
   try {
+    state.archive = await window.awefork.archive();
+  } catch {
+    state.archive = { sessions: [], directories: [] };
+  }
+  try {
     state.trash = (await window.awefork.trash()).map((entry) => entry.id);
   } catch {
     state.trash = [];
@@ -327,6 +383,19 @@ export async function refreshSessions(): Promise<void> {
     const { sessions, lineage } = await window.awefork.sessions();
     state.sessions = sessions;
     state.lineage = lineage;
+
+    // Prune archive entries whose session no longer exists server-side (e.g.
+    // deleted in the agent's own TUI); directory entries match by path and
+    // never go stale. A failed prune retries on the next refresh.
+    const alive = new Set(sessions.map((s) => s.id));
+    for (const entry of state.archive.sessions) {
+      if (alive.has(entry.id)) continue;
+      try {
+        state.archive = await window.awefork.archiveRemove("session", entry.id);
+      } catch {
+        // Left for the next refresh.
+      }
+    }
 
     if (!state.selectedDirectory && sessions.length > 0) {
       state.selectedDirectory = sessions.reduce((a, b) =>
@@ -565,7 +634,7 @@ export async function deleteSession(sessionId: string): Promise<void> {
   const neighbor = pickNeighborId(flatDirectorySessionIds(), sessionId);
   // Same-story landing (fork parent, else oldest child), computed before the
   // trash push hides the deleted session from the directory pool.
-  const landing = landingAfterDelete(sessionId);
+  const landing = landingAfterHide(sessionId);
 
   state.trash = [...state.trash, sessionId];
   if (state.draft?.sessionId === sessionId) state.draft = null;
@@ -596,12 +665,13 @@ export async function deleteSession(sessionId: string): Promise<void> {
 }
 
 /**
- * Where to land after deleting the open session so the view stays inside the
- * same story: the branch it forked from, else its oldest child (which re-roots
- * in place). Both keep the canvas showing the tree the user was looking at;
- * falls through to null → the caller's sidebar neighbor order.
+ * Where to land after the open session disappears from the pool (delete or
+ * archive) so the view stays inside the same story: the branch it forked
+ * from, else its oldest child (which re-roots in place). Both keep the canvas
+ * showing the tree the user was looking at; falls through to null → the
+ * caller's sidebar neighbor order.
  */
-function landingAfterDelete(deletedId: string): string | null {
+function landingAfterHide(deletedId: string): string | null {
   const pool = directorySessions.value.filter((s) => s.origin !== "subagent");
   const parent = pool.find((s) => s.id === deletedId)?.parentSessionId ?? null;
   if (parent && pool.some((s) => s.id === parent)) return parent;
@@ -609,6 +679,97 @@ function landingAfterDelete(deletedId: string): string | null {
     .filter((s) => s.parentSessionId === deletedId)
     .sort((a, b) => a.createdAt - b.createdAt);
   return children[0]?.id ?? null;
+}
+
+/**
+ * Tuck a single session into the archive: hidden from every view at once,
+ * fully recoverable from the sidebar's archive section. Child forks stay
+ * visible and re-root themselves. Pure awefork-side overlay — the session
+ * keeps living in the agent backend, so runs in flight are left alone.
+ */
+export async function archiveSession(sessionId: string): Promise<void> {
+  const session = state.sessions.find((s) => s.id === sessionId);
+  if (!session || state.archive.sessions.some((e) => e.id === sessionId)) return;
+  state.actionError = null;
+  // Archiving is a new operation: older pending deletes become final.
+  await flushPendingDeletes();
+
+  // Same landing rule as delete: same-story branch first, else the sidebar
+  // neighbor — both computed while the session is still in the pool.
+  const neighbor = pickNeighborId(flatDirectorySessionIds(), sessionId);
+  const landing = landingAfterHide(sessionId);
+
+  try {
+    state.archive = await window.awefork.archiveAdd("session", sessionId);
+  } catch (error) {
+    state.actionError = error instanceof Error ? error.message : String(error);
+    return;
+  }
+  if (state.draft?.sessionId === sessionId) state.draft = null;
+  if (state.selectedId === sessionId) {
+    state.selectedId = null;
+    state.selectedTurnId = null;
+    const target = landing ?? neighbor ?? latestSessionId(directorySessions.value);
+    if (target) await selectSession(target);
+  }
+}
+
+/**
+ * Tuck a whole project directory into the archive: every session under the
+ * path hides — including sessions created there later — until the directory
+ * is restored. Sessions under it that were archived individually stay
+ * archived after a restore (the two lists combine independently).
+ */
+export async function archiveDirectory(directory: string): Promise<void> {
+  if (state.archive.directories.some((e) => e.path === directory)) return;
+  state.actionError = null;
+  await flushPendingDeletes();
+
+  const selectedHere =
+    state.selectedDirectory === directory ||
+    state.sessions.some((s) => s.id === state.selectedId && s.directory === directory);
+  const draftedHere = state.sessions.some(
+    (s) => s.id === state.draft?.sessionId && s.directory === directory,
+  );
+
+  try {
+    state.archive = await window.awefork.archiveAdd("directory", directory);
+  } catch (error) {
+    state.actionError = error instanceof Error ? error.message : String(error);
+    return;
+  }
+  if (draftedHere) state.draft = null;
+  if (!selectedHere) return;
+  state.selectedId = null;
+  state.selectedTurnId = null;
+  if (state.selectedDirectory === directory) {
+    // The open project went away — move to the busiest remaining directory.
+    const next = directories.value.find((d) => d !== directory);
+    if (next) await switchDirectory(next);
+  } else {
+    // Only the selected session lived under the archived path; stay in the
+    // current project and land on its latest session.
+    const target = latestSessionId(directorySessions.value);
+    if (target) await selectSession(target);
+  }
+}
+
+/** Restore one archived session: back in the sidebar; the data never moved. */
+export async function restoreSession(sessionId: string): Promise<void> {
+  try {
+    state.archive = await window.awefork.archiveRemove("session", sessionId);
+  } catch (error) {
+    state.actionError = error instanceof Error ? error.message : String(error);
+  }
+}
+
+/** Restore an archived directory: everything hidden under the path reappears. */
+export async function restoreDirectory(directory: string): Promise<void> {
+  try {
+    state.archive = await window.awefork.archiveRemove("directory", directory);
+  } catch (error) {
+    state.actionError = error instanceof Error ? error.message : String(error);
+  }
 }
 
 /**

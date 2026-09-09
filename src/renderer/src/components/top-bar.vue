@@ -1,7 +1,7 @@
 <template>
   <header class="topbar">
     <div class="brand">
-      <span class="logo">🍑</span>
+      <img class="logo" :src="logoUrl" alt="" />
       <span class="brand-name">awefork</span>
       <span class="brand-sub">分支工作台</span>
     </div>
@@ -40,6 +40,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
+import logoUrl from "../assets/logo.svg";
 import { togglePalette } from "../layout";
 import { directories, store, switchDirectory } from "../state";
 
