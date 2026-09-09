@@ -13,7 +13,7 @@
     "dev": "electron-vite dev",
     "demo": "vite --config vite.demo.config.ts",
     "build": "electron-vite build",
-    "dist": "electron-vite build && electron-builder --mac",
+    "dist": "electron-vite build && electron-builder --mac --publish never",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && vue-tsc --noEmit -p tsconfig.web.json",
     "lint": "biome check .",
     "format": "biome format --write .",
