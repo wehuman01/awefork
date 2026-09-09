@@ -78,6 +78,8 @@ interface FakeState {
   currentProject: string;
   /** SSE frames streamed by GET /event; defaults to one session.idle. */
   eventFrames?: { type: string; properties: Record<string, unknown> }[];
+  /** How many leading GET /event requests fail with 503 before streams work. */
+  eventFailuresRemaining?: number;
 }
 
 function startFakeServer(state: FakeState): Promise<{ server: Server; baseUrl: string }> {
@@ -111,6 +113,12 @@ function startFakeServer(state: FakeState): Promise<{ server: Server; baseUrl: s
         return;
       }
       if (method === "GET" && url.pathname === "/event") {
+        if ((state.eventFailuresRemaining ?? 0) > 0) {
+          state.eventFailuresRemaining -= 1;
+          res.writeHead(503);
+          res.end();
+          return;
+        }
         res.writeHead(200, { "content-type": "text/event-stream" });
         const frames = state.eventFrames ?? [
           { id: "evt-1", type: "session.idle", properties: { sessionID: "s1" } },
@@ -520,6 +528,21 @@ describe("opencode adapter", () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
     unsubscribe();
     expect(events).toContainEqual({ type: "session.idle", sessionId: "s1" });
+  });
+
+  it("reports one server.error per outage and server.reconnected on recovery", async () => {
+    const state = baseState();
+    // First /event connect 503s; the 1 s reconnect then succeeds — the
+    // cold-start window where REST answers before the stream accepts.
+    state.eventFailuresRemaining = 1;
+    const { adapter } = await newAdapter(state);
+    const events: AgentEvent[] = [];
+    const unsubscribe = await adapter.subscribe((event) => events.push(event));
+    // failure → 1 s backoff → reconnect; a little slack for scheduling
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    unsubscribe();
+    expect(events.filter((e) => e.type === "server.error")).toHaveLength(1);
+    expect(events).toContainEqual({ type: "server.reconnected" });
   });
 
   it("renameSession PATCHes the title onto the session row", async () => {

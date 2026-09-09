@@ -371,14 +371,35 @@ export async function init(): Promise<void> {
     state.trash = [];
   }
   await flushTrash();
-  await refreshSessions();
+  // Subscribe before the first fetch: a cold-started opencode announces its
+  // session scan right as it comes up, and those frames would be dropped by
+  // a listener attached only after the initial load.
   window.awefork.onEvent(handleEvent);
+  await initialSessionLoad();
   // New-version check once startup settles: the agent server has just come up,
   // so give the handshake a beat. Fire-and-forget — never blocks first paint,
   // and every failure path stays silent.
   setTimeout(() => {
     void checkForUpdates("startup").catch(() => null);
   }, UPDATE_CHECK_DELAY_MS);
+}
+
+/**
+ * A cold-started opencode can answer REST before its session scan finishes,
+ * so the first fetch may see an empty list or a transient timeout. Retry
+ * with backoff until sessions appear or the attempts run out; a genuinely
+ * empty account simply settles after the last attempt.
+ */
+const INITIAL_RETRY_DELAYS_MS = [500, 1000, 2000, 4000, 8000];
+
+async function initialSessionLoad(): Promise<void> {
+  for (let attempt = 0; ; attempt++) {
+    await refreshSessions();
+    if (state.connectionError === null && state.sessions.length > 0) return;
+    const delay = INITIAL_RETRY_DELAYS_MS[attempt];
+    if (delay === undefined) return;
+    await new Promise((resolve) => setTimeout(resolve, delay));
+  }
 }
 
 /**
@@ -407,6 +428,9 @@ export async function refreshSessions(): Promise<void> {
     const { sessions, lineage } = await window.awefork.sessions();
     state.sessions = sessions;
     state.lineage = lineage;
+    // The fetch is the connection test; success revives a UI that an earlier
+    // failure (or a cold-start timeout) had flagged as offline.
+    state.connectionError = null;
 
     // Prune archive entries whose session no longer exists server-side (e.g.
     // deleted in the agent's own TUI); directory entries match by path and
@@ -610,6 +634,13 @@ function handleEvent(event: AgentEvent): void {
       settleRun(event.sessionId);
       // Refresh the canvas card (and panel) with the finished reply.
       void loadSessionMessages(event.sessionId);
+      void refreshSessions();
+      break;
+    }
+    case "server.reconnected": {
+      // The stream is back after an outage: drop the outage toast and rebuild
+      // the list — every event fired while disconnected was missed.
+      state.actionError = null;
       void refreshSessions();
       break;
     }

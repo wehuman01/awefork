@@ -205,6 +205,10 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
       emitEvent = emit;
 
       const connect = async () => {
+        // One notice per outage, not one per 1s retry: the toast fires on the
+        // streak's first failure, then a server.reconnected event on recovery
+        // lets the renderer drop the toast and rebuild what the outage missed.
+        let outageNotified = false;
         while (!stopped && !signal.aborted) {
           try {
             const response = await fetch(`${options.baseUrl.replace(/\/$/, "")}/event`, {
@@ -212,6 +216,10 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
             });
             if (!response.ok || !response.body) {
               throw new Error(`event stream returned ${response.status}`);
+            }
+            if (outageNotified) {
+              outageNotified = false;
+              emit({ type: "server.reconnected" });
             }
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
@@ -224,10 +232,13 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
             }
           } catch (error) {
             if (signal.aborted || stopped) break;
-            emit({
-              type: "server.error",
-              message: `Event stream lost, reconnecting: ${String(error)}`,
-            });
+            if (!outageNotified) {
+              outageNotified = true;
+              emit({
+                type: "server.error",
+                message: `Event stream lost, reconnecting: ${String(error)}`,
+              });
+            }
             await sleep(1000, signal);
           }
         }

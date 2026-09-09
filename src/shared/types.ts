@@ -141,7 +141,13 @@ export type AgentEvent =
    * request, a session.error frame) so the renderer can settle that session's
    * run right away; connection-level failures carry none.
    */
-  | { type: "server.error"; message: string; sessionId?: string | null };
+  | { type: "server.error"; message: string; sessionId?: string | null }
+  /**
+   * The event stream reconnected after a reported server.error — the renderer
+   * should drop the outage toast and refresh, since every event fired while
+   * disconnected was missed.
+   */
+  | { type: "server.reconnected" };
 
 /**
  * The protocol every agent backend implements.
