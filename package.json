@@ -28,6 +28,10 @@
     "files": [
       "out/**"
     ],
+    "electronLanguages": [
+      "en",
+      "zh-CN"
+    ],
     "mac": {
       "target": [
         {
@@ -42,9 +46,6 @@
       "identity": null
     }
   },
-  "dependencies": {
-    "vue": "^3.5.42"
-  },
   "devDependencies": {
     "@biomejs/biome": "^2.3.4",
     "@vitejs/plugin-vue": "^6.0.8",
@@ -53,6 +54,7 @@
     "electron-vite": "^5.0.0",
     "typescript": "~5.8.3",
     "vitest": "^4.1.11",
+    "vue": "^3.5.42",
     "vue-tsc": "^3.3.11"
   }
 }
