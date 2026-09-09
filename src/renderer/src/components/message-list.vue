@@ -31,6 +31,10 @@
                 name
               }}</span>
             </p>
+            <details v-if="message.thinking" class="thought">
+              <summary class="thought-toggle">Thought</summary>
+              <div class="thought-body">{{ message.thinking }}</div>
+            </details>
             <MarkdownView v-if="message.text" :source="message.text" />
             <p v-else-if="message.error" class="message-text run-error">
               ⚠ 运行失败：{{ message.error }}
@@ -44,6 +48,10 @@
         <span class="avatar bot">✨</span>
         <div class="message-body">
           <p class="tool-row"><span class="tool-chip running">running…</span></p>
+          <details v-if="streamThinking" :open="!streamText" class="thought streaming-thought">
+            <summary class="thought-toggle">Thinking…</summary>
+            <div class="thought-body">{{ streamThinking }}<span class="stream-caret"></span></div>
+          </details>
           <template v-if="streamText">
             <MarkdownView :source="streamText" class="stream" />
             <span class="stream-caret"></span>
@@ -65,6 +73,7 @@ const props = defineProps<{
   messages: readonly ReadonlyChatMessage[];
   running: boolean;
   streamText: string;
+  streamThinking: string;
   error: string | null;
 }>();
 
@@ -76,7 +85,7 @@ const listEl = ref<HTMLElement | null>(null);
 const STICK_DISTANCE_PX = 40;
 
 watch(
-  () => [props.messages.length, props.streamText],
+  () => [props.messages.length, props.streamText, props.streamThinking],
   () => {
     const list = listEl.value;
     if (!list) return;

@@ -314,9 +314,12 @@ describe("opencode adapter", () => {
     expect(sessions.find((s) => s.id === "s1")).toMatchObject({ origin: "root" });
   });
 
-  it("maps messages to text, tool names, and model id", async () => {
+  it("maps messages to text, thinking, tool names, and model id", async () => {
     const state = baseState();
-    state.messages.s1?.[1]?.parts.push({ type: "tool", tool: "bash" });
+    state.messages.s1?.[1]?.parts.push(
+      { type: "reasoning", text: "I should inspect the event protocol first." },
+      { type: "tool", tool: "bash" },
+    );
     // opencode 1.18: the user row that opens a run carries the model nested;
     // the assistant row reports top-level ids plus a completion time.
     const u1 = state.messages.s1?.[0]?.info;
@@ -334,6 +337,7 @@ describe("opencode adapter", () => {
       completedAt: null,
     });
     expect(messages[1]?.toolNames).toEqual(["bash"]);
+    expect(messages[1]?.thinking).toBe("I should inspect the event protocol first.");
     expect(messages[1]?.modelId).toBe("glm/glm-5.3-flash");
     expect(messages[1]?.providerId).toBe("oc-fake");
     expect(messages[1]?.completedAt).toBe(5000);
@@ -618,6 +622,7 @@ describe("opencode adapter", () => {
       type: "message.delta",
       sessionId: "s1",
       messageId: "m1",
+      kind: "text",
       delta: "hello",
     });
   });
@@ -636,17 +641,21 @@ describe("opencode adapter", () => {
     expect(events).not.toContainEqual({ type: "message.started", sessionId: "s1", messageId: "" });
   });
 
-  it("message.part.delta streams text deltas (opencode 1.18 shape)", async () => {
+  it("routes opencode 1.18 text-field deltas by their announced part type", async () => {
     const state = baseState();
     state.eventFrames = [
       {
-        type: "message.part.delta",
+        type: "message.part.updated",
         properties: {
           sessionID: "s1",
-          messageID: "m1",
-          partID: "p1",
-          field: "text",
-          delta: "he",
+          part: { id: "p-thinking", type: "reasoning", sessionID: "s1", messageID: "m1", text: "" },
+        },
+      },
+      {
+        type: "message.part.updated",
+        properties: {
+          sessionID: "s1",
+          part: { id: "p-text", type: "text", sessionID: "s1", messageID: "m1", text: "" },
         },
       },
       {
@@ -654,9 +663,19 @@ describe("opencode adapter", () => {
         properties: {
           sessionID: "s1",
           messageID: "m1",
-          partID: "p2",
-          field: "thinking",
+          partID: "p-thinking",
+          field: "text",
           delta: "hm",
+        },
+      },
+      {
+        type: "message.part.delta",
+        properties: {
+          sessionID: "s1",
+          messageID: "m1",
+          partID: "p-text",
+          field: "text",
+          delta: "he",
         },
       },
     ];
@@ -669,13 +688,15 @@ describe("opencode adapter", () => {
       type: "message.delta",
       sessionId: "s1",
       messageId: "m1",
-      delta: "he",
+      kind: "thinking",
+      delta: "hm",
     });
-    expect(events).not.toContainEqual({
+    expect(events).toContainEqual({
       type: "message.delta",
       sessionId: "s1",
       messageId: "m1",
-      delta: "hm",
+      kind: "text",
+      delta: "he",
     });
   });
 

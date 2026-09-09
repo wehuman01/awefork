@@ -71,6 +71,11 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
           .map((p) => p.text as string)
           .join("\n")
           .trim(),
+        thinking: m.parts
+          .filter((p) => p.type === "reasoning" && typeof p.text === "string")
+          .map((p) => p.text as string)
+          .join("\n")
+          .trim(),
         toolNames: [
           ...new Set(
             m.parts
@@ -197,6 +202,7 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
       abortController = new AbortController();
       const { signal } = abortController;
       const parse = createSseParser();
+      const partKinds = new Map<string, "text" | "thinking">();
       let stopped = false;
 
       const emit = (event: AgentEvent) => {
@@ -227,7 +233,7 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
               const { done, value } = await reader.read();
               if (done) break;
               for (const event of parse(decoder.decode(value, { stream: true }))) {
-                emitToAgentEvent(event, emit);
+                emitToAgentEvent(event, emit, partKinds);
               }
             }
           } catch (error) {
@@ -261,6 +267,7 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
 function emitToAgentEvent(
   event: { type: string; properties: Record<string, unknown> },
   emit: (event: AgentEvent) => void,
+  partKinds: Map<string, "text" | "thinking">,
 ): void {
   const props = event.properties;
   switch (event.type) {
@@ -279,10 +286,16 @@ function emitToAgentEvent(
       break;
     }
     case "message.part.updated": {
+      const part = props.part as
+        | { id?: unknown; type?: unknown; sessionID?: unknown; messageID?: unknown }
+        | undefined;
+      if (typeof part?.id === "string") {
+        if (part.type === "reasoning") partKinds.set(part.id, "thinking");
+        else if (part.type === "text") partKinds.set(part.id, "text");
+      }
       // Snapshot frames carry no delta on opencode 1.18; older builds put the
       // text delta here. Skip frames without one.
       if (typeof props.delta !== "string" || props.delta === "") break;
-      const part = props.part as { sessionID?: string; messageID?: string } | undefined;
       const sessionId = sessionIdOf(props.sessionID ?? part?.sessionID);
       const messageId = messageIdOf(props.messageID ?? part?.messageID);
       if (sessionId && messageId) {
@@ -290,6 +303,7 @@ function emitToAgentEvent(
           type: "message.delta",
           sessionId,
           messageId,
+          kind: typeof part?.id === "string" ? (partKinds.get(part.id) ?? "text") : "text",
           delta: props.delta as string,
         });
       }
@@ -306,6 +320,7 @@ function emitToAgentEvent(
           type: "message.delta",
           sessionId,
           messageId,
+          kind: typeof props.partID === "string" ? (partKinds.get(props.partID) ?? "text") : "text",
           delta: props.delta as string,
         });
       }

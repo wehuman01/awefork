@@ -76,6 +76,8 @@ interface AppState {
   running: Record<string, boolean>;
   /** Live stream text of the selected session only. */
   streamText: string;
+  /** Live reasoning of the selected session only, separate from its reply. */
+  streamThinking: string;
   /** Card-sized tail of every running session's stream, keyed by session id. */
   streams: Record<string, string>;
   actionError: string | null;
@@ -117,6 +119,7 @@ const state = reactive<AppState>({
   models: [],
   running: {},
   streamText: "",
+  streamThinking: "",
   streams: {},
   actionError: null,
   draft: null,
@@ -300,13 +303,17 @@ export const paneTurn = computed<{ turn: Turn; index: number; total: number } | 
 
 /**
  * Messages of the pane's turn: from its user prompt up to the next one.
- * Assistant rows without text are dropped — except failed runs, whose error
- * must stay visible. User rows always stay; they anchor the turn, and turn
- * boundaries are user rows, so the filter cannot shift them.
+ * Assistant rows with neither text nor thinking are dropped — except failed
+ * runs, whose error must stay visible. User rows always stay; they anchor the
+ * turn, and turn boundaries are user rows, so the filter cannot shift them.
  */
 export const paneMessages = computed<ChatMessage[]>(() => {
   const messages = (state.messagesBySession[state.selectedId ?? ""] ?? []).filter(
-    (m) => m.role === "user" || m.text.trim().length > 0 || m.error !== null,
+    (m) =>
+      m.role === "user" ||
+      m.text.trim().length > 0 ||
+      m.thinking.trim().length > 0 ||
+      m.error !== null,
   );
   const turn = paneTurn.value?.turn;
   if (!turn) return messages;
@@ -314,7 +321,12 @@ export const paneMessages = computed<ChatMessage[]>(() => {
   return range ? messages.slice(range.start, range.end) : messages;
 });
 
-const streamBuffers = new Map<string, string>();
+interface LiveStream {
+  text: string;
+  thinking: string;
+}
+
+const streamBuffers = new Map<string, LiveStream>();
 /** Sessions whose messages have been requested (or are already cached). */
 const attemptedMessages = new Set<string>();
 
@@ -491,7 +503,9 @@ export async function selectSession(
   if (!sessionId) return;
   state.selectedId = sessionId;
   state.selectedTurnId = null;
-  state.streamText = streamBuffers.get(sessionId) ?? "";
+  const stream = streamBuffers.get(sessionId);
+  state.streamText = stream?.text ?? "";
+  state.streamThinking = stream?.thinking ?? "";
   state.messagesError = null;
   if (options.focus) {
     state.focusRequest = { sessionId, nonce: Date.now() };
@@ -594,7 +608,19 @@ function settleRun(sessionId: string): void {
   const { [sessionId]: finished, ...stillRunning } = state.running;
   void finished;
   state.running = stillRunning;
-  if (state.selectedId === sessionId) state.streamText = "";
+  if (state.selectedId === sessionId) {
+    state.streamText = "";
+    state.streamThinking = "";
+  }
+}
+
+async function finishRun(sessionId: string): Promise<void> {
+  // Replace the live bubble only after its persisted counterpart is in state.
+  // Both mutations occur before Vue renders, avoiding an empty or duplicated
+  // assistant slot at the end of a streamed response.
+  await loadSessionMessages(sessionId, false);
+  settleRun(sessionId);
+  void refreshSessions();
 }
 
 function handleEvent(event: AgentEvent): void {
@@ -618,23 +644,24 @@ function handleEvent(event: AgentEvent): void {
       const watch = completionWatches.get(event.sessionId);
       if (watch) watch.ticks = 0;
       else watchCompletion(event.sessionId, Date.now());
-      const current = streamBuffers.get(event.sessionId) ?? "";
-      const merged = current + event.delta;
-      streamBuffers.set(event.sessionId, merged);
-      // Card-sized tail for every running session — capped so long runs
-      // cannot grow reactive state without bound.
-      state.streams = { ...state.streams, [event.sessionId]: merged.slice(-400) };
+      const kind = event.kind ?? "text";
+      const current = streamBuffers.get(event.sessionId) ?? { text: "", thinking: "" };
+      const updated = { ...current, [kind]: current[kind] + event.delta };
+      streamBuffers.set(event.sessionId, updated);
+      // Card-sized tails keep showing only final reply text; thinking belongs
+      // in the pane's collapsible block, not in its compact canvas preview.
+      if (kind === "text") {
+        state.streams = { ...state.streams, [event.sessionId]: updated.text.slice(-400) };
+      }
       if (event.sessionId === state.selectedId) {
-        state.streamText = merged;
+        state.streamText = updated.text;
+        state.streamThinking = updated.thinking;
       }
       break;
     }
     case "session.idle": {
       stopWatch(event.sessionId);
-      settleRun(event.sessionId);
-      // Refresh the canvas card (and panel) with the finished reply.
-      void loadSessionMessages(event.sessionId);
-      void refreshSessions();
+      void finishRun(event.sessionId);
       break;
     }
     case "server.reconnected": {
@@ -1261,6 +1288,7 @@ function appendLocalMessage(
         id: `local_${Date.now()}`,
         role: "user",
         text,
+        thinking: "",
         toolNames: [],
         modelId: model?.modelId ?? null,
         providerId: model?.providerId ?? null,

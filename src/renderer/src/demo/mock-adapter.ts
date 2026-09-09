@@ -264,6 +264,7 @@ function turnMessages(turn: TurnDef): ChatMessage[] {
       id: turn.id,
       role: "user",
       text: turn.prompt,
+      thinking: "",
       toolNames: [],
       modelId: model,
       providerId: "oc-awerouter",
@@ -278,6 +279,7 @@ function turnMessages(turn: TurnDef): ChatMessage[] {
       id: `${turn.id}-r`,
       role: "assistant",
       text: turn.reply,
+      thinking: "",
       toolNames: turn.tools ?? [],
       modelId: model,
       providerId: "oc-awerouter",
@@ -406,6 +408,7 @@ export function installMockAdapter(): void {
         id: `p${promptSeq}`,
         role: "user",
         text,
+        thinking: "",
         toolNames: [],
         modelId: model?.modelId ?? "glm-5.3-flash",
         providerId: model?.providerId ?? "oc-awerouter",
@@ -417,10 +420,12 @@ export function installMockAdapter(): void {
         error: null,
       };
       const reply = `演示模式：这是一条模拟回复（真实环境里会走你的 opencode 后端）。你问的是「${text.slice(0, 40)}」——切到真的 npm run dev 就能拿到流式真回复。`;
+      const thinking = "我先梳理用户的问题，再组织一段清晰、可执行的回答。";
       const assistant: ChatMessage = {
         id: `p${promptSeq}-r`,
         role: "assistant",
         text: reply,
+        thinking,
         toolNames: [],
         modelId: model?.modelId ?? "glm-5.3-flash",
         providerId: model?.providerId ?? "oc-awerouter",
@@ -433,14 +438,37 @@ export function installMockAdapter(): void {
       };
       emit({ type: "message.started", sessionId, messageId: assistant.id });
       const pending = timers.get(sessionId) ?? [];
+      const thinkingChunks = thinking.match(/.{1,14}/g) ?? [];
       const chunks = reply.match(/.{1,18}/g) ?? [];
+      thinkingChunks.forEach((chunk, i) => {
+        pending.push(
+          setTimeout(
+            () => {
+              emit({
+                type: "message.delta",
+                sessionId,
+                messageId: assistant.id,
+                kind: "thinking",
+                delta: chunk,
+              });
+            },
+            300 + i * 300,
+          ),
+        );
+      });
       chunks.forEach((chunk, i) => {
         pending.push(
           setTimeout(
             () => {
-              emit({ type: "message.delta", sessionId, messageId: assistant.id, delta: chunk });
+              emit({
+                type: "message.delta",
+                sessionId,
+                messageId: assistant.id,
+                kind: "text",
+                delta: chunk,
+              });
             },
-            300 + i * 300,
+            600 + thinkingChunks.length * 300 + i * 300,
           ),
         );
       });
@@ -452,7 +480,7 @@ export function installMockAdapter(): void {
             emit({ type: "session.updated", sessionId });
             emit({ type: "session.idle", sessionId });
           },
-          300 + chunks.length * 300 + 400,
+          600 + (thinkingChunks.length + chunks.length) * 300 + 400,
         ),
       );
       timers.set(sessionId, pending);

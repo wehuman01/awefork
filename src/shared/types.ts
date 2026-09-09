@@ -33,6 +33,8 @@ export interface ChatMessage {
   role: "user" | "assistant";
   /** Concatenated text parts of the message. */
   text: string;
+  /** Concatenated reasoning parts, kept separate from the final reply text. */
+  thinking: string;
   /** Distinct tool names invoked in this message, in first-seen order. */
   toolNames: string[];
   /** Model that produced this message (e.g. "glm/glm-5.3-flash"); user messages carry the model the run was configured with, null when the backend reports none. */
@@ -134,7 +136,14 @@ export interface ArchiveState {
 export type AgentEvent =
   | { type: "session.updated"; sessionId: string }
   | { type: "message.started"; sessionId: string; messageId: string }
-  | { type: "message.delta"; sessionId: string; messageId: string; delta: string }
+  | {
+      type: "message.delta";
+      sessionId: string;
+      messageId: string;
+      /** opencode labels both text and reasoning deltas as `text`; the adapter resolves the part. */
+      kind?: "text" | "thinking";
+      delta: string;
+    }
   | { type: "session.idle"; sessionId: string }
   /**
    * `sessionId` is set when the failure concerns one session (a failed prompt
