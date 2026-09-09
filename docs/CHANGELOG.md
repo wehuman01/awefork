@@ -16,7 +16,7 @@ Retry gets its attachments back, and the archive sidecar learns to survive racin
 
 ### Install
 
-`npm run dist` builds an unsigned arm64 dmg. On first launch, right-click the app and choose Open (or clear the quarantine flag with `xattr -d com.apple.quarantine /Applications/awefork.app`).
+Download the unsigned arm64 dmg straight from the [v0.1.6 release](https://github.com/wehuman01/awefork/releases/tag/v0.1.6) (or build it yourself with `npm run dist`). On first launch, right-click the app and choose Open (or clear the quarantine flag with `xattr -d com.apple.quarantine /Applications/awefork.app`).
 
 ## v0.1.5
 

@@ -12,13 +12,13 @@
     <a href="https://ko-fi.com/mugpeng"><img src="https://img.shields.io/badge/Ko--fi-Buy%20me%20a%20coffee-FF5E5B?style=flat-square&logo=ko-fi&logoColor=white" alt="Ko-fi"></a>
   </p>
   <p>
-    <img src="https://img.shields.io/badge/version-0.1.5-7C3AED?style=flat-square" alt="Version">
+    <img src="https://img.shields.io/badge/version-0.1.6-7C3AED?style=flat-square" alt="Version">
     <img src="https://img.shields.io/badge/node-%E2%89%A522-0EA5E9?style=flat-square" alt="Node">
     <img src="https://img.shields.io/badge/license-MPL--2.0-22C55E?style=flat-square" alt="License">
   </p>
   <p>
     <img src="https://img.shields.io/badge/status-alpha-c96a3d?style=flat-square" alt="Status">
-    <img src="https://img.shields.io/badge/run-npm_dev-22C55E?style=flat-square" alt="npm run dev">
+    <img src="https://img.shields.io/badge/install-download_dmg-22C55E?style=flat-square" alt="从 Release 下载 dmg">
     <img src="https://img.shields.io/badge/platform-desktop-334155?style=flat-square" alt="Platform">
     <img src="https://img.shields.io/github/stars/wehuman01/awefork?style=flat-square" alt="GitHub stars">
   </p>
@@ -61,7 +61,9 @@ awefork 是本地编程 agent 的非线性工作台。当前支持 [opencode](ht
 
 ## 安装
 
-需要 Node.js ≥ 22，且 `opencode` CLI 在 PATH 上。
+**直接下载** —— 从[最新 Release](https://github.com/wehuman01/awefork/releases/latest) 下载 `awefork-<版本>-arm64.dmg`（macOS，Apple Silicon），拖进「应用程序」即可。构建未签名：首次启动请右键应用选「打开」（或用 `xattr -d com.apple.quarantine /Applications/awefork.app` 清除隔离标记）。
+
+**从源码运行** —— 需要 Node.js ≥ 22，且 `opencode` CLI 在 PATH 上。
 
 ```bash
 git clone https://github.com/wehuman01/awefork.git
@@ -71,7 +73,7 @@ npm install
 
 awefork 会复用 4096 端口上已在运行的 `opencode serve`；没有的话，应用启动时会自动拉起一个。
 
-## 快速开始
+## 快速开始（源码方式）
 
 ```bash
 npm run dev

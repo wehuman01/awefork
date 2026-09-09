@@ -18,7 +18,7 @@
   </p>
   <p>
     <img src="https://img.shields.io/badge/status-alpha-c96a3d?style=flat-square" alt="Status">
-    <img src="https://img.shields.io/badge/run-npm_dev-22C55E?style=flat-square" alt="npm run dev">
+    <img src="https://img.shields.io/badge/install-download_dmg-22C55E?style=flat-square" alt="Download dmg from Releases">
     <img src="https://img.shields.io/badge/platform-desktop-334155?style=flat-square" alt="Platform">
     <img src="https://img.shields.io/github/stars/wehuman01/awefork?style=flat-square" alt="GitHub stars">
   </p>
@@ -62,7 +62,9 @@ The idea of treating sessions as a branching graph originates from [PiX](https:/
 
 ## Install
 
-Requires Node.js ≥ 22 and the `opencode` CLI on PATH.
+**Download** — grab `awefork-<version>-arm64.dmg` (macOS, Apple Silicon) from the [latest release](https://github.com/wehuman01/awefork/releases/latest) and drag it into Applications. The build is unsigned: on first launch, right-click the app and choose Open (or clear the quarantine flag with `xattr -d com.apple.quarantine /Applications/awefork.app`).
+
+**From source** — requires Node.js ≥ 22 and the `opencode` CLI on PATH.
 
 ```bash
 git clone https://github.com/wehuman01/awefork.git
@@ -72,7 +74,7 @@ npm install
 
 awefork reuses a running `opencode serve` on port 4096, or starts one for you when the app launches.
 
-## Quick Start
+## Quick Start (from source)
 
 ```bash
 npm run dev
