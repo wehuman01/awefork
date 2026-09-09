@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.1.6
+
+Retry gets its attachments back, and the archive sidecar learns to survive racing clicks.
+
+### Highlights
+
+- **Retry restores attachments** — retrying a turn (the ↻ on a card or pane header) now reopens the prompt with its original file parts pulled back from the backend and dropped into the composer as chips, alongside the text and model it already restored. The draft opens immediately; chips arrive once the fetch lands, and a failed fetch only costs the chips — the retried prompt still goes out.
+- **Race-free archive writes** — rapid archive and restore clicks used to run overlapping read-modify-write cycles on `archive.json`, where the later write could read stale state and silently drop the earlier entry. Writes now serialize per sidecar file, and the shared empty sentinel is frozen so no caller can mutate it for everyone else.
+- **Clean exit from an emptied project** — deleting or archiving the last visible session of the open directory now falls back to the fresh-install empty state instead of stranding the view on a project with nothing to show; the session refresh re-picks a directory as soon as one becomes visible again (e.g. after a restore).
+
+### Fixes
+
+- **Copy button on streaming code blocks** — a code block swapped out mid-stream no longer fires its stale copy-reset timer after unmount.
+
+### Install
+
+`npm run dist` builds an unsigned arm64 dmg. On first launch, right-click the app and choose Open (or clear the quarantine flag with `xattr -d com.apple.quarantine /Applications/awefork.app`).
+
 ## v0.1.5
 
 Archive what you set aside, retry what failed, and richer turns — plus awefork's first real app icon.
