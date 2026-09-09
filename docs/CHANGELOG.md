@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.1.8
+
+awefork crosses to Windows, and the canvas learns to stay where you left it.
+
+### Highlights
+
+- **Windows, alongside macOS** — a win/nsis x64 build target (`npm run dist:win`), a Windows runner in CI, and the bundled opencode server that finds the binary wherever Windows hides it: `%APPDATA%\npm`, winget links, `~/.opencode/bin`, and scoop shims — spawned through the shell so npm `.cmd` shims resolve, with the PATH split on the platform's own delimiter.
+- **Document attachments everywhere** — .docx (mammoth), .rtf (built-in reader), and legacy .doc (word-extractor) all convert in-process on every platform, replacing the macOS-only textutil detour; corrupt files fail with a readable message instead of a shrug.
+- **The canvas keeps your place** — sending from a canvas draft no longer yanks the view: the composer floats in the branch's next free cell (exactly where the sent turn's card will land, joined by a dashed connector), so the new card materializes where you were already looking. Selecting a turn from the context chain now centers it on the canvas, while canvas clicks still leave the view untouched — and a jump aimed at a still-loading branch applies once its cards arrive.
+- **Runs finish when they finish** — the backend's finish reason is tracked per assistant row, and the completion watchdog now watches the message list's shape for liveness and ignores tool-call pauses, so a run that pauses to call a tool no longer reads as done (or as stuck).
+
+### Install
+
+Download the unsigned arm64 dmg straight from the [v0.1.8 release](https://github.com/wehuman01/awefork/releases/tag/v0.1.8). On first launch, right-click the app and choose Open (or clear the quarantine flag with `xattr -d com.apple.quarantine /Applications/awefork.app`). Windows isn't attached this time — build the NSIS installer yourself with `npm run dist:win`.
+
 ## v0.1.7
 
 Reasoning streams into the conversation, and awefork can start one itself: a release about seeing and starting the whole thought.
