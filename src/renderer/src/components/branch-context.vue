@@ -95,6 +95,7 @@
 
     <ChatInput
       v-if="selectedSession"
+      ref="chatInputEl"
       :running="isRunning"
       :model="paneModel"
       :models="store.models"
@@ -106,7 +107,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import type { TurnNode } from "../../../shared/canvas-graph";
 import type { ModelChoice, PromptAttachment } from "../../../shared/types";
 import { formatDuration, formatTokens } from "../format";
@@ -128,6 +129,17 @@ import ChatInput from "./chat-input.vue";
 import MessageList from "./message-list.vue";
 
 const pane = computed(() => paneTurn.value);
+
+const chatInputEl = ref<{ focus: () => void } | null>(null);
+// 新增对话 landed: the fresh session is selected and mounted by now — put the
+// caret in the pane composer so its first prompt starts with a keystroke.
+watch(
+  () => store.composerFocusRequest,
+  (nonce) => {
+    if (nonce === null) return;
+    void nextTick(() => chatInputEl.value?.focus());
+  },
+);
 
 // ── context chain: the turns before the pane's current one ──────────
 

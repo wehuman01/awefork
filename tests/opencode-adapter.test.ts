@@ -70,6 +70,8 @@ interface FakeState {
   sessions: FakeSession[];
   messages: Record<string, FakeMessage[]>;
   forkCalls: { sessionId: string; cutMessageId: string | null }[];
+  /** directory query param per POST /session; null = the client sent none. */
+  createCalls: (string | null)[];
   promptCalls: { sessionId: string; body: Record<string, unknown> }[];
   deleteCalls: string[];
   deleteMessageCalls: { sessionId: string; messageId: string }[];
@@ -126,6 +128,20 @@ function startFakeServer(state: FakeState): Promise<{ server: Server; baseUrl: s
         for (const frame of frames) {
           res.write(`data: ${JSON.stringify(frame)}\n\n`);
         }
+        return;
+      }
+
+      if (method === "POST" && url.pathname === "/session") {
+        const directory = url.searchParams.get("directory");
+        state.createCalls.push(directory);
+        const session: FakeSession = {
+          id: `new-${state.createCalls.length}`,
+          title: "New session",
+          directory: directory ?? "/repo",
+          time: { created: 500, updated: 500 },
+        };
+        state.sessions.push(session);
+        res.end(JSON.stringify(session));
         return;
       }
 
@@ -253,6 +269,7 @@ function baseState(): FakeState {
       ],
     },
     forkCalls: [],
+    createCalls: [],
     promptCalls: [],
     deleteCalls: [],
     deleteMessageCalls: [],
@@ -440,6 +457,28 @@ describe("opencode adapter", () => {
       },
     ]);
     expect(JSON.stringify(models)).not.toContain("sk-secret");
+  });
+
+  it("createSession starts an empty root session in the requested directory", async () => {
+    const state = baseState();
+    const { adapter } = await newAdapter(state);
+    const created = await adapter.createSession("/other-repo");
+    expect(state.createCalls).toEqual(["/other-repo"]);
+    expect(created).toMatchObject({
+      id: "new-1",
+      directory: "/other-repo",
+      origin: "root",
+      parentSessionId: null,
+    });
+    // The fresh session is immediately usable: no rows yet, promptable later.
+    expect(await adapter.messages(created.id)).toEqual([]);
+  });
+
+  it("createSession without a directory omits the query param", async () => {
+    const state = baseState();
+    const { adapter } = await newAdapter(state);
+    await adapter.createSession(null);
+    expect(state.createCalls).toEqual([null]);
   });
 
   it("fork at a user message keeps that full turn (exclusive cut at next user message)", async () => {

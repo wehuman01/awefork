@@ -2,6 +2,9 @@
   <aside class="sidebar">
     <div class="side-label">项目</div>
     <div class="side-actions">
+      <button type="button" class="icon-btn wide" title="在当前项目里开一条新对话" @click="emitCreate">
+        ＋ 新对话
+      </button>
       <button type="button" class="icon-btn wide" title="重新加载会话" @click="emitRefresh">↻ 刷新</button>
     </div>
     <div class="search">
@@ -144,6 +147,7 @@ import {
   archivedDirectoryViews,
   archivedSessionViews,
   archiveSession,
+  createSession,
   deleteSession,
   refreshSessions,
   renameSession,
@@ -357,6 +361,10 @@ function selectDirectory(directory: string): void {
 
 function emitRefresh(): void {
   void refreshSessions();
+}
+
+function emitCreate(): void {
+  void createSession();
 }
 
 function shortPath(directory: string): string {

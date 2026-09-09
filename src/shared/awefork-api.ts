@@ -30,6 +30,7 @@ export interface AweforkApi {
   messages(sessionId: string): Promise<ChatMessage[]>;
   models(): Promise<ModelOption[]>;
   messageAttachments(sessionId: string, messageId: string): Promise<PromptAttachment[]>;
+  createSession(directory?: string): Promise<SessionSummary>;
   fork(sessionId: string, atMessageId: string | null): Promise<SessionSummary>;
   deleteSession(sessionId: string): Promise<string[]>;
   deleteMessage(sessionId: string, messageId: string): Promise<void>;

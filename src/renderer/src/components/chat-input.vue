@@ -206,4 +206,11 @@ function submit(): void {
   text.value = "";
   attachments.value = [];
 }
+
+/** Pane host pulls this after 新增对话 so the first prompt starts typing at once. */
+function focus(): void {
+  textareaEl.value?.focus();
+}
+
+defineExpose({ focus });
 </script>

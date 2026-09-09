@@ -154,6 +154,10 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
       return client.listModels();
     },
 
+    async createSession(directory) {
+      return mapSession(await client.createSession(directory ?? undefined));
+    },
+
     async fork(sessionId, atMessageId) {
       const cut = atMessageId ? await findCutMessageId(sessionId, atMessageId) : null;
       const forked = await client.fork(sessionId, cut);

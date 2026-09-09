@@ -372,6 +372,22 @@ export function installMockAdapter(): void {
       }));
     },
     models: async () => MODELS,
+    createSession: async () => {
+      promptSeq += 1;
+      const id = `demo-new-${promptSeq}`;
+      defs.set(id, {
+        id,
+        title: "新对话",
+        origin: "root",
+        parent: null,
+        atMessageId: null,
+        turns: [],
+        minutesAgo: 0,
+      });
+      const created = summaries().find((s) => s.id === id);
+      if (!created) throw new Error(`demo session ${id} missing after creation`);
+      return created;
+    },
     fork: async (sessionId, atMessageId) => {
       promptSeq += 1;
       const parent = defs.get(sessionId);

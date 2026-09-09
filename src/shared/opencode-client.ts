@@ -106,6 +106,12 @@ export interface OpencodeClient {
   listProjects(): Promise<OcProject[]>;
   messages(sessionId: string): Promise<OcMessage[]>;
   listModels(): Promise<ModelOption[]>;
+  /**
+   * POST /session — start an empty session scoped to `directory` (the server
+   * falls back to its own cwd when omitted). The response session maps through
+   * the same shape as the sessions list.
+   */
+  createSession(directory?: string): Promise<OcSession>;
   /** Cut point is exclusive: the new session keeps messages strictly before it. */
   fork(sessionId: string, cutMessageId: string | null): Promise<OcSession>;
   /** Permanently remove a session and its messages. */
@@ -204,6 +210,15 @@ export function createOpencodeClient(
         headers: { "content-type": "application/json" },
         body: JSON.stringify(cutMessageId ? { messageID: cutMessageId } : {}),
       }),
+    createSession: (directory) => {
+      const query = new URLSearchParams();
+      if (directory) query.set("directory", directory);
+      return request<OcSession>(`/session?${query.toString()}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      });
+    },
     deleteSession: async (id) => {
       await request(`/session/${id}`, { method: "DELETE" });
     },

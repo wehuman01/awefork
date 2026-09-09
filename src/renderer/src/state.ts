@@ -88,6 +88,11 @@ interface AppState {
   paneModels: Record<string, ModelChoice | null>;
   /** Bumped to ask the canvas to center on a session's latest node. */
   focusRequest: { sessionId: string; nonce: number } | null;
+  /**
+   * Bumped after 新增对话 so the pane composer grabs focus — the fresh
+   * session is selected and ready for its first prompt.
+   */
+  composerFocusRequest: number | null;
   /** Bumped to ask the canvas to fit the whole working set in view. */
   fitRequest: number | null;
   /** Installed app version, filled in by the first update check (or the last one). */
@@ -122,6 +127,7 @@ const state = reactive<AppState>({
   streamThinking: "",
   streams: {},
   actionError: null,
+  composerFocusRequest: null,
   draft: null,
   draftSending: false,
   paneModels: {},
@@ -1041,6 +1047,26 @@ async function hardDeleteSession(sessionId: string): Promise<void> {
     state.trash = (await window.awefork.trashRemove(sessionId)).map((entry) => entry.id);
   } catch {
     // Left in the persisted trash; the next startup flush retries the cleanup.
+  }
+}
+
+/**
+ * Start a brand-new, empty session in the open project and land in it: the
+ * sidebar gains a tracked row whose first prompt — typed straight into the
+ * freshly focused pane composer — turns it into a conversation. Without an
+ * open project the backend picks the directory (its server cwd).
+ */
+export async function createSession(): Promise<void> {
+  state.actionError = null;
+  // Creating is a new operation: older pending deletes become final.
+  await flushPendingDeletes();
+  try {
+    const created = await window.awefork.createSession(state.selectedDirectory ?? undefined);
+    await refreshSessions();
+    await selectSession(created.id, { focus: true });
+    state.composerFocusRequest = Date.now();
+  } catch (error) {
+    state.actionError = error instanceof Error ? error.message : String(error);
   }
 }
 

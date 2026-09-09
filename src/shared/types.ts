@@ -178,6 +178,11 @@ export interface AgentAdapter {
   messageAttachments(sessionId: string, messageId: string): Promise<PromptAttachment[]>;
   /** Models the backend offers (from its provider config). */
   listModels(): Promise<ModelOption[]>;
+  /**
+   * Start a brand-new, empty session. `directory` is the working directory
+   * the session should run in; null lets the backend pick (its server cwd).
+   */
+  createSession(directory?: string | null): Promise<SessionSummary>;
   fork(sessionId: string, atMessageId: string | null): Promise<SessionSummary>;
   /** Permanently remove a session (and awefork's lineage record for it). */
   deleteSession(sessionId: string): Promise<void>;

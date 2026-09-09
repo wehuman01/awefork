@@ -37,6 +37,7 @@ import type { SessionSummary } from "../../../shared/types";
 import { paletteOpen, panels, togglePalette, togglePanel } from "../layout";
 import {
   cloneSelectedSession,
+  createSession,
   refreshSessions,
   requestCanvasFit,
   selectSession,
@@ -69,6 +70,13 @@ const items = computed<PaletteItem[]>(() => {
   const needle = query.value.trim().toLowerCase();
   const match = (text: string) => !needle || text.toLowerCase().includes(needle);
   const actions: PaletteItem[] = [
+    {
+      key: "act:new",
+      icon: "＋",
+      label: "新增对话",
+      hint: "新会话",
+      run: () => void createSession(),
+    },
     { key: "act:fit", icon: "⛶", label: "适配视图", hint: "画布", run: requestCanvasFit },
     {
       key: "act:clone",

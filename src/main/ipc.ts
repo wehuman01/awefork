@@ -21,6 +21,7 @@ import { checkForUpdates, openRelease, skipUpdate } from "./update-check.js";
  *   messages   -> ChatMessage[]           flat message list of a session
  *   models     -> ModelOption[]           models offered by the agent config
  *   messageAttachments -> PromptAttachment[]  one message's file parts (retry)
+ *   createSession -> SessionSummary       brand-new empty session (optional directory)
  *   fork       -> SessionSummary          fork (turn-preserving)
  *   deleteSession -> string[]             delete a session, pruned pins back
  *   deleteMessage -> void                 remove one message row (native DELETE)
@@ -84,6 +85,14 @@ export function registerIpc(
     async (_event: IpcMainInvokeEvent, sessionId: string, messageId: string) => {
       const adapter = await withAdapter();
       return adapter.messageAttachments(sessionId, messageId);
+    },
+  );
+
+  ipcMain.handle(
+    "awefork:createSession",
+    async (_event: IpcMainInvokeEvent, directory?: string) => {
+      const adapter = await withAdapter();
+      return adapter.createSession(directory);
     },
   );
 

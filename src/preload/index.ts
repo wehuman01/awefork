@@ -23,6 +23,8 @@ const api: AweforkApi = {
   models: (): Promise<ModelOption[]> => ipcRenderer.invoke("awefork:models"),
   messageAttachments: (sessionId: string, messageId: string): Promise<PromptAttachment[]> =>
     ipcRenderer.invoke("awefork:messageAttachments", sessionId, messageId),
+  createSession: (directory?: string): Promise<SessionSummary> =>
+    ipcRenderer.invoke("awefork:createSession", directory),
   fork: (sessionId: string, atMessageId: string | null): Promise<SessionSummary> =>
     ipcRenderer.invoke("awefork:fork", sessionId, atMessageId),
   deleteSession: (sessionId: string): Promise<string[]> =>
