@@ -56,7 +56,11 @@ function truncateUtf8(text: string, maxBytes: number): string {
   if (bytes.byteLength <= maxBytes) return text;
   // Back off to a code-point boundary so a multi-byte char isn't split.
   let end = maxBytes;
-  while (end > 0 && (bytes[end] & 0xc0) === 0x80) end--;
+  while (end > 0) {
+    const byte = bytes[end];
+    if (byte === undefined || (byte & 0xc0) !== 0x80) break;
+    end--;
+  }
   return `${new TextDecoder().decode(bytes.subarray(0, end))}\n\n[truncated after 1 MB]`;
 }
 

@@ -505,6 +505,7 @@ export function installMockAdapter(): void {
     openExternal: async (url) => {
       window.open(url, "_blank", "noopener");
     },
+    convertDocument: async (filename) => `（demo：${filename} 提取出的文本内容）`,
     onEvent: (handler) => {
       handlers.add(handler);
       return () => handlers.delete(handler);

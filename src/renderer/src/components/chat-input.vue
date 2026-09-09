@@ -59,11 +59,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { ATTACHMENT_ACCEPT } from "../../../shared/attachment-kinds";
 import type { ModelChoice, ModelOption, PromptAttachment } from "../../../shared/types";
-import {
-  type DraftAttachment,
-  readAttachments,
-  toPromptAttachments,
-} from "../attachments";
+import { type DraftAttachment, readAttachments, toPromptAttachments } from "../attachments";
 import ModelPicker from "./model-picker.vue";
 import VariantPicker from "./variant-picker.vue";
 

@@ -1,11 +1,11 @@
 import { describe, expect, test } from "vitest";
-import { fileKind } from "../src/shared/attachment-kinds";
 import {
+  type DocumentTextExtractor,
   MAX_TEXT_BYTES,
   readAttachments,
   toPromptAttachments,
-  type DocumentTextExtractor,
 } from "../src/renderer/src/attachments";
+import { fileKind } from "../src/shared/attachment-kinds";
 
 function decodeDataUrl(dataUrl: string): string {
   const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);

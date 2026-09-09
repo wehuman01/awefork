@@ -116,7 +116,13 @@
         </div>
         <div v-if="(store.draft?.attachments.length ?? 0) > 0" class="draft-atts">
           <span v-for="a in store.draft?.attachments ?? []" :key="a.id" class="att-chip">
-            <img :src="a.dataUrl" class="att-thumb" alt="" />
+            <img
+              v-if="a.mime.startsWith('image/')"
+              :src="a.dataUrl"
+              class="att-thumb"
+              alt=""
+            />
+            <span v-else class="att-ico">📎</span>
             <span class="att-name" :title="a.name">{{ a.name }}</span>
             <button
               type="button"
@@ -210,9 +216,10 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { fileKind } from "../../../shared/attachment-kinds";
 import type { TurnNode } from "../../../shared/canvas-graph";
 import { COL_GAP, NODE_HEIGHT, NODE_WIDTH, ROW_GAP } from "../../../shared/canvas-graph";
-import { countImages, type DraftAttachment, readAttachments } from "../attachments";
+import { type DraftAttachment, readAttachments } from "../attachments";
 import { formatDuration, formatTokens } from "../format";
 import {
   activeChain,
@@ -612,16 +619,19 @@ function draftAttachments(): readonly DraftAttachment[] {
 function onDraftPaste(event: ClipboardEvent): void {
   const files = event.clipboardData?.files;
   if (!files || files.length === 0) return;
+  let list = [...files];
   const model = store.draft?.model ?? null;
   if (model) {
     const option = store.models.find(
       (m) => m.providerId === model.providerId && m.modelId === model.modelId,
     );
-    if (option && !option.attachment) return;
+    // Text attachments need no media capability; only images are gated.
+    if (option && !option.attachment) list = list.filter((f) => !f.type.startsWith("image/"));
   }
-  if (countImages(files) === 0) return;
+  list = list.filter((f) => fileKind(f) !== "unsupported");
+  if (list.length === 0) return;
   event.preventDefault();
-  void readAttachments(files).then((staged) => {
+  void readAttachments(list).then(({ staged }) => {
     setDraftAttachments([...draftAttachments(), ...staged]);
   });
 }

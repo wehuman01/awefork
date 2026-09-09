@@ -106,8 +106,4 @@ function extensionOf(lowercasedName: string): string {
 }
 
 /** `accept` value for the composer's file picker. */
-export const ATTACHMENT_ACCEPT = [
-  "image/*",
-  ...DOC_EXTENSIONS,
-  ...TEXT_EXTENSIONS,
-].join(",");
+export const ATTACHMENT_ACCEPT = ["image/*", ...DOC_EXTENSIONS, ...TEXT_EXTENSIONS].join(",");
