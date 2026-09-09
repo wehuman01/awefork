@@ -1,5 +1,8 @@
 name: Release
 
+# CI only writes the release notes; the dmg is built locally with
+# `npm run dist` and attached afterwards with `gh release upload`.
+
 on:
   push:
     tags: ["v*"]
@@ -25,20 +28,9 @@ jobs:
 
   release:
     needs: test
-    runs-on: macos-latest
-    timeout-minutes: 40
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      # package.json sets mac.identity: null, so electron-builder ships the
-      # unsigned dmg without hunting for signing identities. GH_TOKEN is
-      # deliberately absent here so electron-builder never tries to publish.
-      - name: Build dmg
-        run: npm run dist
       - name: Extract release notes
         run: |
           TAG="${GITHUB_REF_NAME#v}"
@@ -51,7 +43,6 @@ jobs:
             echo "No changelog section for v${TAG}; failing." >&2
             exit 1
           fi
-      - name: Create release with dmg
-        env:
+      - env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --notes-file release-notes.md dist/*.dmg
+        run: gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" --notes-file release-notes.md
