@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.1.7
+
+Reasoning streams into the conversation, and awefork can start one itself: a release about seeing and starting the whole thought.
+
+### Highlights
+
+- **Streaming Thought blocks** — a run's reasoning now streams into a collapsible Thought block while you wait: open while the model thinks, auto-collapsed once the answer starts. Persisted replies keep their Thought in the final message, and canvas card previews stay reply-only. opencode 1.18 labels text and reasoning deltas alike, so the adapter resolves each part's real type before routing the stream.
+- **New conversations in-app** — the sidebar's ＋ 新对话 (or the palette's 新增对话) starts a brand-new session in the open project through opencode's native API, lands you in it, and puts the caret in the composer for the first prompt. Demo mode keeps parity.
+- **Startup & reconnect hardening** — the bundled opencode server now probes the login shell for its binary, waits for the SSE event endpoint (not just REST) before declaring ready, and retries the first session fetch until the cold-start scan finishes. A dropped event stream reports one outage toast, then refreshes everything on recovery.
+- **In-app update checks** — a silent check a few seconds after startup plus a manual one from the topbar; a new release raises a banner with Release Notes, Skip this version, and dismiss.
+
+### Install
+
+This release ships notes only — no dmg attached. Build it yourself with `npm run dist` (unsigned arm64); on first launch, right-click the app and choose Open (or clear the quarantine flag with `xattr -d com.apple.quarantine /Applications/awefork.app`).
+
 ## v0.1.6
 
 Retry gets its attachments back, and the archive sidecar learns to survive racing clicks.
