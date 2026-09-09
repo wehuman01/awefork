@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.1.5
+
+Archive what you set aside, retry what failed, and richer turns — plus awefork's first real app icon.
+
+### Highlights
+
+- **Archive** — right-click a session row to archive it, or a directory to archive the whole project. Archived items hide from every view (search, palette, canvas included) and restore from the archive section at the sidebar's bottom. Sessions created under an archived directory stay hidden until the directory comes back; archived state lives in a crash-safe `archive.json` sidecar.
+- **Retry failed turns** — the ↻ on a failed turn (card or pane header) reopens its prompt prefilled with the original text and model; edit and resend. Mid-story turns retry as a fresh fork, so the failed original stays untouched.
+- **Image attachments** — paste or drop images into either composer (capability-gated per model); sent rows carry 📎 chips.
+- **Thinking effort variants** — pick the run's reasoning variant (minimal/low/medium/high…) next to the model; canvas cards show `model · variant` for what each turn actually used.
+- **Markdown replies** — assistant replies render through a safe markdown pipeline (parser → vnodes, no HTML injection): headings, lists, code blocks with copy buttons, and shell-safe external links opened through a native IPC channel.
+- **App icon & branding** — a peach-soda squircle: a cream branch that forks into butter and lavender candy nodes, built from the app's own theme palette. Ships as the packaged `icon.icns`, the dev-mode Dock icon, the topbar logo, the favicon, and the README logo.
+
+### Install
+
+`npm run dist` builds an unsigned arm64 dmg. On first launch, right-click the app and choose Open (or clear the quarantine flag with `xattr -d com.apple.quarantine /Applications/awefork.app`).
+
 ## v0.1.1
 
 Canvas readability and daily-driver ergonomics on top of v0.1.0.
