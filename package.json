@@ -71,6 +71,7 @@
     "vue-tsc": "^3.3.11"
   },
   "dependencies": {
-    "mammoth": "^1.12.2"
+    "mammoth": "^1.12.2",
+    "word-extractor": "^1.0.4"
   }
 }

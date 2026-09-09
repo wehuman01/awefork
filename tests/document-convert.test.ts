@@ -22,9 +22,16 @@ describe("convertDocumentToText", () => {
     expect(text).toBe("first paragraph\nsecond café — ends");
   });
 
-  test("rejects legacy .doc with a save-as hint", async () => {
-    await expect(convertDocumentToText("old.doc", new Uint8Array([0]))).rejects.toThrow(
-      /legacy \.doc is not supported.*\.docx or \.rtf/,
+  test("extracts text from a legacy .doc", async () => {
+    const bytes = new Uint8Array(readFileSync(join(fixtures, "sample.doc")));
+    const text = await convertDocumentToText("sample.doc", bytes);
+    expect(text).toContain("awefork legacy doc fixture");
+    expect(text).toContain("second doc paragraph");
+  });
+
+  test("reports a corrupt .doc as unreadable", async () => {
+    await expect(convertDocumentToText("broken.doc", new Uint8Array([0]))).rejects.toThrow(
+      /could not read legacy \.doc \(broken\.doc\)/,
     );
   });
 
