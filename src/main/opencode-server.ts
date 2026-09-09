@@ -49,6 +49,9 @@ function candidateBinDirs(
       join(home, ".local", "bin"),
       join(appData, "npm"),
       join(localAppData, "Microsoft", "WinGet", "Links"),
+      // scoop is one of opencode's documented Windows install methods; its
+      // shims live in the user profile, not on the system PATH Explorer passes.
+      join(home, "scoop", "shims"),
     ];
   }
   return [

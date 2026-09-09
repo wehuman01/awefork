@@ -108,8 +108,10 @@ describe("buildSpawnEnv", () => {
     const home = mkdtempSync(join(tmpdir(), "awefork-win-"));
     const opencodeBin = join(home, ".opencode", "bin");
     const npmBin = join(home, "AppData", "Roaming", "npm");
+    const scoopBin = join(home, "scoop", "shims");
     mkdirSync(opencodeBin, { recursive: true });
     mkdirSync(npmBin, { recursive: true });
+    mkdirSync(scoopBin, { recursive: true });
     const env = buildSpawnEnv(
       { PATH: "C:\\Windows\\System32;C:\\Windows", APPDATA: join(home, "AppData", "Roaming") },
       home,
@@ -122,6 +124,7 @@ describe("buildSpawnEnv", () => {
     // Existing win dirs prepend without duplicates.
     expect(parts.indexOf(opencodeBin)).toBe(0);
     expect(parts.indexOf(npmBin)).toBe(1);
+    expect(parts).toContain(scoopBin);
     expect(new Set(parts).size).toBe(parts.length);
   });
 
