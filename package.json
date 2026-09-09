@@ -1,6 +1,6 @@
 {
   "name": "awefork",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "private": true,
   "type": "module",
   "description": "Non-linear session workbench for AI coding agents — fork any turn, keep every branch",
@@ -56,7 +56,8 @@
           ]
         }
       ],
-      "icon": "build/icon.png"
+      "icon": "build/icon.png",
+      "artifactName": "${productName}-${version}-${arch}-setup.${ext}"
     }
   },
   "devDependencies": {

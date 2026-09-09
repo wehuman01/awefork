@@ -1292,7 +1292,8 @@ function plainAttachments(list: DraftAttachment[]): PromptAttachment[] {
  * Send the draft: a mid-story turn forks the session at that turn and prompts
  * the new branch; a session tip (or a stub) simply continues that session in
  * place. Either way the app lands IN the target session with the pane
- * following its newest turn.
+ * following its newest turn, while the canvas keeps its current view — the
+ * new card materializes in the draft's cell, already in sight.
  */
 export async function sendDraft(): Promise<void> {
   const draft = state.draft;
@@ -1309,10 +1310,13 @@ export async function sendDraft(): Promise<void> {
     if (draft.atMessageId) {
       const forked = await window.awefork.fork(draft.sessionId, draft.atMessageId);
       await refreshSessions();
-      await selectSession(forked.id, { focus: true });
+      // No focus request: the canvas stays parked where the user was looking.
+      // The composer floated in the branch's next cell, and that's exactly
+      // where the new card appears — re-centering would only yank the view.
+      await selectSession(forked.id);
       targetId = forked.id;
     } else {
-      await selectSession(draft.sessionId, { focus: true });
+      await selectSession(draft.sessionId);
       targetId = draft.sessionId;
     }
     // Mark the target running before the request goes out, like sendPrompt

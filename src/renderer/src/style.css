@@ -759,6 +759,12 @@ textarea {
   stroke-opacity: 0.22;
 }
 
+/* the open draft composer's connector — dashed like the box it feeds */
+.edge.draft-edge {
+  stroke: var(--primary);
+  stroke-dasharray: 6 6;
+}
+
 .edge-dot {
   fill: #ffb08a;
   transition: fill-opacity 0.15s;

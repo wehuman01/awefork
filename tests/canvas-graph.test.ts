@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   buildTurnGraph,
+  COL_GAP,
   chainToTip,
+  draftCellFor,
   NODE_HEIGHT,
+  NODE_WIDTH,
   ROW_GAP,
   type TurnNode,
 } from "../src/shared/canvas-graph";
@@ -195,6 +198,79 @@ describe("buildTurnGraph", () => {
     });
 
     expect(graph.nodes.map((n) => n.sessionId)).toEqual(["a"]);
+  });
+});
+
+describe("draftCellFor", () => {
+  /** Minimal node fixture: only col/row/x/y matter to the cell math. */
+  function nodeAt(id: string, col: number, row: number, y?: number): TurnNode {
+    return {
+      id,
+      kind: "turn",
+      sessionId: id.slice(0, id.indexOf(":")),
+      messageId: null,
+      title: id,
+      preview: "",
+      toolNames: [],
+      modelIds: [],
+      model: null,
+      createdAt: 0,
+      durationMs: null,
+      outputTokens: 0,
+      error: null,
+      col,
+      row,
+      x: col * (NODE_WIDTH + COL_GAP),
+      y: y ?? row * (NODE_HEIGHT + ROW_GAP),
+      height: NODE_HEIGHT,
+    };
+  }
+
+  it("parks a continue draft right of the tip — where the sent turn's card lands", () => {
+    const graph = buildTurnGraph({
+      sessions: [session("a")],
+      lineage: {},
+      messages: { a: chain(["a-u1", "a-r1"], ["a-u2", "a-r2"]) },
+    });
+    const tip = graph.nodes.find((n) => n.id === "a:a-u2");
+    expect(tip).toBeDefined();
+    const cell = draftCellFor(tip as TurnNode, null, graph.nodes);
+    expect(cell.x).toBe(((tip?.col ?? 0) + 1) * (NODE_WIDTH + COL_GAP));
+    expect(cell.y).toBe(tip?.y);
+  });
+
+  it("parks a fork draft one row below the anchor", () => {
+    const graph = buildTurnGraph({
+      sessions: [session("a"), session("b", { origin: "fork", createdAt: 500 })],
+      lineage: { b: fork("a", "a-u1") },
+      messages: {
+        a: chain(["a-u1", "a-r1"], ["a-u2", "a-r2"]),
+        b: chain(["a-u1", "a-r1"], ["b-u2", "b-r2"]),
+      },
+    });
+    const anchor = graph.nodes.find((n) => n.id === "a:a-u1");
+    expect(anchor).toBeDefined();
+    const cell = draftCellFor(anchor as TurnNode, "a-u1", graph.nodes);
+    // col 1 row 1 is taken by the fork's own card, so the cell drops to row 2
+    expect(cell.x).toBe(((anchor?.col ?? 0) + 1) * (NODE_WIDTH + COL_GAP));
+    expect(cell.y).toBeGreaterThan(anchor?.y ?? 0);
+  });
+
+  it("steps down when the cell right of the anchor is taken", () => {
+    const anchor = nodeAt("a:a-u2", 1, 0);
+    const blocker = nodeAt("x:u1", 2, 0);
+    const cell = draftCellFor(anchor, null, [anchor, blocker]);
+    expect(cell.x).toBe(2 * (NODE_WIDTH + COL_GAP));
+    expect(cell.y).toBe(anchor.y + anchor.height + ROW_GAP);
+  });
+
+  it("shares a row's band top when the target row already has cards", () => {
+    const anchor = nodeAt("a:a-u2", 1, 0);
+    const blocker = nodeAt("x:u1", 2, 0);
+    const mate = nodeAt("y:u1", 3, 1, 500);
+    const cell = draftCellFor(anchor, null, [anchor, blocker, mate]);
+    expect(cell.x).toBe(2 * (NODE_WIDTH + COL_GAP));
+    expect(cell.y).toBe(500);
   });
 });
 

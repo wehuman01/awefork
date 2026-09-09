@@ -62,6 +62,36 @@ export interface TurnGraph {
   edges: GraphEdge[];
 }
 
+/** First free row at `col` at or below `fromRow` — the graph's placement rule. */
+export function freeRowIn(occupied: ReadonlySet<string>, col: number, fromRow: number): number {
+  let row = Math.max(fromRow, 0);
+  while (occupied.has(`${col}:${row}`)) row += 1;
+  return row;
+}
+
+/**
+ * Where the canvas draft composer floats for an anchor node: the branch's
+ * next free cell — the very spot the sent turn's card will take, since the
+ * layout fills cells with the same freeRowIn rule. Continuing a tip (or a
+ * stub) targets the cell to its right; forking from a mid-story turn targets
+ * the row below. y comes from any card already in that row (rows share a band
+ * top); a card-less row sits just below the anchor.
+ */
+export function draftCellFor(
+  anchor: TurnNode,
+  atMessageId: string | null,
+  nodes: TurnNode[],
+): { x: number; y: number } {
+  const col = anchor.col + 1;
+  const occupied = new Set(nodes.map((n) => `${n.col}:${n.row}`));
+  const row = freeRowIn(occupied, col, atMessageId == null ? anchor.row : anchor.row + 1);
+  const rowMate = nodes.find((n) => n.row === row);
+  return {
+    x: col * (NODE_WIDTH + COL_GAP),
+    y: rowMate ? rowMate.y : anchor.y + anchor.height + ROW_GAP,
+  };
+}
+
 /**
  * The lineage path from `tipId` back to its story's root, returned root-first.
  * Cycle-safe; stops at nodes missing from the graph. This is the same path the
@@ -149,8 +179,7 @@ export function buildTurnGraph(options: BuildGraphOptions): TurnGraph {
   let maxRow = -1;
 
   const findFreeRow = (col: number, from: number): number => {
-    let row = Math.max(from, 0);
-    while (occupied.has(`${col}:${row}`)) row += 1;
+    const row = freeRowIn(occupied, col, from);
     occupied.add(`${col}:${row}`);
     maxRow = Math.max(maxRow, row);
     return row;

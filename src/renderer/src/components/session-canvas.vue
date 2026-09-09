@@ -26,6 +26,7 @@
             :class="{ active: onActivePath(edge), dim: hasActivePath && !onActivePath(edge) }"
           />
         </g>
+        <path v-if="draftEdge" :d="draftEdge.path" class="edge draft-edge" />
       </svg>
 
       <article
@@ -106,6 +107,7 @@
 
       <article
         v-if="draftNode"
+        :ref="draftRef"
         class="draft"
         :style="{ left: `${draftX}px`, top: `${draftY}px` }"
         @mousedown.stop
@@ -218,7 +220,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { fileKind } from "../../../shared/attachment-kinds";
 import type { TurnNode } from "../../../shared/canvas-graph";
-import { COL_GAP, NODE_HEIGHT, NODE_WIDTH, ROW_GAP } from "../../../shared/canvas-graph";
+import { draftCellFor, NODE_WIDTH } from "../../../shared/canvas-graph";
 import { type DraftAttachment, readAttachments } from "../attachments";
 import { formatDuration, formatTokens } from "../format";
 import {
@@ -310,10 +312,47 @@ const forkCount = computed(() => graph.value.edges.filter((e) => e.kind === "for
 const draftNode = computed(() =>
   store.draft ? (nodeById.value.get(store.draft.nodeId) ?? null) : null,
 );
-const draftX = computed(() => (draftNode.value?.x ?? 0) + 56);
-const draftY = computed(
-  () => (draftNode.value?.y ?? 0) + (draftNode.value?.height ?? NODE_HEIGHT) + 40,
-);
+// The draft floats in the branch's next free cell — the exact spot the sent
+// turn's card will take — so the composer reads as the story's next card.
+const draftCell = computed(() => {
+  const anchor = draftNode.value;
+  if (!anchor || !store.draft) return null;
+  return draftCellFor(anchor, store.draft.atMessageId, graph.value.nodes);
+});
+const draftX = computed(() => draftCell.value?.x ?? 0);
+const draftY = computed(() => draftCell.value?.y ?? 0);
+
+// Measured draft height keeps the connector pinned to the box's left edge
+// (attachment chips grow the box; the textarea inside is fixed).
+const draftBoxHeight = ref(220);
+let observedDraft: HTMLElement | null = null;
+const draftObserver = new ResizeObserver((entries) => {
+  const height = entries[0]?.borderBoxSize?.[0]?.blockSize;
+  if (height) draftBoxHeight.value = Math.round(height);
+});
+/** Template ref for the draft box: move the observer to the live element. */
+function draftRef(el: unknown): void {
+  const box = el as HTMLElement | null;
+  if (observedDraft && observedDraft !== box) draftObserver.unobserve(observedDraft);
+  observedDraft = box;
+  if (box) {
+    draftBoxHeight.value = box.offsetHeight || 220;
+    draftObserver.observe(box);
+  }
+}
+
+/** Connector from the anchor card into the draft — the same bezier the tree
+ *  edges use, dashed (see .edge.draft-edge) because the turn isn't sent yet. */
+const draftEdge = computed(() => {
+  const anchor = draftNode.value;
+  if (!anchor) return null;
+  const x1 = anchor.x + NODE_WIDTH;
+  const y1 = anchor.y + anchor.height / 2;
+  const x2 = draftX.value;
+  const y2 = draftY.value + draftBoxHeight.value / 2;
+  const bend = Math.max(46, (x2 - x1) / 2);
+  return { path: `M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}` };
+});
 
 function selectNode(node: TurnNode): void {
   void selectTurn(node);
@@ -556,6 +595,7 @@ onMounted(() => {
 onUnmounted(() => {
   resizeObserver?.disconnect();
   cardObserver.disconnect();
+  draftObserver.disconnect();
 });
 
 // Drop measurements for nodes that left the graph (deleted sessions, project
