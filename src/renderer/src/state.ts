@@ -95,6 +95,11 @@ interface AppState {
   composerFocusRequest: number | null;
   /** Bumped to ask the canvas to fit the whole working set in view. */
   fitRequest: number | null;
+  /**
+   * Bumped when a selection made outside the canvas (context-chain cards)
+   * should also move the view: the canvas centers on this node.
+   */
+  turnJumpRequest: { nodeId: string; nonce: number } | null;
   /** Installed app version, filled in by the first update check (or the last one). */
   currentVersion: string | null;
   /** Newest release on GitHub; non-null while an update is available. */
@@ -133,6 +138,7 @@ const state = reactive<AppState>({
   paneModels: {},
   focusRequest: null,
   fitRequest: null,
+  turnJumpRequest: null,
   currentVersion: null,
   updateLatest: null,
   checkingUpdates: false,
@@ -524,12 +530,23 @@ export async function selectSession(
   await ensureCanvasMessages();
 }
 
-/** Select a canvas node: switches branch if needed, remembers the turn. */
-export async function selectTurn(node: TurnNode): Promise<void> {
+/**
+ * Select a canvas node: switches branch if needed, remembers the turn.
+ * `focusCanvas` additionally asks the canvas to center on the node — for
+ * selections made outside the canvas (chain cards); canvas clicks skip it
+ * so the view never shifts under the user's cursor.
+ */
+export async function selectTurn(
+  node: TurnNode,
+  options: { focusCanvas?: boolean } = {},
+): Promise<void> {
   if (node.sessionId !== state.selectedId) {
     await selectSession(node.sessionId);
   }
   state.selectedTurnId = node.id;
+  if (options.focusCanvas) {
+    state.turnJumpRequest = { nodeId: node.id, nonce: Date.now() };
+  }
 }
 
 /** Move the pane to a neighboring turn of the selected session (±1). */

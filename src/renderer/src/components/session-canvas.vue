@@ -448,6 +448,14 @@ watch(graph, () => {
   // Wait for the directory's message batch to finish — every merge re-lays
   // out the whole graph, so centering mid-load lands on a stale position.
   if (store.loadingMessages) return;
+  if (pendingJump) {
+    const node = nodeById.value.get(pendingJump);
+    if (node) {
+      centerOnNode(node);
+      pendingJump = null;
+    }
+    return;
+  }
   if (pendingFocus) {
     if (nodesOf(pendingFocus).length > 0) focusNow(pendingFocus);
     return;
@@ -475,6 +483,25 @@ watch(
   () => store.fitRequest,
   (nonce) => {
     if (nonce) fitView();
+  },
+);
+
+// Context-chain cards land here: center the view on the picked turn. Right
+// after a branch switch the node can still be missing (messages loading,
+// layout not settled) — stash it and jump on the first graph pass that has it.
+let pendingJump: string | null = null;
+
+watch(
+  () => store.turnJumpRequest,
+  (request) => {
+    if (!request) return;
+    const node = nodeById.value.get(request.nodeId);
+    if (node) {
+      centerOnNode(node);
+      pendingJump = null;
+    } else {
+      pendingJump = request.nodeId;
+    }
   },
 );
 

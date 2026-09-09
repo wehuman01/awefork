@@ -151,7 +151,7 @@ const contextTurns = computed(() => activeChain.value.slice(0, -1).slice(-MAX_CO
 const chainStart = computed(() => omittedCount.value + 1);
 
 function jumpTo(node: TurnNode): void {
-  void selectTurn(node);
+  void selectTurn(node, { focusCanvas: true });
 }
 
 const isRunning = computed(() => {
