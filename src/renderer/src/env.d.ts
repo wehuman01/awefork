@@ -47,6 +47,7 @@ declare global {
       archiveAdd(kind: ArchiveKind, key: string): Promise<ArchiveState>;
       archiveRemove(kind: ArchiveKind, key: string): Promise<ArchiveState>;
       openExternal(url: string): Promise<void>;
+      convertDocument(filename: string, bytes: Uint8Array): Promise<string>;
       onEvent(handler: (event: AgentEvent) => void): () => void;
     };
   }

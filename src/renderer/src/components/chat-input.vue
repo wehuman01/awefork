@@ -26,6 +26,22 @@
       @paste="onPaste"
     ></textarea>
     <div class="chat-input-foot">
+      <input
+        ref="fileInputEl"
+        type="file"
+        multiple
+        hidden
+        :accept="ATTACHMENT_ACCEPT"
+        @change="onFilePicked"
+      />
+      <button
+        type="button"
+        class="attach"
+        title="添加附件（图片、文档、文本）"
+        @click="fileInputEl?.click()"
+      >
+        📎
+      </button>
       <ModelPicker
         :model-value="model"
         :models="models"
@@ -41,9 +57,9 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { ATTACHMENT_ACCEPT } from "../../../shared/attachment-kinds";
 import type { ModelChoice, ModelOption, PromptAttachment } from "../../../shared/types";
 import {
-  countImages,
   type DraftAttachment,
   readAttachments,
   toPromptAttachments,
@@ -64,6 +80,7 @@ const emit = defineEmits<{
 
 const text = ref("");
 const textareaEl = ref<HTMLTextAreaElement | null>(null);
+const fileInputEl = ref<HTMLInputElement | null>(null);
 const attachments = ref<DraftAttachment[]>([]);
 const dragOver = ref(false);
 const notice = ref("");
@@ -108,20 +125,30 @@ function flashNotice(message: string): void {
 }
 
 function addFiles(files: FileList | File[]): void {
+  const notes: string[] = [];
+  let list = [...files];
+  // The attachment capability flags media input (images); plain-text
+  // attachments ride along with any model.
   if (!canAttach.value) {
-    flashNotice("当前模型不支持附件");
+    if (list.some((f) => f.type.startsWith("image/"))) {
+      list = list.filter((f) => !f.type.startsWith("image/"));
+      notes.push("当前模型不支持图片附件，已跳过图片");
+    }
+  }
+  if (list.length === 0) {
+    if (notes.length > 0) flashNotice(notes.join("；"));
     return;
   }
-  const total = [...files].length;
-  const images = countImages(files);
-  if (images === 0) {
-    flashNotice("先只支持图片附件");
-    return;
-  }
-  if (images < total) flashNotice("先只支持图片附件，已跳过其他文件");
-  void readAttachments(files).then((staged) => {
-    attachments.value = [...attachments.value, ...staged];
+  void readAttachments(list).then(({ staged, notes: stageNotes }) => {
+    if (staged.length > 0) attachments.value = [...attachments.value, ...staged];
+    flashNotice([...notes, ...stageNotes].join("；"));
   });
+}
+
+function onFilePicked(event: Event): void {
+  const input = event.target as HTMLInputElement;
+  if (input.files && input.files.length > 0) addFiles(input.files);
+  input.value = ""; // so picking the same file again still fires change
 }
 
 function removeAttachment(id: string): void {

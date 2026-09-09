@@ -11,6 +11,7 @@ import type {
   PromptAttachment,
   TrashEntry,
 } from "../shared/types";
+import { convertDocumentToText } from "./document-convert.js";
 
 /**
  * IPC surface (all invoke-channels, prefixed awefork:):
@@ -33,6 +34,7 @@ import type {
  *   archiveAdd -> ArchiveState            archive a session/directory, state back
  *   archiveRemove -> ArchiveState         restore a session/directory, state back
  *   openExternal -> void                  open a reply link in the system browser
+ *   convertDocument -> string             Word/RTF attachment → plain text (textutil)
  * Events are forwarded on channel "awefork:event".
  */
 export function registerIpc(
@@ -164,6 +166,14 @@ export function registerIpc(
     "awefork:archiveRemove",
     async (_event: IpcMainInvokeEvent, kind: ArchiveKind, key: string) =>
       setArchived(archivePath, kind, key, false),
+  );
+
+  // Word/RTF attachments are converted here because textutil only runs in the
+  // main process; the renderer stages the result as a text/plain attachment.
+  ipcMain.handle(
+    "awefork:convertDocument",
+    (_event: IpcMainInvokeEvent, filename: string, bytes: Uint8Array) =>
+      convertDocumentToText(filename, bytes),
   );
 
   // Markdown links in replies route through here — shell.openExternal is the

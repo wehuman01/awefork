@@ -48,6 +48,8 @@ const api = {
   archiveRemove: (kind: ArchiveKind, key: string): Promise<ArchiveState> =>
     ipcRenderer.invoke("awefork:archiveRemove", kind, key),
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke("awefork:openExternal", url),
+  convertDocument: (filename: string, bytes: Uint8Array): Promise<string> =>
+    ipcRenderer.invoke("awefork:convertDocument", filename, bytes),
   onEvent: (handler: (event: unknown) => void): (() => void) => {
     const listener = (_event: unknown, payload: unknown) => handler(payload);
     ipcRenderer.on("awefork:event", listener);

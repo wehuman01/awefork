@@ -1793,6 +1793,18 @@ code.md-code {
   margin-top: 8px;
 }
 
+.chat-input .attach {
+  font-size: 14px;
+  color: var(--ink-faint);
+  padding: 4px 7px;
+  border-radius: 8px;
+}
+
+.chat-input .attach:hover {
+  color: var(--ink-soft);
+  background: var(--mint-soft);
+}
+
 .chat-input .send {
   margin-left: auto;
   background: linear-gradient(135deg, var(--primary), #ffa26b);
