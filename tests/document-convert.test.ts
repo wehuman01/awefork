@@ -1,59 +1,43 @@
-import { existsSync } from "node:fs";
-import { dirname } from "node:path";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
-import { convertDocumentToText, type ExecFile } from "../src/main/document-convert";
+import { convertDocumentToText } from "../src/main/document-convert";
 
-interface Call {
-  file: string;
-  args: readonly string[];
-}
-
-function recordingExec(stdout: string, calls: Call[]): ExecFile {
-  return async (file, args) => {
-    calls.push({ file, args });
-    return { stdout };
-  };
-}
+const fixtures = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
 
 describe("convertDocumentToText", () => {
-  test("spills bytes to a temp file and returns textutil's stdout", async () => {
-    const calls: Call[] = [];
-    const exec = recordingExec("extracted text", calls);
-    const text = await convertDocumentToText("report.docx", new Uint8Array([1, 2]), exec);
-    expect(text).toBe("extracted text");
-    expect(calls).toHaveLength(1);
-    const call = calls[0];
-    expect(call?.file).toBe("textutil");
-    expect(call?.args.slice(0, 3)).toEqual(["-convert", "txt", "-stdout"]);
-    // Extension survives so textutil can sniff the input format.
-    expect(call?.args[3]).toMatch(/input\.docx$/);
+  test("extracts paragraph text from a .docx", async () => {
+    const bytes = new Uint8Array(readFileSync(join(fixtures, "sample.docx")));
+    const text = await convertDocumentToText("sample.docx", bytes);
+    expect(text).toContain("awefork fixture paragraph one");
+    expect(text).toContain("second paragraph");
   });
 
-  test("removes the temp dir afterwards", async () => {
-    const calls: Call[] = [];
-    await convertDocumentToText("old.rtf", new Uint8Array([0]), recordingExec("", calls));
-    const tempPath = calls[0]?.args[3];
-    expect(tempPath).toBeDefined();
-    expect(existsSync(dirname(tempPath as string))).toBe(false);
+  test("extracts text from an .rtf, skipping font tables", async () => {
+    const rtf =
+      "{\\rtf1\\ansi{\\fonttbl\\f0 Helvetica;}{\\*\\generator some editor}\\pard\\f0\\fs24 first paragraph\\par second caf\\'e9 \\u8212 ? ends\\par}";
+    const bytes = new Uint8Array(Buffer.from(rtf, "latin1"));
+    const text = await convertDocumentToText("note.rtf", bytes);
+    expect(text).toBe("first paragraph\nsecond café — ends");
   });
 
-  test("cleans up even when conversion fails", async () => {
-    const calls: Call[] = [];
-    const exec: ExecFile = async (file, args) => {
-      calls.push({ file, args });
-      throw new Error("textutil failed");
-    };
-    await expect(convertDocumentToText("a.doc", new Uint8Array([0]), exec)).rejects.toThrow(
-      "textutil failed",
+  test("extracts text from a legacy .doc", async () => {
+    const bytes = new Uint8Array(readFileSync(join(fixtures, "sample.doc")));
+    const text = await convertDocumentToText("sample.doc", bytes);
+    expect(text).toContain("awefork legacy doc fixture");
+    expect(text).toContain("second doc paragraph");
+  });
+
+  test("reports a corrupt .doc as unreadable", async () => {
+    await expect(convertDocumentToText("broken.doc", new Uint8Array([0]))).rejects.toThrow(
+      /could not read legacy \.doc \(broken\.doc\)/,
     );
-    expect(existsSync(dirname(calls[0]?.args[3] as string))).toBe(false);
   });
 
-  test("rejects non-document extensions before touching the disk", async () => {
-    const calls: Call[] = [];
-    await expect(
-      convertDocumentToText("photo.png", new Uint8Array([0]), recordingExec("", calls)),
-    ).rejects.toThrow(/unsupported document/);
-    expect(calls).toEqual([]);
+  test("rejects non-document extensions", async () => {
+    await expect(convertDocumentToText("photo.png", new Uint8Array([0]))).rejects.toThrow(
+      /unsupported document/,
+    );
   });
 });

@@ -37,7 +37,7 @@ import { checkForUpdates, openRelease, skipUpdate } from "./update-check.js";
  *   archiveAdd -> ArchiveState            archive a session/directory, state back
  *   archiveRemove -> ArchiveState         restore a session/directory, state back
  *   openExternal -> void                  open a reply link in the system browser
- *   convertDocument -> string             Word/RTF attachment → plain text (textutil)
+ *   convertDocument -> string             Word/RTF attachment → plain text
  *   checkUpdates  -> CheckUpdatesResult   latest release vs installed version
  *   skipUpdate    -> { ok, error? }       persist a version as "don't nag again"
  *   openRelease   -> { ok, error? }       open the release tag page in the browser
@@ -192,8 +192,8 @@ export function registerIpc(
       setArchived(archivePath, kind, key, false),
   );
 
-  // Word/RTF attachments are converted here because textutil only runs in the
-  // main process; the renderer stages the result as a text/plain attachment.
+  // Word/RTF attachments are converted here in the main process; the renderer
+  // stages the result as a text/plain attachment.
   ipcMain.handle(
     "awefork:convertDocument",
     (_event: IpcMainInvokeEvent, filename: string, bytes: Uint8Array) =>

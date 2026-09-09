@@ -13,3 +13,9 @@ export function formatTokens(count: number): string {
   if (count < 1000) return `${count} tok`;
   return `${(count / 1000).toFixed(1)}k tok`;
 }
+
+/** Last two segments of a directory for compact display ("/" and "\\" both split). */
+export function shortPath(directory: string): string {
+  const parts = directory.split(/[\\/]/).filter(Boolean);
+  return parts.slice(-2).join("/") || directory || "…";
+}

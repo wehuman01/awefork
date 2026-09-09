@@ -1,51 +1,38 @@
-import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { extname, join } from "node:path";
+import { extname } from "node:path";
+import mammoth from "mammoth";
+import WordExtractor from "word-extractor";
 import { DOC_EXTENSIONS } from "../shared/attachment-kinds.js";
+import { rtfToText } from "./rtf-to-text.js";
 
-/** execFile promisified shape, injectable for tests. */
-export type ExecFile = (
-  file: string,
-  args: readonly string[],
-  options: { timeout: number; encoding: "utf8"; maxBuffer: number },
-) => Promise<{ stdout: string }>;
-
-const execFileUtf8: ExecFile = (file, args, options) =>
-  new Promise((resolve, reject) => {
-    execFile(file, args, options, (error, stdout) => {
-      if (error) reject(error);
-      else resolve({ stdout: stdout as string });
-    });
-  });
+/** One reused extractor; the class is stateless between extract() calls. */
+const wordExtractor = new WordExtractor();
 
 /**
- * Pull plain text out of a Word/RTF document with macOS `textutil` — the one
- * converter that ships with every install and needs no dependency. Bytes are
- * spilled to a temp file because textutil only reads paths.
+ * Pull plain text out of a Word/RTF attachment in-process, with the same code
+ * path on every platform (the old macOS `textutil` call was the one OS
+ * dependency). Legacy binary .doc is read by word-extractor, a pure-JS parser
+ * for the OLE-based Word 97-2003 format.
  */
-export async function convertDocumentToText(
-  filename: string,
-  bytes: Uint8Array,
-  exec: ExecFile = execFileUtf8,
-): Promise<string> {
+export async function convertDocumentToText(filename: string, bytes: Uint8Array): Promise<string> {
   const ext = extname(filename).toLowerCase();
   if (!DOC_EXTENSIONS.has(ext)) throw new Error(`unsupported document: ${filename}`);
-  const dir = await mkdtemp(join(tmpdir(), "awefork-doc-"));
-  try {
-    // Extension-only name: the format hint textutil needs stays, unsafe
-    // name characters from the original don't.
-    const input = join(dir, `input${ext}`);
-    await writeFile(input, bytes);
-    const { stdout } = await exec("textutil", ["-convert", "txt", "-stdout", input], {
-      timeout: 10_000,
-      encoding: "utf8",
-      maxBuffer: 8 * 1024 * 1024,
-    });
-    return stdout;
-  } finally {
-    await rm(dir, { recursive: true, force: true }).catch(() => {
-      // Cleanup is best-effort; the temp dir lives under os.tmpdir() anyway.
-    });
+  if (ext === ".docx") {
+    const { value } = await mammoth.extractRawText({ buffer: Buffer.from(bytes) });
+    return value.trim();
   }
+  if (ext === ".doc") {
+    try {
+      const document = await wordExtractor.extract(Buffer.from(bytes));
+      return document.getBody().trim();
+    } catch (error) {
+      // word-extractor reports unparseable input as "Unable to read this type
+      // of file" — rethrow with the context a user needs.
+      throw new Error(
+        `could not read legacy .doc (${filename}) — the file may be corrupt or not a real Word document`,
+        { cause: error },
+      );
+    }
+  }
+  if (ext === ".rtf") return rtfToText(bytes);
+  throw new Error(`unknown document extension: ${ext}`);
 }
