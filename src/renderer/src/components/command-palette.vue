@@ -34,6 +34,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import type { SessionSummary } from "../../../shared/types";
+import { shortPath as shortDir } from "../format";
 import { paletteOpen, panels, togglePalette, togglePanel } from "../layout";
 import {
   cloneSelectedSession,
@@ -164,9 +165,4 @@ function onGlobalKeydown(event: KeyboardEvent): void {
 
 onMounted(() => window.addEventListener("keydown", onGlobalKeydown));
 onUnmounted(() => window.removeEventListener("keydown", onGlobalKeydown));
-
-function shortDir(directory: string): string {
-  const parts = directory.split("/").filter(Boolean);
-  return parts.slice(-2).join("/") || directory || "…";
-}
 </script>

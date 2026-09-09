@@ -14,7 +14,7 @@ function decodeDataUrl(dataUrl: string): string {
 }
 
 const noDocuments: DocumentTextExtractor = async () => {
-  throw new Error("no textutil in this test");
+  throw new Error("no document converter in this test");
 };
 
 describe("fileKind", () => {

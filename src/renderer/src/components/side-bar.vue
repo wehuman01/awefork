@@ -139,6 +139,7 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import type { SessionGroup, SessionTreeNode } from "../../../shared/session-tree";
 import type { SessionSummary } from "../../../shared/types";
+import { shortPath } from "../format";
 import {
   archiveDirectory,
   archivedDirectoryViews,
@@ -357,10 +358,5 @@ function selectDirectory(directory: string): void {
 
 function emitRefresh(): void {
   void refreshSessions();
-}
-
-function shortPath(directory: string): string {
-  const parts = directory.split("/").filter(Boolean);
-  return parts.slice(-2).join("/") || directory || "…";
 }
 </script>

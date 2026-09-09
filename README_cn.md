@@ -63,6 +63,8 @@ awefork 是本地编程 agent 的非线性工作台。当前支持 [opencode](ht
 
 **直接下载** —— 从[最新 Release](https://github.com/wehuman01/awefork/releases/latest) 下载 `awefork-<版本>-arm64.dmg`（macOS，Apple Silicon），拖进「应用程序」即可。构建未签名：首次启动请右键应用选「打开」（或用 `xattr -d com.apple.quarantine /Applications/awefork.app` 清除隔离标记）。
 
+**Windows** —— 源码构建 `npm run dist:win`（NSIS 安装包）。需要 `opencode` CLI 在 PATH 上，npm 安装的 `.cmd` 形式也能自动识别。
+
 **从源码运行** —— 需要 Node.js ≥ 22，且 `opencode` CLI 在 PATH 上。
 
 ```bash

@@ -1,9 +1,9 @@
 /**
  * What a composer may attach, classified from filename + mime alone so both
- * processes (renderer staging, main textutil conversion) agree on the rules.
+ * processes (renderer staging, main document conversion) agree on the rules.
  */
 
-/** Word/RTF documents — binary, need main-process textutil conversion. */
+/** Word/RTF documents — binary, need main-process conversion to plain text. */
 export const DOC_EXTENSIONS: ReadonlySet<string> = new Set([".doc", ".docx", ".rtf"]);
 
 /** Extensions safe to read as UTF-8 and send as text/plain. */
@@ -92,7 +92,7 @@ export function fileKind(file: { name: string; type: string }): FileKind {
   if (file.type.startsWith("image/")) return "image";
   const name = file.name.toLowerCase();
   // Extension wins over mime for documents: .rtf arrives as text/rtf, but it
-  // still needs textutil rather than a raw UTF-8 read.
+  // still needs conversion rather than a raw UTF-8 read.
   if (DOC_EXTENSIONS.has(extensionOf(name))) return "document";
   if (TEXT_FILENAMES.has(name) || TEXT_EXTENSIONS.has(extensionOf(name))) return "text";
   if (file.type.startsWith("text/")) return "text";

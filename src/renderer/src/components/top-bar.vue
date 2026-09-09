@@ -50,6 +50,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import logoUrl from "../assets/logo.svg";
+import { shortPath } from "../format";
 import { togglePalette } from "../layout";
 import { checkForUpdates, directories, store, switchDirectory } from "../state";
 
@@ -77,11 +78,6 @@ async function pick(directory: string): Promise<void> {
 async function runManualCheck(): Promise<void> {
   versionOpen.value = false;
   await checkForUpdates("manual");
-}
-
-function shortPath(directory: string): string {
-  const parts = directory.split("/").filter(Boolean);
-  return parts.slice(-2).join("/") || directory || "…";
 }
 
 function closeOnOutsideClick(): void {

@@ -23,7 +23,7 @@ export interface StageResult {
   notes: string[];
 }
 
-/** Word/RTF → plain text, done in the main process (textutil). Injectable for tests. */
+/** Word/RTF → plain text, done in the main process. Injectable for tests. */
 export type DocumentTextExtractor = (filename: string, bytes: Uint8Array) => Promise<string>;
 
 const extractViaIpc: DocumentTextExtractor = (filename, bytes) =>

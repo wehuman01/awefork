@@ -64,6 +64,8 @@ The idea of treating sessions as a branching graph originates from [PiX](https:/
 
 **Download** — grab `awefork-<version>-arm64.dmg` (macOS, Apple Silicon) from the [latest release](https://github.com/wehuman01/awefork/releases/latest) and drag it into Applications. The build is unsigned: on first launch, right-click the app and choose Open (or clear the quarantine flag with `xattr -d com.apple.quarantine /Applications/awefork.app`).
 
+**Windows** — build it from source with `npm run dist:win` (NSIS installer). The `opencode` CLI must be on PATH; npm-style installs (`.cmd` shims) are picked up automatically.
+
 **From source** — requires Node.js ≥ 22 and the `opencode` CLI on PATH.
 
 ```bash

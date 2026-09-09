@@ -11,27 +11,51 @@ export interface EnsureServerResult {
 }
 
 /**
- * GUI apps launched from Finder get a minimal PATH (/usr/bin:/bin/...) that
- * rarely covers user-level installs (homebrew, ~/.local/bin, deskclaw).
+ * GUI apps launched from Finder/Explorer get a minimal PATH that rarely covers
+ * user-level installs (homebrew, ~/.local/bin, npm shims, winget links).
  * Prepend every candidate dir that actually exists so `opencode` resolves.
+ * `platform` is injectable so POSIX behavior stays testable on Windows CI
+ * (and vice versa); the PATH delimiter follows it, not the host OS.
  */
 export function buildSpawnEnv(
   env: { PATH?: string; [key: string]: string | undefined },
   home: string = homedir(),
+  platform: NodeJS.Platform = process.platform,
 ): { PATH?: string; [key: string]: string | undefined } {
-  const candidates = [
+  const delimiter = platform === "win32" ? ";" : ":";
+  const candidates = candidateBinDirs(env, home, platform).filter((dir) => existsSync(dir));
+
+  const path = env.PATH ?? "";
+  const existing = new Set(path.split(delimiter).filter(Boolean));
+  const extra = candidates.filter((dir) => !existing.has(dir));
+  return { ...env, PATH: [...extra, ...path.split(delimiter).filter(Boolean)].join(delimiter) };
+}
+
+function candidateBinDirs(
+  env: { PATH?: string; [key: string]: string | undefined },
+  home: string,
+  platform: NodeJS.Platform,
+): string[] {
+  if (platform === "win32") {
+    // %APPDATA%/%LOCALAPPDATA% fall back to their default locations so the
+    // paths still resolve when the launcher environment omits them.
+    const appData = env.APPDATA ?? join(home, "AppData", "Roaming");
+    const localAppData = env.LOCALAPPDATA ?? join(home, "AppData", "Local");
+    return [
+      join(home, ".opencode", "bin"),
+      join(home, ".local", "bin"),
+      join(appData, "npm"),
+      join(localAppData, "Microsoft", "WinGet", "Links"),
+    ];
+  }
+  return [
     join(home, ".deskclaw", "node", "bin"),
     "/opt/homebrew/bin",
     "/usr/local/bin",
     join(home, ".local", "bin"),
     join(home, ".bun", "bin"),
     join(home, ".opencode", "bin"),
-  ].filter((dir) => existsSync(dir));
-
-  const path = env.PATH ?? "";
-  const existing = new Set(path.split(":").filter(Boolean));
-  const extra = candidates.filter((dir) => !existing.has(dir));
-  return { ...env, PATH: [...extra, ...path.split(":").filter(Boolean)].join(":") };
+  ];
 }
 
 /**
@@ -54,6 +78,9 @@ export async function ensureOpencodeServer(
     detached: false,
     cwd: homedir(),
     env: buildSpawnEnv(process.env),
+    // npm installs CLIs as .cmd shims on Windows; only cmd.exe runs those,
+    // plain spawn gets ENOENT. The fixed args contain no shell metacharacters.
+    ...(process.platform === "win32" ? { shell: true, windowsHide: true } : {}),
   });
   // A failed spawn (ENOENT — CLI not on PATH) emits "error" and NEVER sets
   // exitCode, so the loop must watch this flag or it idles the full 30 s.
