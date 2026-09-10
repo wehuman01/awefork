@@ -47,9 +47,13 @@ interface SessionDef {
   atMessageId: string | null;
   turns: TurnDef[];
   minutesAgo: number;
+  /** Project directory; defaults to DIRECTORY so old defs stay one-liners. */
+  directory?: string;
 }
 
 const DIRECTORY = "/demo/shop-api";
+/** A second project — exercises cross-directory jumps (favorites shelf). */
+const DIRECTORY_2 = "/demo/web-app";
 
 const SESSION_DEFS: SessionDef[] = [
   {
@@ -224,6 +228,53 @@ const SESSION_DEFS: SessionDef[] = [
     minutesAgo: 880,
     turns: [],
   },
+  {
+    id: "w-root",
+    title: "官网首页改版",
+    origin: "root",
+    parent: null,
+    atMessageId: null,
+    directory: DIRECTORY_2,
+    minutesAgo: 500,
+    turns: [
+      {
+        id: "w1",
+        prompt: "首页 hero 区怎么改？给三个方向",
+        reply:
+          "三个方向：① 全屏视频背景 + 一句话价值主张；② 交互式产品演示首屏；③ 客户 logo 墙前置 + 数据说话。推荐 ①，制作成本低、观感提升最明显。",
+        minutesAgo: 500,
+      },
+      {
+        id: "w2",
+        prompt: "按方向一搭 hero 区骨架",
+        reply:
+          "hero 区骨架已搭好：全屏 video 标签兜底 poster 图，标题 clamp() 自适应，CTA 按钮双份（主次），滚动提示箭头带浮动动画。",
+        tools: ["write"],
+        tokens: 1200,
+        minutesAgo: 460,
+      },
+    ],
+  },
+  {
+    id: "w-copy",
+    title: "首页文案分支",
+    origin: "fork",
+    parent: "w-root",
+    atMessageId: "w1",
+    directory: DIRECTORY_2,
+    minutesAgo: 470,
+    turns: [
+      {
+        id: "wc1",
+        prompt: "价值主张再狠一点，突出“十分钟上线”",
+        reply:
+          "改好了：“十分钟，把想法变成上线的产品”作为主标题，副标题承接部署速度与零配置。附三组 A/B 备选。",
+        tools: ["edit"],
+        tokens: 700,
+        minutesAgo: 465,
+      },
+    ],
+  },
 ];
 
 const MODELS: ModelOption[] = [
@@ -341,7 +392,7 @@ export function installMockAdapter(): void {
       return {
         id: def.id,
         title: def.title,
-        directory: DIRECTORY,
+        directory: def.directory ?? DIRECTORY,
         parentSessionId: def.parent,
         origin: def.origin,
         createdAt: minutesAgo(def.minutesAgo),
@@ -374,7 +425,7 @@ export function installMockAdapter(): void {
       }));
     },
     models: async () => MODELS,
-    createSession: async () => {
+    createSession: async (directory) => {
       promptSeq += 1;
       const id = `demo-new-${promptSeq}`;
       defs.set(id, {
@@ -385,6 +436,7 @@ export function installMockAdapter(): void {
         atMessageId: null,
         turns: [],
         minutesAgo: 0,
+        directory: directory ?? DIRECTORY,
       });
       const created = summaries().find((s) => s.id === id);
       if (!created) throw new Error(`demo session ${id} missing after creation`);
