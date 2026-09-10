@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.1.9
+
+v0.1.6 taught `archive.json` to survive racing clicks; this release gives every sidecar the same spine — and the dist folder learns to tidy up after itself.
+
+### Highlights
+
+- **Race-free sidecar writes, everywhere** — every read-modify-write on a sidecar file (pins, lineage, trash, archive) now flows through a per-file write queue, so concurrent updates line up and commit in order instead of interleaving and silently dropping the earlier change. The stores expose intent-named operations (`togglePin`, `addTrashEntry`, `removeTrashEntry`, …) and the IPC handlers call them straight through — no more read, mutate, and hope.
+- **Adapter sleeps let go** — an aborted sleep in the opencode adapter now detaches its abort listener when the timer wins, instead of leaving it hanging off the signal.
+- **Release builds sweep the floor** — `npm run dist` / `npm run dist:win` first move older installers out of `dist/` into `dist/archive/<version>/`, so the dist root only ever holds the current release while previous dmgs, exes, and blockmaps stay inspectable.
+
+### Install
+
+Download the unsigned arm64 dmg or the Windows x64 setup.exe straight from the [v0.1.9 release](https://github.com/wehuman01/awefork/releases/tag/v0.1.9). On first launch on macOS, right-click the app and choose Open (or clear the quarantine flag with `xattr -d com.apple.quarantine /Applications/awefork.app`).
+
 ## v0.1.8
 
 awefork crosses to Windows, and the canvas learns to stay where you left it.
