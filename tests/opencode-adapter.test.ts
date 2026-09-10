@@ -1,10 +1,11 @@
+import { getEventListeners } from "node:events";
 import { mkdtemp } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readLineage } from "../src/shared/lineage-store";
-import { createOpencodeAdapter } from "../src/shared/opencode-adapter";
+import { createOpencodeAdapter, sleep } from "../src/shared/opencode-adapter";
 import type { AgentEvent } from "../src/shared/types";
 
 /**
@@ -817,5 +818,24 @@ describe("opencode adapter", () => {
     const { adapter } = await newAdapter(state);
     const sessions = await adapter.listSessions();
     expect(sessions.filter((s) => s.id === "s1")).toHaveLength(1);
+  });
+});
+
+describe("sleep", () => {
+  it("drops its abort listener when the timer wins (reconnect loop leak)", async () => {
+    const controller = new AbortController();
+    // The reconnect loop calls sleep once per second during an outage; every
+    // call leaving its listener behind grew the signal's count without bound.
+    for (let i = 0; i < 5; i += 1) {
+      await sleep(1, controller.signal);
+    }
+    expect(getEventListeners(controller.signal, "abort")).toHaveLength(0);
+  });
+
+  it("still resolves early when aborted", async () => {
+    const controller = new AbortController();
+    const pending = sleep(5000, controller.signal);
+    controller.abort();
+    await expect(pending).resolves.toBeUndefined();
   });
 });

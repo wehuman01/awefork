@@ -7,6 +7,7 @@ import type {
   ArchiveKind,
   ArchiveState,
 } from "./types.js";
+import { enqueueWrite } from "./write-queue.js";
 
 /**
  * Archive store: sessions and directories the user tucked away, fully
@@ -68,14 +69,6 @@ export async function writeArchive(filePath: string, archive: ArchiveState): Pro
 }
 
 /**
- * Per-sidecar write queue: setArchived is a read-modify-write and the IPC
- * surface can fire it concurrently (rapid archive clicks), so operations on
- * the same file run one after another — the later write can't read stale
- * state and drop the earlier entry.
- */
-const pendingWrites = new Map<string, Promise<unknown>>();
-
-/**
  * Archive or restore one entry (kind picks the list; key is the session id or
  * directory path). Read-modify-write, idempotent, serialized per file;
  * returns the new state.
@@ -87,20 +80,7 @@ export function setArchived(
   archived: boolean,
   now: number = Date.now(),
 ): Promise<ArchiveState> {
-  const previous = (pendingWrites.get(filePath) ?? Promise.resolve()).then(
-    () => undefined,
-    () => undefined,
-  );
-  const run = previous.then(() => applySetArchived(filePath, kind, key, archived, now));
-  const tail = run.then(
-    () => undefined,
-    () => undefined,
-  );
-  pendingWrites.set(filePath, tail);
-  void tail.then(() => {
-    if (pendingWrites.get(filePath) === tail) pendingWrites.delete(filePath);
-  });
-  return run;
+  return enqueueWrite(filePath, () => applySetArchived(filePath, kind, key, archived, now));
 }
 
 async function applySetArchived(

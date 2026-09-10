@@ -59,6 +59,20 @@ describe("lineage store", () => {
     const path = await tempLineagePath();
     await expect(removeFork(path, "never-recorded")).resolves.toBeUndefined();
   });
+
+  it("serializes concurrent fork and delete so neither record is lost", async () => {
+    const path = await tempLineagePath();
+    // Fired without awaiting in between — without serialization both reads
+    // see the empty file and one write drops the other's record.
+    await Promise.all([
+      recordFork(path, "fork-1", { parentId: "p", atMessageId: null, createdAt: 1 }),
+      recordFork(path, "fork-2", { parentId: "p", atMessageId: "m", createdAt: 2 }),
+    ]);
+    expect(await readLineage(path)).toEqual({
+      "fork-1": { parentId: "p", atMessageId: null, createdAt: 1 },
+      "fork-2": { parentId: "p", atMessageId: "m", createdAt: 2 },
+    });
+  });
 });
 
 describe("cleanup", () => {

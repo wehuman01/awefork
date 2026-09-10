@@ -373,16 +373,20 @@ function messageIdOf(value: unknown): string | null {
   return typeof value === "string" && value ? value : null;
 }
 
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
+/** Timed sleep, abortable; exported for tests. */
+export function sleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    signal.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timer);
-        resolve();
-      },
-      { once: true },
-    );
+    const onAbort = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    // The timer path must drop its own listener: the reconnect loop calls
+    // this every second during an outage, and listeners that only fire on
+    // abort would otherwise pile up without bound on the same signal.
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
   });
 }

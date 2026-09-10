@@ -1,8 +1,8 @@
 import { type IpcMainInvokeEvent, ipcMain, shell } from "electron";
 import { readArchive, setArchived } from "../shared/archive-store.js";
 import { readLineage } from "../shared/lineage-store.js";
-import { readPins, writePins } from "../shared/pins-store.js";
-import { readTrash, writeTrash } from "../shared/trash-store.js";
+import { prunePin, readPins, togglePin } from "../shared/pins-store.js";
+import { addTrashEntry, readTrash, removeTrashEntry } from "../shared/trash-store.js";
 import type {
   AgentAdapter,
   AgentEvent,
@@ -109,9 +109,7 @@ export function registerIpc(
   ipcMain.handle("awefork:deleteSession", async (_event: IpcMainInvokeEvent, sessionId: string) => {
     const adapter = await withAdapter();
     await adapter.deleteSession(sessionId);
-    const pins = (await readPins(pinsPath)).filter((id) => id !== sessionId);
-    await writePins(pinsPath, pins);
-    return pins;
+    return prunePin(pinsPath, sessionId);
   });
 
   ipcMain.handle(
@@ -151,32 +149,21 @@ export function registerIpc(
 
   ipcMain.handle("awefork:pins", async () => readPins(pinsPath));
 
-  ipcMain.handle("awefork:togglePin", async (_event: IpcMainInvokeEvent, sessionId: string) => {
-    const pins = await readPins(pinsPath);
-    const next = pins.includes(sessionId)
-      ? pins.filter((id) => id !== sessionId)
-      : [...pins, sessionId];
-    await writePins(pinsPath, next);
-    return next;
-  });
+  ipcMain.handle("awefork:togglePin", (_event: IpcMainInvokeEvent, sessionId: string) =>
+    togglePin(pinsPath, sessionId),
+  );
 
   ipcMain.handle("awefork:trash", async () => readTrash(trashPath));
 
   ipcMain.handle(
     "awefork:trashAdd",
-    async (_event: IpcMainInvokeEvent, sessionId: string, title: string) => {
-      const entries = (await readTrash(trashPath)).filter((entry) => entry.id !== sessionId);
-      entries.push({ id: sessionId, title, deletedAt: Date.now() });
-      await writeTrash(trashPath, entries);
-      return entries;
-    },
+    (_event: IpcMainInvokeEvent, sessionId: string, title: string) =>
+      addTrashEntry(trashPath, sessionId, title),
   );
 
-  ipcMain.handle("awefork:trashRemove", async (_event: IpcMainInvokeEvent, sessionId: string) => {
-    const entries = (await readTrash(trashPath)).filter((entry) => entry.id !== sessionId);
-    await writeTrash(trashPath, entries);
-    return entries;
-  });
+  ipcMain.handle("awefork:trashRemove", (_event: IpcMainInvokeEvent, sessionId: string) =>
+    removeTrashEntry(trashPath, sessionId),
+  );
 
   ipcMain.handle("awefork:archive", async () => readArchive(archivePath));
 
