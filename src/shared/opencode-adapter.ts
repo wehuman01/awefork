@@ -71,10 +71,13 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
           .map((p) => p.text as string)
           .join("\n")
           .trim(),
+        // One blank line between reasoning parts: a multi-step run stores one
+        // part per step, and joining them bare glues the last line of one
+        // step's thinking onto the first line of the next.
         thinking: m.parts
           .filter((p) => p.type === "reasoning" && typeof p.text === "string")
           .map((p) => p.text as string)
-          .join("\n")
+          .join("\n\n")
           .trim(),
         toolNames: [
           ...new Set(
@@ -295,26 +298,51 @@ function emitToAgentEvent(
     }
     case "message.part.updated": {
       const part = props.part as
-        | { id?: unknown; type?: unknown; sessionID?: unknown; messageID?: unknown }
+        | {
+            id?: unknown;
+            type?: unknown;
+            text?: unknown;
+            time?: { start?: unknown; end?: unknown };
+            sessionID?: unknown;
+            messageID?: unknown;
+          }
         | undefined;
-      if (typeof part?.id === "string") {
-        if (part.type === "reasoning") partKinds.set(part.id, "thinking");
-        else if (part.type === "text") partKinds.set(part.id, "text");
-      }
-      // Snapshot frames carry no delta on opencode 1.18; older builds put the
-      // text delta here. Skip frames without one.
-      if (typeof props.delta !== "string" || props.delta === "") break;
+      const partId = typeof part?.id === "string" ? part.id : null;
+      // Register the part's kind from its snapshot BEFORE any delta handling —
+      // older opencode builds put the text delta in this same frame.
+      if (partId && part?.type === "reasoning") partKinds.set(partId, "thinking");
+      else if (partId && part?.type === "text") partKinds.set(partId, "text");
+
       const sessionId = sessionIdOf(props.sessionID ?? part?.sessionID);
       const messageId = messageIdOf(props.messageID ?? part?.messageID);
-      if (sessionId && messageId) {
+      // Forward the whole snapshot for text/reasoning parts: the renderer
+      // reconciles its live buffer with it (self-heal after a dropped delta)
+      // and reads time.end as the reasoning-finished signal.
+      if (
+        partId &&
+        sessionId &&
+        messageId &&
+        (part?.type === "reasoning" || part?.type === "text")
+      ) {
         emit({
-          type: "message.delta",
+          type: "message.part",
           sessionId,
           messageId,
-          kind: typeof part?.id === "string" ? (partKinds.get(part.id) ?? "text") : "text",
-          delta: props.delta as string,
+          partId,
+          kind: part.type === "reasoning" ? "thinking" : "text",
+          text: typeof part.text === "string" ? part.text : "",
+          startedAt: typeof part.time?.start === "number" ? part.time.start : null,
+          endedAt: typeof part.time?.end === "number" ? part.time.end : null,
         });
       }
+
+      // Snapshot frames carry no delta on opencode 1.18; older builds put the
+      // text delta here. A delta whose part kind is unknown is dropped rather
+      // than guessed at — rendering reasoning as reply text is the worse failure.
+      if (typeof props.delta !== "string" || props.delta === "") break;
+      const kind = partId ? partKinds.get(partId) : undefined;
+      if (!sessionId || !messageId || !partId || !kind) break;
+      emit({ type: "message.delta", sessionId, messageId, partId, kind, delta: props.delta });
       break;
     }
     case "message.part.delta": {
@@ -323,15 +351,13 @@ function emitToAgentEvent(
       if (typeof props.delta !== "string" || props.delta === "") break;
       const sessionId = sessionIdOf(props.sessionID);
       const messageId = messageIdOf(props.messageID);
-      if (sessionId && messageId) {
-        emit({
-          type: "message.delta",
-          sessionId,
-          messageId,
-          kind: typeof props.partID === "string" ? (partKinds.get(props.partID) ?? "text") : "text",
-          delta: props.delta as string,
-        });
-      }
+      // Unknown partID → drop and wait for the part.updated snapshot: a delta
+      // that arrives before the app saw the part's first frame is guesswork,
+      // and the snapshot that follows carries the full content anyway.
+      const partId = typeof props.partID === "string" ? props.partID : null;
+      const kind = partId ? partKinds.get(partId) : undefined;
+      if (!sessionId || !messageId || !partId || !kind) break;
+      emit({ type: "message.delta", sessionId, messageId, partId, kind, delta: props.delta });
       break;
     }
     case "session.status": {

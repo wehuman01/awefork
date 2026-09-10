@@ -146,9 +146,27 @@ export type AgentEvent =
       type: "message.delta";
       sessionId: string;
       messageId: string;
+      /** Part the delta belongs to. The adapter drops deltas for parts it has not identified. */
+      partId: string;
       /** opencode labels both text and reasoning deltas as `text`; the adapter resolves the part. */
-      kind?: "text" | "thinking";
+      kind: "text" | "thinking";
       delta: string;
+    }
+  | {
+      /**
+       * Full snapshot of a text/reasoning part (opencode's message.part.updated).
+       * `text` is the part's whole content so the renderer can reconcile dropped
+       * deltas; `endedAt !== null` marks the part finished (reasoning end flips
+       * the live "Thinking" block into its collapsed Thought summary).
+       */
+      type: "message.part";
+      sessionId: string;
+      messageId: string;
+      partId: string;
+      kind: "text" | "thinking";
+      text: string;
+      startedAt: number | null;
+      endedAt: number | null;
     }
   | { type: "session.idle"; sessionId: string }
   /**

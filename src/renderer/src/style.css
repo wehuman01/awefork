@@ -1695,18 +1695,47 @@ textarea {
   transform: rotate(90deg);
 }
 
+/* duration that trails a finished thinking block's title */
+.thought-meta {
+  margin-left: 4px;
+  font-weight: 600;
+  opacity: 0.75;
+}
+
+/* braille spinner: ten frames scrolled behind a one-glyph window */
+.spinner {
+  display: inline-block;
+  width: 1ch;
+  margin-right: 6px;
+  overflow: hidden;
+  vertical-align: baseline;
+  font-weight: 400;
+}
+
+.spinner::before {
+  content: "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
+  display: inline-block;
+  white-space: pre;
+  animation: spinner-frames 0.9s steps(10, end) infinite;
+}
+
+@keyframes spinner-frames {
+  to {
+    transform: translateX(-10ch);
+  }
+}
+
 .thought-body {
   padding: 0 9px 8px 15px;
   border-left: 2px solid var(--lavender);
   margin: 0 9px 8px;
   color: var(--ink-soft);
   font-size: 12px;
-  font-style: italic;
   line-height: 1.6;
-  white-space: pre-wrap;
   overflow-wrap: break-word;
 }
 
+/* thinking bodies render as markdown (muted), like opencode's thought view */
 .streaming-thought .thought-body {
   color: var(--ink);
 }
@@ -1743,6 +1772,12 @@ textarea {
 
 .md > :last-child {
   margin-bottom: 0;
+}
+
+/* thinking bodies reuse the reply renderer at the thought's smaller size */
+.thought-body .md {
+  font-size: 12px;
+  color: inherit;
 }
 
 .md-p {

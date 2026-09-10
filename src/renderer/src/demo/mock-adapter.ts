@@ -439,7 +439,7 @@ export function installMockAdapter(): void {
         error: null,
       };
       const reply = `演示模式：这是一条模拟回复（真实环境里会走你的 opencode 后端）。你问的是「${text.slice(0, 40)}」——切到真的 npm run dev 就能拿到流式真回复。`;
-      const thinking = "我先梳理用户的问题，再组织一段清晰、可执行的回答。";
+      const thinking = "**组织回答**\n我先梳理用户的问题，再组织一段清晰、可执行的回答。";
       const assistant: ChatMessage = {
         id: `p${promptSeq}-r`,
         role: "assistant",
@@ -458,8 +458,12 @@ export function installMockAdapter(): void {
       };
       emit({ type: "message.started", sessionId, messageId: assistant.id });
       const pending = timers.get(sessionId) ?? [];
+      const runStart = Date.now();
+      const thinkingPartId = `${assistant.id}-th`;
+      const textPartId = `${assistant.id}-tx`;
       const thinkingChunks = thinking.match(/.{1,14}/g) ?? [];
       const chunks = reply.match(/.{1,18}/g) ?? [];
+      const textStartDelay = 600 + thinkingChunks.length * 300;
       thinkingChunks.forEach((chunk, i) => {
         pending.push(
           setTimeout(
@@ -468,6 +472,7 @@ export function installMockAdapter(): void {
                 type: "message.delta",
                 sessionId,
                 messageId: assistant.id,
+                partId: thinkingPartId,
                 kind: "thinking",
                 delta: chunk,
               });
@@ -476,6 +481,22 @@ export function installMockAdapter(): void {
           ),
         );
       });
+      // reasoning-end snapshot: flips the live block into its collapsed
+      // `Thought: title · duration` summary, like a real opencode run
+      pending.push(
+        setTimeout(() => {
+          emit({
+            type: "message.part",
+            sessionId,
+            messageId: assistant.id,
+            partId: thinkingPartId,
+            kind: "thinking",
+            text: thinking,
+            startedAt: runStart + 300,
+            endedAt: runStart + textStartDelay,
+          });
+        }, textStartDelay),
+      );
       chunks.forEach((chunk, i) => {
         pending.push(
           setTimeout(
@@ -484,11 +505,12 @@ export function installMockAdapter(): void {
                 type: "message.delta",
                 sessionId,
                 messageId: assistant.id,
+                partId: textPartId,
                 kind: "text",
                 delta: chunk,
               });
             },
-            600 + thinkingChunks.length * 300 + i * 300,
+            textStartDelay + i * 300,
           ),
         );
       });
@@ -500,7 +522,7 @@ export function installMockAdapter(): void {
             emit({ type: "session.updated", sessionId });
             emit({ type: "session.idle", sessionId });
           },
-          600 + (thinkingChunks.length + chunks.length) * 300 + 400,
+          textStartDelay + chunks.length * 300 + 400,
         ),
       );
       timers.set(sessionId, pending);

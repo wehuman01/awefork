@@ -33,7 +33,7 @@
             </p>
             <details v-if="message.thinking" class="thought">
               <summary class="thought-toggle">Thought</summary>
-              <div class="thought-body">{{ message.thinking }}</div>
+              <div class="thought-body"><MarkdownView :source="message.thinking" /></div>
             </details>
             <MarkdownView v-if="message.text" :source="message.text" />
             <p v-else-if="message.error" class="message-text run-error">
@@ -48,13 +48,27 @@
         <span class="avatar bot">✨</span>
         <div class="message-body">
           <p class="tool-row"><span class="tool-chip running">running…</span></p>
-          <details v-if="streamThinking" :open="!streamText" class="thought streaming-thought">
-            <summary class="thought-toggle">Thinking…</summary>
-            <div class="thought-body">{{ streamThinking }}<span class="stream-caret"></span></div>
-          </details>
-          <template v-if="streamText">
-            <MarkdownView :source="streamText" class="stream" />
-            <span class="stream-caret"></span>
+          <template v-for="row in liveRows" :key="row.part.partId">
+            <details
+              v-if="row.part.kind === 'thinking'"
+              class="thought streaming-thought"
+              :class="{ done: row.part.endedAt !== null }"
+              :open="row.part.endedAt === null"
+            >
+              <summary class="thought-toggle">
+                <span v-if="row.part.endedAt === null" class="spinner" aria-hidden="true"></span>
+                <span class="thought-title">{{ row.title }}</span>
+                <span v-if="row.duration" class="thought-meta">· {{ row.duration }}</span>
+              </summary>
+              <div class="thought-body">
+                <MarkdownView :source="row.part.text" />
+                <span v-if="row.part.endedAt === null" class="stream-caret"></span>
+              </div>
+            </details>
+            <template v-else>
+              <MarkdownView :source="row.part.text" class="stream" />
+              <span v-if="row.caret" class="stream-caret"></span>
+            </template>
           </template>
         </div>
       </div>
@@ -63,20 +77,34 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onUnmounted, ref, watch } from "vue";
 import type { SessionSummary } from "../../../shared/types";
 import { isSamePaneStart, shouldFollowStream } from "../message-list-scroll";
-import type { ReadonlyChatMessage } from "../state";
+import type { LivePart, ReadonlyChatMessage } from "../state";
+import { thoughtSummary } from "../thought";
 import { MarkdownView } from "./markdown-view";
 
 const props = defineProps<{
   session: SessionSummary | null;
   messages: readonly ReadonlyChatMessage[];
   running: boolean;
-  streamText: string;
-  streamThinking: string;
+  /** The run's live parts in arrival order — each step's thinking and reply interleaved. */
+  streamParts: readonly LivePart[];
   error: string | null;
 }>();
+
+/** Per-part render models: collapse-header summary plus the streaming caret flag. */
+const liveRows = computed(() => {
+  const parts = props.streamParts;
+  const last = parts[parts.length - 1];
+  const caretPartId =
+    last != null && last.kind === "text" && last.endedAt === null ? last.partId : null;
+  return parts.map((part) => ({
+    part,
+    ...thoughtSummary(part),
+    caret: part.partId === caretPartId,
+  }));
+});
 
 const listEl = ref<HTMLElement | null>(null);
 
@@ -84,7 +112,7 @@ const listEl = ref<HTMLElement | null>(null);
 // changes. Once they scroll up to reread, every subsequent frame leaves their
 // position alone.
 watch(
-  () => [props.messages.length, props.streamText, props.streamThinking],
+  () => [props.messages.length, props.streamParts.map((p) => p.text.length).join(",")],
   () => {
     const list = listEl.value;
     if (!list) return;

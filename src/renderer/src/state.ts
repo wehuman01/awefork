@@ -86,10 +86,8 @@ interface AppState {
    * spot which branches just finished when the canvas is full.
    */
   recent: Record<string, number>;
-  /** Live stream text of the selected session only. */
-  streamText: string;
-  /** Live reasoning of the selected session only, separate from its reply. */
-  streamThinking: string;
+  /** Live stream of the selected session only, as the run's ordered parts. */
+  streamParts: LivePart[];
   /** Card-sized tail of every running session's stream, keyed by session id. */
   streams: Record<string, string>;
   actionError: string | null;
@@ -142,8 +140,7 @@ const state = reactive<AppState>({
   models: [],
   running: {},
   recent: {},
-  streamText: "",
-  streamThinking: "",
+  streamParts: [],
   streams: {},
   actionError: null,
   composerFocusRequest: null,
@@ -334,12 +331,21 @@ export const paneTurn = computed<{ turn: Turn; index: number; total: number } | 
  * turn, and turn boundaries are user rows, so the filter cannot shift them.
  */
 export const paneMessages = computed<ChatMessage[]>(() => {
-  const messages = (state.messagesBySession[state.selectedId ?? ""] ?? []).filter(
+  const sessionId = state.selectedId;
+  // Assistant rows that are still incomplete while their parts stream render
+  // through the live part timeline instead — the poll's mid-run reload would
+  // otherwise duplicate the streaming step above the live blocks.
+  const streaming =
+    sessionId && state.running[sessionId]
+      ? new Set(state.streamParts.map((p) => p.messageId))
+      : new Set<string>();
+  const messages = (state.messagesBySession[sessionId ?? ""] ?? []).filter(
     (m) =>
-      m.role === "user" ||
-      m.text.trim().length > 0 ||
-      m.thinking.trim().length > 0 ||
-      m.error !== null,
+      !(m.role === "assistant" && m.completedAt === null && streaming.has(m.id)) &&
+      (m.role === "user" ||
+        m.text.trim().length > 0 ||
+        m.thinking.trim().length > 0 ||
+        m.error !== null),
   );
   const turn = paneTurn.value?.turn;
   if (!turn) return messages;
@@ -347,12 +353,117 @@ export const paneMessages = computed<ChatMessage[]>(() => {
   return range ? messages.slice(range.start, range.end) : messages;
 });
 
-interface LiveStream {
+/**
+ * One streaming part of a running session (opencode part = one step's text or
+ * reasoning). The run's parts are kept in arrival order so the pane can show
+ * each step's thinking and reply interleaved on the timeline instead of as two
+ * merged blobs.
+ */
+export interface LivePart {
+  /** opencode part id; unique within the run. */
+  partId: string;
+  /** Assistant message (run step) the part belongs to. */
+  messageId: string;
+  kind: "text" | "thinking";
   text: string;
-  thinking: string;
+  /** Part snapshot times in ms; endedAt stays null until the part finishes. */
+  startedAt: number | null;
+  endedAt: number | null;
 }
 
-const streamBuffers = new Map<string, LiveStream>();
+const streamBuffers = new Map<string, LivePart[]>();
+/** True once the assistant row for these parts has landed complete in state. */
+function rowCompleted(sessionId: string, messageId: string): boolean {
+  return (state.messagesBySession[sessionId] ?? []).some(
+    (m) => m.id === messageId && m.role === "assistant" && m.completedAt !== null,
+  );
+}
+
+/** Store a session's live parts and mirror what depends on them. */
+function publishParts(sessionId: string, parts: LivePart[]): void {
+  if (parts.length === 0) streamBuffers.delete(sessionId);
+  else streamBuffers.set(sessionId, parts);
+  if (state.selectedId === sessionId) state.streamParts = [...parts];
+  // Card-sized tails keep showing only final reply text; thinking belongs in
+  // the pane's collapsible blocks, not in the compact canvas preview.
+  const tail = [...parts].reverse().find((p) => p.kind === "text");
+  if (tail) {
+    state.streams = { ...state.streams, [sessionId]: tail.text.slice(-400) };
+  } else {
+    const { [sessionId]: goneTail, ...keptTails } = state.streams;
+    void goneTail;
+    state.streams = keptTails;
+  }
+}
+
+/**
+ * Fold one delta or full-snapshot frame into the session's live part list.
+ * Deltas append to (or create) the part; snapshots REPLACE its content — the
+ * frame carries the whole part, so a delta lost to an SSE gap self-heals the
+ * moment the next snapshot lands, and a reasoning part's time.end flips its
+ * block into the collapsed Thought summary.
+ */
+function applyPartFrame(
+  sessionId: string,
+  frame:
+    | {
+        type: "delta";
+        messageId: string;
+        partId: string;
+        kind: "text" | "thinking";
+        delta: string;
+      }
+    | {
+        type: "snapshot";
+        messageId: string;
+        partId: string;
+        kind: "text" | "thinking";
+        text: string;
+        startedAt: number | null;
+        endedAt: number | null;
+      },
+): void {
+  // A completed row renders from state; late frames for it must not
+  // resurrect content the reload already took over.
+  if (rowCompleted(sessionId, frame.messageId)) return;
+  const parts = streamBuffers.get(sessionId) ?? [];
+  const index = parts.findIndex((p) => p.partId === frame.partId);
+  const base: LivePart = parts[index] ?? {
+    partId: frame.partId,
+    messageId: frame.messageId,
+    kind: frame.kind,
+    text: "",
+    startedAt: null,
+    endedAt: null,
+  };
+  const next: LivePart =
+    frame.type === "delta"
+      ? { ...base, text: base.text + frame.delta }
+      : { ...base, text: frame.text, startedAt: frame.startedAt, endedAt: frame.endedAt };
+  publishParts(
+    sessionId,
+    index >= 0 ? parts.map((p, i) => (i === index ? next : p)) : [...parts, next],
+  );
+}
+
+/**
+ * Drop live parts whose assistant row has landed complete: from here on the
+ * row itself renders that step, and the live timeline keeps only the steps
+ * still in flight.
+ */
+function pruneSettledParts(sessionId: string, messages: ChatMessage[]): void {
+  const parts = streamBuffers.get(sessionId);
+  if (!parts || parts.length === 0) return;
+  const done = new Set(
+    messages.filter((m) => m.role === "assistant" && m.completedAt !== null).map((m) => m.id),
+  );
+  if (!parts.some((p) => done.has(p.messageId))) return;
+  publishParts(
+    sessionId,
+    parts.filter((p) => !done.has(p.messageId)),
+  );
+}
+
 /** Sessions whose messages have been requested (or are already cached). */
 const attemptedMessages = new Set<string>();
 
@@ -563,9 +674,7 @@ export async function selectSession(
   state.selectedDirectory = session.directory;
   state.selectedId = session.id;
   state.selectedTurnId = null;
-  const stream = streamBuffers.get(sessionId);
-  state.streamText = stream?.text ?? "";
-  state.streamThinking = stream?.thinking ?? "";
+  state.streamParts = [...(streamBuffers.get(sessionId) ?? [])];
   state.messagesError = null;
   if (options.focus) {
     state.focusRequest = { sessionId, nonce: Date.now() };
@@ -625,6 +734,7 @@ async function loadSessionMessages(
     // pre-await state, and concurrent loads would overwrite each other.
     const messages = await window.awefork.messages(sessionId);
     state.messagesBySession = { ...state.messagesBySession, [sessionId]: messages };
+    pruneSettledParts(sessionId, messages);
     return messages;
   } catch (error) {
     if (reportError && state.selectedId === sessionId) {
@@ -725,8 +835,7 @@ function settleRun(sessionId: string): void {
     if (state.recent[sessionId] === settledAt) clearRecent(sessionId);
   }, RECENT_MS);
   if (state.selectedId === sessionId) {
-    state.streamText = "";
-    state.streamThinking = "";
+    state.streamParts = [];
   }
 }
 
@@ -783,18 +892,29 @@ function handleEvent(event: AgentEvent): void {
       const watch = completionWatches.get(event.sessionId);
       if (watch) watch.ticks = 0;
       else watchCompletion(event.sessionId, Date.now());
-      const kind = event.kind ?? "text";
-      const current = streamBuffers.get(event.sessionId) ?? { text: "", thinking: "" };
-      const updated = { ...current, [kind]: current[kind] + event.delta };
-      streamBuffers.set(event.sessionId, updated);
-      // Card-sized tails keep showing only final reply text; thinking belongs
-      // in the pane's collapsible block, not in its compact canvas preview.
-      if (kind === "text") {
-        state.streams = { ...state.streams, [event.sessionId]: updated.text.slice(-400) };
-      }
-      if (event.sessionId === state.selectedId) {
-        state.streamText = updated.text;
-        state.streamThinking = updated.thinking;
+      applyPartFrame(event.sessionId, {
+        type: "delta",
+        messageId: event.messageId,
+        partId: event.partId,
+        kind: event.kind,
+        delta: event.delta,
+      });
+      break;
+    }
+    case "message.part": {
+      // Snapshots carry no liveness of their own (fork creation replays them
+      // for every copied message), so they only fold into an already-running
+      // stream — never start one.
+      if (state.running[event.sessionId] || streamBuffers.has(event.sessionId)) {
+        applyPartFrame(event.sessionId, {
+          type: "snapshot",
+          messageId: event.messageId,
+          partId: event.partId,
+          kind: event.kind,
+          text: event.text,
+          startedAt: event.startedAt,
+          endedAt: event.endedAt,
+        });
       }
       break;
     }
@@ -1162,6 +1282,7 @@ async function hardDeleteSession(sessionId: string): Promise<void> {
   }
   removePendingDelete(sessionId);
   stopWatch(sessionId);
+  streamBuffers.delete(sessionId);
   const { [sessionId]: goneMessages, ...keptMessages } = state.messagesBySession;
   void goneMessages;
   state.messagesBySession = keptMessages;

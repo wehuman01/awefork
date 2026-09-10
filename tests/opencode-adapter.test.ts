@@ -352,6 +352,9 @@ describe("opencode adapter", () => {
     const state = baseState();
     state.messages.s1?.[1]?.parts.push(
       { type: "reasoning", text: "I should inspect the event protocol first." },
+      // a second reasoning part (the run's next step) must stay separated by a
+      // blank line, not glue onto the first step's last line
+      { type: "reasoning", text: "The grep result narrows it down." },
       { type: "tool", tool: "bash" },
     );
     // opencode 1.18: the user row that opens a run carries the model nested;
@@ -371,7 +374,9 @@ describe("opencode adapter", () => {
       completedAt: null,
     });
     expect(messages[1]?.toolNames).toEqual(["bash"]);
-    expect(messages[1]?.thinking).toBe("I should inspect the event protocol first.");
+    expect(messages[1]?.thinking).toBe(
+      "I should inspect the event protocol first.\n\nThe grep result narrows it down.",
+    );
     expect(messages[1]?.modelId).toBe("glm/glm-5.3-flash");
     expect(messages[1]?.providerId).toBe("oc-fake");
     expect(messages[1]?.completedAt).toBe(5000);
@@ -689,15 +694,23 @@ describe("opencode adapter", () => {
       messageId: "m1",
       delta: "",
     });
+    expect(events.filter((e) => e.type === "message.part")).toHaveLength(0);
   });
 
   it("session.status busy marks a session running; real deltas stream through", async () => {
     const state = baseState();
+    // Older opencode builds put the text delta in the part.updated frame
+    // itself, next to the part snapshot announcing its kind.
     state.eventFrames = [
       { type: "session.status", properties: { sessionID: "s1", status: { type: "busy" } } },
       {
         type: "message.part.updated",
-        properties: { sessionID: "s1", messageID: "m1", delta: "hello" },
+        properties: {
+          sessionID: "s1",
+          messageID: "m1",
+          part: { id: "p1", type: "text", sessionID: "s1", messageID: "m1", text: "hello" },
+          delta: "hello",
+        },
       },
     ];
     const { adapter } = await newAdapter(state);
@@ -710,6 +723,7 @@ describe("opencode adapter", () => {
       type: "message.delta",
       sessionId: "s1",
       messageId: "m1",
+      partId: "p1",
       kind: "text",
       delta: "hello",
     });
@@ -776,6 +790,7 @@ describe("opencode adapter", () => {
       type: "message.delta",
       sessionId: "s1",
       messageId: "m1",
+      partId: "p-thinking",
       kind: "thinking",
       delta: "hm",
     });
@@ -783,9 +798,140 @@ describe("opencode adapter", () => {
       type: "message.delta",
       sessionId: "s1",
       messageId: "m1",
+      partId: "p-text",
       kind: "text",
       delta: "he",
     });
+  });
+
+  it("forwards part snapshots with full text and the reasoning end time", async () => {
+    const state = baseState();
+    state.eventFrames = [
+      // streaming snapshot: no end yet
+      {
+        type: "message.part.updated",
+        properties: {
+          sessionID: "s1",
+          messageID: "m1",
+          part: {
+            id: "p-th",
+            type: "reasoning",
+            sessionID: "s1",
+            messageID: "m1",
+            text: "checking the config",
+            time: { start: 1000 },
+          },
+        },
+      },
+      // reasoning-end snapshot: carries time.end and the full text
+      {
+        type: "message.part.updated",
+        properties: {
+          sessionID: "s1",
+          messageID: "m1",
+          part: {
+            id: "p-th",
+            type: "reasoning",
+            sessionID: "s1",
+            messageID: "m1",
+            text: "checking the config, found it",
+            time: { start: 1000, end: 43000 },
+          },
+        },
+      },
+      // tool and step-start snapshots are not part of the text stream
+      {
+        type: "message.part.updated",
+        properties: {
+          sessionID: "s1",
+          messageID: "m1",
+          part: { id: "p-tool", type: "tool", sessionID: "s1", messageID: "m1", tool: "grep" },
+        },
+      },
+    ];
+    const { adapter } = await newAdapter(state);
+    const events: AgentEvent[] = [];
+    const unsubscribe = await adapter.subscribe((event) => events.push(event));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    unsubscribe();
+    expect(events).toContainEqual({
+      type: "message.part",
+      sessionId: "s1",
+      messageId: "m1",
+      partId: "p-th",
+      kind: "thinking",
+      text: "checking the config",
+      startedAt: 1000,
+      endedAt: null,
+    });
+    expect(events).toContainEqual({
+      type: "message.part",
+      sessionId: "s1",
+      messageId: "m1",
+      partId: "p-th",
+      kind: "thinking",
+      text: "checking the config, found it",
+      startedAt: 1000,
+      endedAt: 43000,
+    });
+    expect(events.filter((e) => e.type === "message.part")).toHaveLength(2);
+  });
+
+  it("drops deltas whose part kind was never announced instead of guessing text", async () => {
+    const state = baseState();
+    // App started mid-run / an SSE gap ate the part's first frame: the next
+    // delta names a part nobody announced. Guessing "text" would render
+    // reasoning as reply text; the snapshot that follows carries everything.
+    state.eventFrames = [
+      {
+        type: "message.part.delta",
+        properties: {
+          sessionID: "s1",
+          messageID: "m1",
+          partID: "p-unknown",
+          field: "text",
+          delta: "reasoning leak",
+        },
+      },
+      // same rule for older builds' part.updated frames without a part id
+      {
+        type: "message.part.updated",
+        properties: { sessionID: "s1", messageID: "m1", delta: "leak too" },
+      },
+      // once the snapshot lands, later deltas route correctly
+      {
+        type: "message.part.updated",
+        properties: {
+          sessionID: "s1",
+          messageID: "m1",
+          part: {
+            id: "p-unknown",
+            type: "reasoning",
+            sessionID: "s1",
+            messageID: "m1",
+            text: "reasoning leak",
+          },
+        },
+      },
+      {
+        type: "message.part.delta",
+        properties: {
+          sessionID: "s1",
+          messageID: "m1",
+          partID: "p-unknown",
+          field: "text",
+          delta: " more",
+        },
+      },
+    ];
+    const { adapter } = await newAdapter(state);
+    const events: AgentEvent[] = [];
+    const unsubscribe = await adapter.subscribe((event) => events.push(event));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    unsubscribe();
+    const deltas = events.filter((e) => e.type === "message.delta");
+    expect(deltas).toHaveLength(1);
+    expect(deltas[0]).toMatchObject({ partId: "p-unknown", kind: "thinking", delta: " more" });
   });
 
   it("session.error surfaces as server.error instead of dying silently", async () => {
