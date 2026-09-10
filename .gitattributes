@@ -1,0 +1,4 @@
+# biome formats LF; force LF working trees on every platform (Windows git
+# defaults to core.autocrlf=true, which CRLF-ifies the checkout and breaks
+# `biome check` on the CI Windows runner).
+* text=auto eol=lf
