@@ -175,7 +175,16 @@
       </article>
     </div>
 
-    <div v-if="graph.nodes.length === 0 && !store.loadingMessages" class="canvas-empty">
+    <div v-if="graph.nodes.length === 0 && store.connectionError" class="canvas-empty">
+      <div class="empty-mascot">🔌</div>
+      <p class="empty-title">opencode 未连接</p>
+      <p class="empty-sub">连接恢复后，点左侧「↻ 刷新」重新加载会话</p>
+    </div>
+    <div
+      v-else-if="graph.nodes.length === 0 && !store.booted && !store.loadingMessages"
+      class="canvas-loading"
+    >正在连接 opencode…</div>
+    <div v-else-if="graph.nodes.length === 0 && !store.loadingMessages" class="canvas-empty">
       <div class="empty-mascot">🍑</div>
       <p class="empty-title">这个项目还没有会话</p>
       <p class="empty-sub">在终端里用 opencode 开一场对话，它就会作为第一个节点出现在这里</p>

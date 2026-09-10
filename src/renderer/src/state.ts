@@ -44,6 +44,12 @@ interface DraftState {
 
 interface AppState {
   connectionError: string | null;
+  /**
+   * True once the startup session load has settled (sessions arrived or the
+   * retries ran out). Gates the canvas's "no sessions yet" empty state so a
+   * cold start or an offline server never claims the project is empty.
+   */
+  booted: boolean;
   sessions: SessionSummary[];
   /**
    * Session ids sitting in the delete grace window: hidden from every view,
@@ -120,6 +126,7 @@ interface AppState {
 
 const state = reactive<AppState>({
   connectionError: null,
+  booted: false,
   sessions: [],
   trash: [],
   deletedToast: null,
@@ -416,6 +423,7 @@ export async function init(): Promise<void> {
   // a listener attached only after the initial load.
   window.awefork.onEvent(handleEvent);
   await initialSessionLoad();
+  state.booted = true;
   // New-version check once startup settles: the agent server has just come up,
   // so give the handshake a beat. Fire-and-forget — never blocks first paint,
   // and every failure path stays silent.
