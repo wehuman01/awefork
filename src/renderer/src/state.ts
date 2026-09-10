@@ -364,7 +364,6 @@ const attemptedMessages = new Set<string>();
  * lands first settles the run; the other becomes a no-op.
  */
 interface CompletionWatch {
-  timer: ReturnType<typeof setInterval>;
   /** When the prompt was sent; only rows completed after this count. */
   sentAt: number;
   /** Polls since the last liveness sign (delta or observable message growth). */
@@ -381,6 +380,28 @@ const WATCH_INTERVAL_MS = 1500;
 // that went fully silent (or a lost connection) can reach the cap; settling is
 // then the right backstop.
 const WATCH_MAX_TICKS = 160;
+
+// One interval drives every watch. Parallel branches are the app's core move,
+// and an interval per session made N running sessions poll N times per tick;
+// the shared clock keeps the load at one pass per interval no matter how many
+// branches run.
+let watchTicker: ReturnType<typeof setInterval> | null = null;
+
+function startWatchTicker(): void {
+  if (watchTicker !== null) return;
+  watchTicker = setInterval(() => {
+    for (const [sessionId, watch] of [...completionWatches]) {
+      watch.ticks += 1;
+      void pollForCompletion(sessionId);
+    }
+  }, WATCH_INTERVAL_MS);
+}
+
+function stopWatchTickerIfIdle(): void {
+  if (watchTicker === null || completionWatches.size > 0) return;
+  clearInterval(watchTicker);
+  watchTicker = null;
+}
 
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -616,27 +637,22 @@ async function loadSessionMessages(
 /** Start (or restart) the poll watchdog for a prompt awefork just sent. */
 function watchCompletion(sessionId: string, sentAt: number): void {
   stopWatch(sessionId);
-  const timer = setInterval(() => {
-    const watch = completionWatches.get(sessionId);
-    if (!watch) return;
-    watch.ticks += 1;
-    void pollForCompletion(sessionId, watch);
-  }, WATCH_INTERVAL_MS);
-  completionWatches.set(sessionId, { timer, sentAt, ticks: 0, signature: "" });
+  completionWatches.set(sessionId, { sentAt, ticks: 0, signature: "" });
+  startWatchTicker();
 }
 
 function stopWatch(sessionId: string): void {
-  const watch = completionWatches.get(sessionId);
-  if (watch) {
-    clearInterval(watch.timer);
-    completionWatches.delete(sessionId);
-  }
+  if (completionWatches.delete(sessionId)) stopWatchTickerIfIdle();
 }
 
-async function pollForCompletion(sessionId: string, watch: CompletionWatch): Promise<void> {
+async function pollForCompletion(sessionId: string): Promise<void> {
   const messages = await loadSessionMessages(sessionId, false);
-  // idle may have stopped the watch while the fetch was in flight.
-  if (!completionWatches.has(sessionId)) return;
+  // Re-read the live entry: idle may have stopped the watch while the fetch
+  // was in flight, and a quick resend may have replaced it — judging by the
+  // entry captured before the await would settle the new run against the old
+  // prompt's completion rows.
+  const watch = completionWatches.get(sessionId);
+  if (!watch) return;
   // Message rows still appearing is liveness too — on opencode builds that
   // stream no deltas, this is the only progress signal the watchdog sees.
   const last = messages?.[messages.length - 1];
