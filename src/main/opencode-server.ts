@@ -136,7 +136,7 @@ export async function ensureOpencodeServer(
 ): Promise<EnsureServerResult> {
   const baseUrl = `http://127.0.0.1:${port}`;
   const client = createOpencodeClient(baseUrl);
-  if (await isReachable(client)) {
+  if (await isFullyReady(client, baseUrl)) {
     return { spawned: false, baseUrl };
   }
 
@@ -175,6 +175,17 @@ export async function ensureOpencodeServer(
     }
     if (child.exitCode !== null) break;
   }
+  // The loop only reaches here via deadline or child exit. One last probe
+  // covers the warm-up race — a winning opencode whose /event accepted right
+  // after the loop's final check — before diagnosing the failure.
+  if (await isFullyReady(client, baseUrl)) {
+    return { spawned: true, baseUrl };
+  }
+  if (await isReachable(client)) {
+    throw new Error(
+      `${baseUrl} is held by a server that does not behave like opencode (REST answers but the event stream does not). Free up port ${port} or start opencode on another port.`,
+    );
+  }
   throw new Error(
     `opencode server did not become ready on ${baseUrl}. Is the "opencode" CLI on PATH? Start it manually with: opencode serve --port ${port}`,
   );
@@ -182,8 +193,11 @@ export async function ensureOpencodeServer(
 
 async function isReachable(client: ReturnType<typeof createOpencodeClient>): Promise<boolean> {
   try {
-    await client.listSessions();
-    return true;
+    // Shape matters as much as status: any HTTP server can answer 200 on a
+    // path it does not know, but only an opencode answers /session with a
+    // sessions array — the reuse probe must not adopt a foreign server that
+    // happens to hold the port.
+    return Array.isArray(await client.listSessions());
   } catch {
     return false;
   }
@@ -193,7 +207,9 @@ async function isReachable(client: ReturnType<typeof createOpencodeClient>): Pro
  * `/session` answering is not enough on its own: a cold-started opencode
  * serves REST before its event stream accepts connections, and the adapter
  * subscribes the moment we resolve — which is what produced the
- * "Event stream lost, reconnecting" toast on every cold launch.
+ * "Event stream lost, reconnecting" toast on every cold launch. The same
+ * probe gates reuse, so a port held by anything but an opencode is never
+ * adopted silently.
  */
 async function isFullyReady(
   client: ReturnType<typeof createOpencodeClient>,

@@ -186,6 +186,20 @@ describe("resolveSpawnEnv", () => {
 });
 
 describe("ensureOpencodeServer", () => {
+  test("reuses a running server without spawning when REST and /event answer", async () => {
+    const { server, port } = await startGateServer({ sessionFailures: 0, eventFailures: 0 });
+    try {
+      const spawnFn: typeof spawn = () => {
+        throw new Error("must not spawn");
+      };
+      await expect(ensureOpencodeServer(port, spawnFn)).resolves.toMatchObject({
+        spawned: false,
+      });
+    } finally {
+      await closeServer(server);
+    }
+  });
+
   test("reports a failed spawn immediately instead of idling to the 30s deadline", async () => {
     // A CLI missing from PATH: spawn emits "error" and never sets exitCode.
     const spawnFn: typeof spawn = (() => {
@@ -232,6 +246,52 @@ describe("ensureOpencodeServer", () => {
       await expect(ensureOpencodeServer(port, () => child)).resolves.toMatchObject({
         spawned: true,
       });
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  test("reports a foreign server holding the port instead of a generic timeout", async () => {
+    // /session answers an array forever but /event never accepts: reuse must
+    // not adopt it, and the failed spawn's error must name the real problem.
+    const { server, port } = await startGateServer({ sessionFailures: 0, eventFailures: Infinity });
+    try {
+      const child = fakeRunningChild();
+      queueMicrotask(() => {
+        child.exitCode = 1;
+      });
+      await expect(ensureOpencodeServer(port, () => child)).rejects.toThrow(
+        /held by a server that does not behave like opencode/,
+      );
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  test("does not reuse a server whose /session is not a sessions array", async () => {
+    // A JSON 200 that isn't the sessions array is a foreign server too.
+    const server = createServer((req, res) => {
+      const { pathname } = new URL(req.url ?? "/", "http://localhost");
+      if (pathname === "/session") {
+        res.setHeader("content-type", "application/json");
+        res.end('{"ok":true}');
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    const port = await new Promise<number>((resolve) => {
+      server.listen(0, "127.0.0.1", () => {
+        const address = server.address();
+        resolve(typeof address === "object" && address ? address.port : 0);
+      });
+    });
+    try {
+      const child = fakeRunningChild();
+      queueMicrotask(() => {
+        child.exitCode = 1;
+      });
+      await expect(ensureOpencodeServer(port, () => child)).rejects.toThrow(/did not become ready/);
     } finally {
       await closeServer(server);
     }
