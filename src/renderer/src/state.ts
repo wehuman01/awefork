@@ -522,7 +522,10 @@ export async function selectSession(
   options: { focus?: boolean } = {},
 ): Promise<void> {
   if (!sessionId) return;
-  state.selectedId = sessionId;
+  const session = visibleSessions.value.find((item) => item.id === sessionId);
+  if (!session) return;
+  state.selectedDirectory = session.directory;
+  state.selectedId = session.id;
   state.selectedTurnId = null;
   const stream = streamBuffers.get(sessionId);
   state.streamText = stream?.text ?? "";
