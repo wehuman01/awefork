@@ -28,10 +28,10 @@ export function buildSpawnEnv(
   const delimiter = platform === "win32" ? ";" : ":";
   const candidates = candidateBinDirs(env, home, platform).filter((dir) => existsSync(dir));
 
-  const path = env.PATH ?? "";
-  const existing = new Set(path.split(delimiter).filter(Boolean));
+  const entries = splitPath(env.PATH, platform);
+  const existing = new Set(entries);
   const extra = candidates.filter((dir) => !existing.has(dir));
-  return { ...env, PATH: [...extra, ...path.split(delimiter).filter(Boolean)].join(delimiter) };
+  return { ...env, PATH: [...extra, ...entries].join(delimiter) };
 }
 
 function candidateBinDirs(
@@ -87,24 +87,18 @@ async function loginShellPath(): Promise<string | null> {
   }
 }
 
-function isOnPath(
-  name: string,
-  pathValue: string | undefined,
-  platform: NodeJS.Platform = process.platform,
-): boolean {
-  // In practice only reached on POSIX (the login-shell probe is darwin-only),
-  // but stay delimiter-correct: a win32 PATH is ';'-separated.
+function splitPath(pathValue: string | undefined, platform: NodeJS.Platform): string[] {
   const delimiter = platform === "win32" ? ";" : ":";
-  for (const dir of (pathValue ?? "").split(delimiter)) {
-    if (!dir) continue;
-    try {
-      accessSync(join(dir, name), constants.X_OK);
-      return true;
-    } catch {
-      // Not in this dir.
-    }
+  return (pathValue ?? "").split(delimiter).filter(Boolean);
+}
+
+function dirHasBinary(dir: string, name: string): boolean {
+  try {
+    accessSync(join(dir, name), constants.X_OK);
+    return true;
+  } catch {
+    return false;
   }
-  return false;
 }
 
 /** Spawn env for the opencode child, with the login-shell PATH as fallback. */
@@ -115,7 +109,11 @@ export async function resolveSpawnEnv(
   platform: NodeJS.Platform = process.platform,
 ): Promise<{ PATH?: string; [key: string]: string | undefined }> {
   const merged = buildSpawnEnv(env, home, platform);
-  if (isOnPath("opencode", merged.PATH, platform)) return merged;
+  // Check the sources, not the merged PATH string: re-splitting it with ':'
+  // would shred Windows drive-letter paths when POSIX behavior is emulated
+  // (tests) — and the probe below is darwin-only in production anyway.
+  const dirs = [...splitPath(env.PATH, platform), ...candidateBinDirs(env, home, platform)];
+  if (dirs.some((dir) => dirHasBinary(dir, "opencode"))) return merged;
   const probed = await shellPathProbe();
   if (!probed) return merged;
   // Union, not replace: the spawned server also shells out to git and friends
