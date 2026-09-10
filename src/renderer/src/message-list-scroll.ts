@@ -8,6 +8,19 @@ export function shouldFollowStream(distanceFromBottom: number): boolean {
 }
 
 /**
+ * Scroll offset that pins the turn's opening prompt to the container's top
+ * edge. Both tops are viewport coordinates captured in the same frame;
+ * scrollTo clamps the result into the valid range.
+ */
+export function promptAnchorScrollTop(
+  containerTop: number,
+  anchorTop: number,
+  scrollTop: number,
+): number {
+  return anchorTop - containerTop + scrollTop;
+}
+
+/**
  * A server refresh replaces an optimistic local row with the persisted row.
  * The ids differ, but the user prompt is still the same pane view.
  */

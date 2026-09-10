@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   isSamePaneStart,
+  promptAnchorScrollTop,
   STICK_DISTANCE_PX,
   shouldFollowStream,
 } from "../src/renderer/src/message-list-scroll";
@@ -44,5 +45,16 @@ describe("message list scroll", () => {
     expect(isSamePaneStart(message("u1", "user", "问题"), message("a1", "assistant", "问题"))).toBe(
       false,
     );
+  });
+
+  it("computes the offset that pins the turn prompt to the pane top", () => {
+    const containerTop = 120;
+    const scrollTop = 40;
+    // At this scroll the prompt renders 150px below the pane's top edge.
+    const anchorTop = containerTop + 150;
+    const target = promptAnchorScrollTop(containerTop, anchorTop, scrollTop);
+    expect(target).toBe(190);
+    // After landing, the prompt sits at the pane's top edge.
+    expect(anchorTop - (target - scrollTop)).toBe(containerTop);
   });
 });

@@ -79,7 +79,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from "vue";
 import type { SessionSummary } from "../../../shared/types";
-import { isSamePaneStart, shouldFollowStream } from "../message-list-scroll";
+import { isSamePaneStart, promptAnchorScrollTop, shouldFollowStream } from "../message-list-scroll";
 import type { LivePart, ReadonlyChatMessage } from "../state";
 import { thoughtSummary } from "../thought";
 import { MarkdownView } from "./markdown-view";
@@ -125,8 +125,10 @@ watch(
   },
 );
 
-// Switching a turn or session starts at the top. A server refresh can replace
-// an optimistic local prompt with its persisted counterpart; that is still the
+// Switching a turn or session lands on the turn's opening prompt, so the
+// question stays visible even when the reply below it overflows the pane; the
+// chain context above scrolls out of view. A server refresh can replace an
+// optimistic local prompt with its persisted counterpart; that is still the
 // same pane view, so preserve the reader's scroll position.
 let hasPreviousPane = false;
 let previousSessionId: string | undefined;
@@ -144,7 +146,20 @@ watch(
     previousFirstMessage = firstMessage;
     if (!shouldReset) return;
     void nextTick(() => {
-      listEl.value?.scrollTo({ top: 0 });
+      const list = listEl.value;
+      if (!list) return;
+      const prompt = list.querySelector<HTMLElement>(".message.user");
+      if (!prompt) {
+        list.scrollTo({ top: 0 });
+        return;
+      }
+      list.scrollTo({
+        top: promptAnchorScrollTop(
+          list.getBoundingClientRect().top,
+          prompt.getBoundingClientRect().top,
+          list.scrollTop,
+        ),
+      });
     });
   },
 );
