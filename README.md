@@ -98,6 +98,10 @@ No config file. Two facts drive everything:
 
 Lineage is stored by awefork because opencode's fork API copies messages without recording a parent link. Delete the file and you only lose fork nesting in the tree — sessions keep working.
 
+## Compatibility
+
+awefork is developed and tested against **opencode 1.18.x**. It talks to opencode's local HTTP API, and the SSE event shapes there have shifted between opencode versions — the adapter handles the variants it knows, but a much older or newer opencode can degrade silently (runs that never settle, streams that stay empty). If runs misbehave, check `opencode --version` against the version above. A port held by a server that does not behave like `opencode serve` is refused at startup instead of being adopted.
+
 ## Multi-Agent Roadmap
 
 The core is the `AgentAdapter` protocol (`src/shared/types.ts`): listSessions / messages / fork / prompt / abort / subscribe. opencode is the first implementation. Planned next: pi (JSONL with `parentId`), Claude Code (JSONL with `parentUuid` + `--resume`), Codex.

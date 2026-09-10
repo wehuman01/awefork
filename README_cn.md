@@ -97,6 +97,10 @@ npm run dev
 
 谱系由 awefork 自行记录，因为 opencode 的 fork API 只复制消息、不留父链接。删掉这个文件只会丢树形嵌套，会话本身照常可用。
 
+## 兼容性
+
+awefork 基于 **opencode 1.18.x** 开发与测试。它调用的是 opencode 的本地 HTTP API，而其 SSE 事件格式在不同版本间有过变动 —— 适配层已处理已知差异，但过老或过新的 opencode 可能出现静默降级（运行一直不结束、流式内容空白）。遇到这类情况，先用 `opencode --version` 对照上面的版本。端口若被一个行为不符合 `opencode serve` 的服务占用，启动时会直接拒绝，而不是误连。
+
 ## 多 Agent 路线
 
 核心是 `AgentAdapter` 协议（`src/shared/types.ts`）：listSessions / messages / fork / prompt / abort / subscribe。opencode 是第一个实现。后续计划：pi（带 `parentId` 的 JSONL）、Claude Code（带 `parentUuid` 的 JSONL + `--resume`）、Codex。
