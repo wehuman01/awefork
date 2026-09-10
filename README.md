@@ -47,7 +47,7 @@ The idea of treating sessions as a branching graph originates from [PiX](https:/
 └──────────────┴──────────────────────────────────┘
 ```
 
-- **Navigator** — all opencode sessions grouped by project directory (folders fold); forks nest under their parent. Right-click a row to rename (`PATCH /session`) or archive it; right-click a directory to archive the whole project. Archived items hide from every view (search, palette, canvas included) and restore from the archive section at the sidebar's bottom — sessions created under an archived directory stay hidden until the directory comes back.
+- **Navigator** — all opencode sessions grouped by project directory (folders fold); forks nest under their parent. Star a session to bookmark it — stars gather in the ★ favorites shelf at the sidebar's top, across projects, and never touch the canvas (it draws the selected story only). Right-click a row to rename (`PATCH /session`) or archive it; right-click a directory to archive the whole project. Archived items hide from every view (search, palette, canvas included) and restore from the archive section at the sidebar's bottom — sessions created under an archived directory stay hidden until the directory comes back.
 - **Turn pane** — the right panel shows one turn: its prompt and reply, with run duration and output tokens in the header. Click a canvas card or a sidebar session and the pane jumps there; while a new turn runs, it follows along. Walk turns with ‹ › or ←/→.
 - **Fork here** — any user turn can seed a new branch. The new session keeps that full turn (question + answer), and awefork lands you in it.
 - **Checkpoint clone** — fork the selected branch's latest state in one click, no turn picking needed.

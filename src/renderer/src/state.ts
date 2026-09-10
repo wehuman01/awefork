@@ -59,7 +59,7 @@ interface AppState {
   /** The latest soft delete, driving the undo toast; null = no toast. */
   deletedToast: { sessionId: string; title: string } | null;
   lineage: Record<string, ForkRecord>;
-  /** Session ids the user saved to the canvas (persisted in pins.json). */
+  /** Session ids the user starred (persisted in pins.json). */
   pins: string[];
   /**
    * Sessions and directories tucked away (persisted in archive.json).
@@ -231,26 +231,25 @@ const directorySessions = computed<SessionSummary[]>(() =>
   enrichedSessions.value.filter((s) => s.directory === state.selectedDirectory),
 );
 
-const directorySessionIds = computed<Set<string>>(
-  () => new Set(directorySessions.value.map((s) => s.id)),
-);
-
-/** Pinned sessions of the current project — the canvas's standing residents. */
-export const pinnedSessions = computed<SessionSummary[]>(() =>
-  directorySessions.value.filter((s) => state.pins.includes(s.id)),
-);
+/**
+ * Starred sessions across every directory, most recently starred first —
+ * the sidebar's favorites shelf. Purely a retrieval view: starring no
+ * longer puts anything on the canvas.
+ */
+export const favoriteSessions = computed<SessionSummary[]>(() => {
+  const byId = new Map(visibleSessions.value.map((s) => [s.id, s]));
+  return [...state.pins]
+    .reverse()
+    .map((id) => byId.get(id))
+    .filter((s): s is SessionSummary => s !== undefined);
+});
 
 /**
- * What the canvas draws: pinned branch stories plus the selected session's
- * neighborhood. The full session list stays in the sidebar.
+ * What the canvas draws: the selected session's whole story. The full
+ * session list stays in the sidebar; stars live in the favorites shelf.
  */
 export const canvasSessions = computed<SessionSummary[]>(() =>
-  selectCanvasSessions(
-    directorySessions.value,
-    state.lineage,
-    state.pins.filter((id) => directorySessionIds.value.has(id)),
-    state.selectedId,
-  ),
+  selectCanvasSessions(directorySessions.value, state.lineage, state.selectedId),
 );
 
 /**

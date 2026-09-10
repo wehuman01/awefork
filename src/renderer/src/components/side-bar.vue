@@ -11,6 +11,28 @@
       <span>⌕</span>
       <input v-model="query" type="text" placeholder="搜索会话" />
     </div>
+    <div v-if="favoriteSessions.length > 0 && !searching" class="fav-zone">
+      <button type="button" class="fav-head" @click="favOpen = !favOpen">
+        <span class="archive-caret">{{ favOpen ? "▾" : "▸" }}</span>
+        <span>★ 收藏</span>
+        <span class="proj-count">{{ favoriteSessions.length }}</span>
+      </button>
+      <div v-if="favOpen" class="fav-list">
+        <button
+          v-for="sess in favoriteSessions"
+          :key="sess.id"
+          type="button"
+          class="fav-row"
+          :class="{ active: sess.id === selectedId, running: store.running[sess.id] }"
+          :title="sess.title || '(untitled)'"
+          @click="openFavorite(sess)"
+        >
+          <span class="fav-dot"></span>
+          <span class="fav-name">{{ sess.title || "(untitled)" }}</span>
+          <span class="fav-dir">{{ shortPath(sess.directory) }}</span>
+        </button>
+      </div>
+    </div>
     <nav class="session-list">
       <template v-for="group in visibleGroups" :key="group.directory">
         <div
@@ -78,7 +100,7 @@
               type="button"
               class="pin-star"
               :class="{ on: store.pins.includes(row.session.id) }"
-              :title="store.pins.includes(row.session.id) ? '取消收藏' : '收藏这个分支故事'"
+              :title="store.pins.includes(row.session.id) ? '取消收藏' : '收藏'"
               @click.stop="pinToggle(row.session.id)"
             >{{ store.pins.includes(row.session.id) ? "★" : "☆" }}</button>
           </div>
@@ -156,6 +178,7 @@ import {
   archiveSession,
   createSession,
   deleteSession,
+  favoriteSessions,
   recentAlphaFor,
   refreshSessions,
   renameSession,
@@ -237,16 +260,11 @@ function copySessionId(): void {
   void navigator.clipboard.writeText(active.sessionId);
 }
 
-/** Same soft delete as the canvas 🗑 chip: confirm, then the undo toast rules. */
+/** Same soft delete as the canvas 🗑 chip: instant, the undo toast rules. */
 function beginDelete(): void {
   const active = menu.value;
   if (!active) return;
   closeMenu();
-  const title = active.title || "空会话";
-  const ok = window.confirm(
-    `删除会话「${title}」？\n它的所有回合都会一起删除（从它分叉出的子分支会保留）。`,
-  );
-  if (!ok) return;
   void deleteSession(active.sessionId);
 }
 
@@ -258,19 +276,23 @@ function beginArchive(): void {
   void archiveSession(active.sessionId);
 }
 
-/** Whole-directory archive hides a lot at once — confirm before the move. */
+/** Whole-directory archive is just as reversible from the archive section. */
 function beginDirArchive(): void {
   const active = dirMenu.value;
   if (!active) return;
   closeMenu();
-  const ok = window.confirm(
-    `归档目录「${shortPath(active.directory)}」？\n它下面的所有会话（包括以后新增的）都会隐藏，随时可在侧栏底部的归档区恢复。`,
-  );
-  if (!ok) return;
   void archiveDirectory(active.directory);
 }
 
-// ── archive section ─────────────────────────────────────────────────
+// ── favorites shelf + archive section ───────────────────────────────
+
+/** Stars across every directory — a jump list, so it starts expanded. */
+const favOpen = ref(true);
+
+function openFavorite(session: SessionSummary): void {
+  // selectSession switches directory itself when the star lives elsewhere.
+  void selectSession(session.id, { focus: true });
+}
 
 const archiveOpen = ref(false);
 

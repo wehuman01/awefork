@@ -149,10 +149,11 @@
           @input="setDraftText(($event.target as HTMLTextAreaElement).value)"
           @keydown.meta.enter.prevent="submitDraft"
           @keydown.ctrl.enter.prevent="submitDraft"
+          @keydown.esc="onDraftEsc"
           @paste="onDraftPaste"
         ></textarea>
         <div class="draft-foot">
-          <span class="hint">⌘/Ctrl ⏎ 发送</span>
+          <span class="hint">⌘/Ctrl ⏎ 发送 · Esc 收起</span>
           <ModelPicker
             class="draft-model"
             :model-value="store.draft?.model ?? null"
@@ -382,7 +383,17 @@ function submitDraft(): void {
   void sendDraft();
 }
 
-/** 🗑 deletes one turn at the session's tip, the whole session everywhere else. */
+/** Esc closes the draft — except while an IME composition owns the key. */
+function onDraftEsc(event: KeyboardEvent): void {
+  if (event.isComposing || event.keyCode === 229) return;
+  dismissDraft();
+}
+
+/**
+ * 🗑 deletes one turn at the session's tip, the whole session everywhere
+ * else. Turn deletes are final — confirm stands. Session deletes ride the
+ * undo toast, so they go straight through.
+ */
 function removeNode(node: TurnNode): void {
   if (isTurnDelete(node)) {
     const ok = window.confirm(
@@ -391,11 +402,6 @@ function removeNode(node: TurnNode): void {
     if (ok) void deleteTurn(node);
     return;
   }
-  const title = node.title || "空会话";
-  const ok = window.confirm(
-    `删除会话「${title}」？\n它的所有回合都会一起删除（从它分叉出的子分支会保留）。`,
-  );
-  if (!ok) return;
   void deleteSession(node.sessionId);
 }
 

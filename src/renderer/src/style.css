@@ -545,6 +545,9 @@ textarea {
   font-size: 13px;
   color: var(--ink-faint);
   line-height: 1;
+  /* unstarred stars wait for the row; lit ones (and focused rows) show */
+  opacity: 0;
+  transition: opacity 0.12s ease;
 }
 
 .pin-star:hover {
@@ -556,18 +559,8 @@ textarea {
   color: #f0b429;
 }
 
-.turn-head .pin-star,
-.stub .turn-head .pin-star {
-  flex: 0 0 22px;
-  width: 22px;
-  height: 22px;
-  border-radius: 7px;
-  font-size: 12px;
-  opacity: 0.55;
-}
-
-.turn:hover .pin-star,
-.turn.selected .pin-star,
+.sess-row:hover .pin-star,
+.sess-row:focus-within .pin-star,
 .pin-star.on {
   opacity: 1;
 }
@@ -579,6 +572,94 @@ textarea {
 }
 
 /* archive section (sidebar bottom) */
+
+/* favorites shelf (sidebar top) — the stars' home, mirroring the archive zone */
+
+.fav-zone {
+  flex: 0 0 auto;
+  margin-bottom: 6px;
+}
+
+.fav-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--ink-faint);
+}
+
+.fav-head:hover {
+  background: var(--primary-soft);
+  color: var(--primary-deep);
+}
+
+.fav-list {
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 2px 0 4px;
+}
+
+.fav-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 6px 8px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  min-width: 0;
+}
+
+.fav-row:hover {
+  background: var(--primary-soft);
+}
+
+.fav-row.active {
+  background: #fff1e8;
+  color: var(--ink);
+}
+
+.fav-row .fav-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ink-faint);
+  flex: 0 0 7px;
+}
+
+.fav-row.running .fav-dot {
+  background: var(--mint);
+  box-shadow: 0 0 0 3px var(--mint-soft);
+}
+
+.fav-name {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fav-dir {
+  flex: 0 0 auto;
+  max-width: 96px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--ink-faint);
+  background: var(--bg);
+  border-radius: 999px;
+  padding: 1px 7px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 
 .archive-zone {
   flex: 0 0 auto;

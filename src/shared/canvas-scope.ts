@@ -1,12 +1,11 @@
 /**
  * Canvas scope: decide which sessions belong on the canvas.
  *
- * Rule: the canvas shows the branch stories you pinned, plus the story you
- * are looking at. Concretely: pinned sessions and the selected session each
- * bring their whole fork tree — the selected one by walking up to the top of
- * its story first, so a fresh fork keeps the source line and its sibling
- * branches visible. Everything else stays in the sidebar index — the canvas
- * is a workbench, not the archive.
+ * Rule: the canvas shows the story you are looking at — the selected
+ * session's whole fork tree, found by walking up to the top of its story
+ * first, so a fresh fork keeps the source line and its sibling branches
+ * visible. Everything else, starred or not, stays in the sidebar index —
+ * the canvas is a workbench, not the archive; stars are bookmarks.
  */
 
 import type { LineageMap, SessionSummary } from "./types.js";
@@ -14,10 +13,12 @@ import type { LineageMap, SessionSummary } from "./types.js";
 export function selectCanvasSessions(
   sessions: SessionSummary[],
   lineage: LineageMap,
-  pinnedIds: string[],
   selectedId: string | null,
 ): SessionSummary[] {
   const byId = new Map(sessions.map((s) => [s.id, s]));
+
+  if (!selectedId || !byId.has(selectedId)) return [];
+
   const childrenOf = new Map<string, string[]>();
   for (const session of sessions) {
     const parent = lineage[session.id]?.parentId ?? session.parentSessionId;
@@ -35,21 +36,17 @@ export function selectCanvasSessions(
     }
   };
 
-  for (const id of pinnedIds) addSubtree(id);
-
-  if (selectedId && byId.has(selectedId)) {
-    // Whole story, not just the branch below the selection: walk up to the
-    // story's root, then keep its entire fork tree (siblings included).
-    let rootId = selectedId;
-    const walked = new Set([rootId]);
-    for (;;) {
-      const parent = lineage[rootId]?.parentId ?? byId.get(rootId)?.parentSessionId;
-      if (!parent || !byId.has(parent) || walked.has(parent)) break;
-      walked.add(parent);
-      rootId = parent;
-    }
-    addSubtree(rootId);
+  // Whole story, not just the branch below the selection: walk up to the
+  // story's root, then keep its entire fork tree (siblings included).
+  let rootId = selectedId;
+  const walked = new Set([rootId]);
+  for (;;) {
+    const parent = lineage[rootId]?.parentId ?? byId.get(rootId)?.parentSessionId;
+    if (!parent || !byId.has(parent) || walked.has(parent)) break;
+    walked.add(parent);
+    rootId = parent;
   }
+  addSubtree(rootId);
 
   return sessions.filter((s) => keep.has(s.id));
 }
