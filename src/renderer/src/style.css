@@ -13,6 +13,7 @@
   --lavender-soft: #efeafd;
   --mint: #7bc96f;
   --mint-soft: #e4f5e0;
+  --mint-rgb: 123, 201, 111;
   --ink: #4a3f3a;
   --ink-soft: #9a8b82;
   --ink-faint: #c4b6ac;
@@ -491,6 +492,12 @@ textarea {
   box-shadow: 0 0 0 3px var(--mint-soft);
 }
 
+/* same "刚跑完" signal as the canvas tip card, faded by --recent-alpha */
+.sess.recent .dot {
+  background: rgba(var(--mint-rgb), var(--recent-alpha, 0));
+  box-shadow: 0 0 0 3px rgba(var(--mint-rgb), calc(0.25 * var(--recent-alpha, 0)));
+}
+
 .fork-glyph {
   color: var(--lavender);
   font-weight: 800;
@@ -790,6 +797,7 @@ textarea {
   transition:
     box-shadow 0.15s,
     border-color 0.15s,
+    background-color 0.6s,
     transform 0.15s,
     opacity 0.15s;
 }
@@ -801,6 +809,20 @@ textarea {
 .turn:hover {
   transform: translateY(-2px);
   box-shadow: var(--shadow-lift);
+}
+
+/* "刚跑完" tint on the session tip right after a run settles. --recent-alpha
+   (1 → 0 over five minutes) fades the border and wash back to neutral. Kept
+   before .selected in source so a selected card keeps its border while the
+   wash and the minted timestamp still read. */
+.turn.recent {
+  border-color: rgba(var(--mint-rgb), var(--recent-alpha, 0));
+  background-color: rgba(var(--mint-rgb), calc(0.045 * var(--recent-alpha, 0)));
+}
+
+/* freshness stays readable even when the active path dims it, like hits */
+.turn.recent.dimmed {
+  opacity: 0.85;
 }
 
 .turn.selected {
@@ -977,11 +999,19 @@ textarea {
 
 /* hover-reveal delete; swaps in where the timestamp sits */
 .turn-time {
-  transition: opacity 0.15s;
+  transition:
+    opacity 0.15s,
+    color 0.6s;
 }
 
 .turn:hover .turn-time {
   opacity: 0;
+}
+
+/* the minted "刚刚" on a session tip — the text half of the recent tint */
+.turn.recent .turn-time {
+  color: #4e8f45;
+  font-weight: 800;
 }
 
 .del-chip {
@@ -1285,6 +1315,12 @@ textarea {
 .mm-node.stub {
   background: #eee6f8;
   border-color: #c9b8f0;
+}
+
+/* freshness dot: green while it fades, below hits and a live run */
+.mm-node.recent {
+  background: rgba(var(--mint-rgb), var(--recent-alpha, 0));
+  border-color: rgba(var(--mint-rgb), var(--recent-alpha, 0));
 }
 
 /* search hits, above the active path but below a live run */

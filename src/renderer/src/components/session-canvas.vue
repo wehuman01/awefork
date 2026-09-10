@@ -38,11 +38,17 @@
         :class="{
           selected: node.id === selectedTurnId,
           running: isNodeRunning(node),
+          recent: isNodeRecent(node),
           stub: node.kind === 'stub',
           dimmed: hasActivePath && !activePathIds.has(node.id),
           hit: searchHitIds.has(node.id),
         }"
-        :style="{ left: `${node.x}px`, top: `${node.y}px`, width: `${NODE_WIDTH}px` }"
+        :style="{
+          left: `${node.x}px`,
+          top: `${node.y}px`,
+          width: `${NODE_WIDTH}px`,
+          '--recent-alpha': recentAlpha(node),
+        }"
         @mousedown.stop
         @click="selectNode(node)"
       >
@@ -71,7 +77,10 @@
           <div class="turn-head">
             <span class="avatar user">🍑</span>
             <span class="turn-title" :title="node.title">{{ node.title }}</span>
-            <span class="turn-time">{{ relativeTime(node.createdAt) }}</span>
+            <span
+              class="turn-time"
+              :class="{ recent: isNodeRecent(node) }"
+            >{{ relativeTime(node.createdAt) }}</span>
           </div>
           <div class="turn-body">
             <span class="avatar bot">✨</span>
@@ -207,9 +216,10 @@
           stub: n.kind === 'stub',
           on: activePathIds.has(n.id),
           running: isNodeRunning(n),
+          recent: isNodeRecent(n),
           hit: searchHitIds.has(n.id),
         }"
-        :style="mmNodeStyle(n)"
+        :style="{ ...mmNodeStyle(n), '--recent-alpha': recentAlpha(n) }"
       ></div>
       <div class="mm-view" :style="mmViewStyle"></div>
     </div>
@@ -232,6 +242,7 @@ import {
   isSessionTip,
   isTurnDelete,
   openDraft,
+  recentAlphaFor,
   retryNode,
   selectTurn,
   sendDraft,
@@ -733,6 +744,19 @@ function footMeta(node: TurnNode): string {
  */
 function isNodeRunning(node: TurnNode): boolean {
   return Boolean(store.running[node.sessionId]) && isSessionTip(node);
+}
+
+/**
+ * The "刚跑完" tint rides the same tip-only rule as running: one card per
+ * session at most, and it yields as soon as a newer run takes the tip.
+ */
+function isNodeRecent(node: TurnNode): boolean {
+  return node.kind === "turn" && isSessionTip(node) && recentAlphaFor(node.sessionId) > 0;
+}
+
+/** Fade driver for the CSS var — 1 right after settle, 0 five minutes later. */
+function recentAlpha(node: TurnNode): number {
+  return isSessionTip(node) ? recentAlphaFor(node.sessionId) : 0;
 }
 
 /** Preview line: the live stream while the tip runs, else the reply / failure / stand-in. */

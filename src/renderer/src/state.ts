@@ -74,6 +74,12 @@ interface AppState {
   models: ModelOption[];
   /** sessionId → true while an agent run is in flight. */
   running: Record<string, boolean>;
+  /**
+   * sessionId → epoch ms when its last run settled. The card carries a soft
+   * "刚跑完" tint that fades to neutral over RECENT_MS — helps the user
+   * spot which branches just finished when the canvas is full.
+   */
+  recent: Record<string, number>;
   /** Live stream text of the selected session only. */
   streamText: string;
   /** Live reasoning of the selected session only, separate from its reply. */
@@ -128,6 +134,7 @@ const state = reactive<AppState>({
   messagesError: null,
   models: [],
   running: {},
+  recent: {},
   streamText: "",
   streamThinking: "",
   streams: {},
@@ -648,6 +655,34 @@ async function pollForCompletion(sessionId: string, watch: CompletionWatch): Pro
   }
 }
 
+/** How long a settled session keeps its "刚跑完" tint, and the fade granularity. */
+const RECENT_MS = 5 * 60_000;
+const RECENT_TICK_MS = 30_000;
+
+const recentNow = ref(Date.now());
+let recentTicker: ReturnType<typeof setInterval> | null = null;
+
+function startRecentTicker(): void {
+  if (recentTicker !== null) return;
+  recentTicker = setInterval(() => {
+    recentNow.value = Date.now();
+  }, RECENT_TICK_MS);
+}
+
+function stopRecentTicker(): void {
+  if (recentTicker === null) return;
+  clearInterval(recentTicker);
+  recentTicker = null;
+}
+
+function clearRecent(sessionId: string): void {
+  if (!(sessionId in state.recent)) return;
+  const { [sessionId]: gone, ...kept } = state.recent;
+  void gone;
+  state.recent = kept;
+  if (Object.keys(state.recent).length === 0) stopRecentTicker();
+}
+
 /** Shared run-finished cleanup, driven by SSE idle or the poll watchdog. */
 function settleRun(sessionId: string): void {
   stopWatch(sessionId);
@@ -658,10 +693,31 @@ function settleRun(sessionId: string): void {
   const { [sessionId]: finished, ...stillRunning } = state.running;
   void finished;
   state.running = stillRunning;
+  const settledAt = Date.now();
+  state.recent = { ...state.recent, [sessionId]: settledAt };
+  startRecentTicker();
+  setTimeout(() => {
+    // A newer settle overwrote the entry; the older timer must not clear it.
+    if (state.recent[sessionId] === settledAt) clearRecent(sessionId);
+  }, RECENT_MS);
   if (state.selectedId === sessionId) {
     state.streamText = "";
     state.streamThinking = "";
   }
+}
+
+/**
+ * 0..1 freshness of a session's last settled run — 1 right after settle,
+ * 0 once RECENT_MS has passed (or while a new run is in flight). Reading
+ * recentNow keeps this reactive, so tints re-evaluate on each tick.
+ */
+export function recentAlphaFor(sessionId: string): number {
+  if (state.running[sessionId]) return 0;
+  const at = state.recent[sessionId];
+  if (at === undefined) return 0;
+  const age = recentNow.value - at;
+  if (age >= RECENT_MS) return 0;
+  return 1 - age / RECENT_MS;
 }
 
 async function finishRun(sessionId: string): Promise<void> {
@@ -1083,6 +1139,7 @@ async function hardDeleteSession(sessionId: string): Promise<void> {
   const { [sessionId]: goneRunning, ...keptRunning } = state.running;
   void goneRunning;
   state.running = keptRunning;
+  clearRecent(sessionId);
   const { [sessionId]: goneLineage, ...keptLineage } = state.lineage;
   void goneLineage;
   state.lineage = keptLineage;

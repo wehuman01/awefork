@@ -58,8 +58,14 @@
               v-else
               type="button"
               class="sess"
-              :class="{ running: store.running[row.session.id] }"
-              :style="{ paddingLeft: `${8 + row.depth * 14}px` }"
+              :class="{
+                running: store.running[row.session.id],
+                recent: recentAlphaFor(row.session.id) > 0,
+              }"
+              :style="{
+                paddingLeft: `${8 + row.depth * 14}px`,
+                '--recent-alpha': recentAlphaFor(row.session.id),
+              }"
               :title="row.session.title || '(untitled)'"
               @click="selectSession(row.session.id, { focus: true })"
               @contextmenu.prevent="openMenu(row.session, $event)"
@@ -150,6 +156,7 @@ import {
   archiveSession,
   createSession,
   deleteSession,
+  recentAlphaFor,
   refreshSessions,
   renameSession,
   restoreDirectory,
