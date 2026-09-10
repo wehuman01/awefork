@@ -79,9 +79,11 @@ function closeServer(server: Server): Promise<void> {
 }
 
 describe("buildSpawnEnv", () => {
+  // POSIX cases pin "darwin" so they keep testing POSIX behavior when vitest
+  // runs on the Windows CI runner (win32 has its own cases below).
   test("prepends home bin dirs that exist so packaged apps can find opencode", () => {
     const home = fakeHome();
-    const env = buildSpawnEnv({ PATH: "/usr/bin:/bin", HOME: home }, home);
+    const env = buildSpawnEnv({ PATH: "/usr/bin:/bin", HOME: home }, home, "darwin");
     expect(env.PATH?.startsWith(join(home, ".deskclaw", "node", "bin"))).toBe(true);
     expect(env.PATH).toContain("/usr/bin:/bin");
   });
@@ -91,6 +93,7 @@ describe("buildSpawnEnv", () => {
     const env = buildSpawnEnv(
       { PATH: "/usr/bin:/bin", HOME: home, ELECTRON_NO_ATTACH_CONSOLE: "1" },
       home,
+      "darwin",
     );
     expect(env.ELECTRON_NO_ATTACH_CONSOLE).toBe("1");
     const parts = (env.PATH ?? "").split(":");
@@ -99,7 +102,7 @@ describe("buildSpawnEnv", () => {
 
   test("works when candidate dirs are missing", () => {
     const home = mkdtempSync(join(tmpdir(), "awefork-empty-"));
-    const env = buildSpawnEnv({ PATH: "/usr/bin:/bin" }, home);
+    const env = buildSpawnEnv({ PATH: "/usr/bin:/bin" }, home, "darwin");
     expect(env.PATH).not.toContain(home);
     expect(env.PATH?.endsWith("/usr/bin:/bin")).toBe(true);
   });
@@ -138,13 +141,20 @@ describe("buildSpawnEnv", () => {
 });
 
 describe("resolveSpawnEnv", () => {
+  // The login-shell probe is darwin-only in production; pin "darwin" so these
+  // cases exercise the POSIX path on every CI OS.
   test("asks the login shell for PATH when opencode is nowhere on it", async () => {
     const home = mkdtempSync(join(tmpdir(), "awefork-noopencode-"));
     let probed = false;
-    const env = await resolveSpawnEnv({ PATH: "/usr/bin:/bin" }, home, async () => {
-      probed = true;
-      return "/Users/x/.nvm/versions/node/v22.0.0/bin";
-    });
+    const env = await resolveSpawnEnv(
+      { PATH: "/usr/bin:/bin" },
+      home,
+      async () => {
+        probed = true;
+        return "/Users/x/.nvm/versions/node/v22.0.0/bin";
+      },
+      "darwin",
+    );
     expect(probed).toBe(true);
     // Machine-wide candidate dirs (/opt/homebrew/bin …) may also be prepended,
     // so assert membership, not order.
@@ -156,15 +166,20 @@ describe("resolveSpawnEnv", () => {
 
   test("skips the login shell when candidates already resolve opencode", async () => {
     const home = fakeHome();
-    const env = await resolveSpawnEnv({ PATH: "/usr/bin:/bin" }, home, async () => {
-      throw new Error("probe must not run");
-    });
+    const env = await resolveSpawnEnv(
+      { PATH: "/usr/bin:/bin" },
+      home,
+      async () => {
+        throw new Error("probe must not run");
+      },
+      "darwin",
+    );
     expect(env.PATH?.startsWith(join(home, ".deskclaw", "node", "bin"))).toBe(true);
   });
 
   test("falls back to the merged PATH when the probe finds nothing", async () => {
     const home = mkdtempSync(join(tmpdir(), "awefork-noopencode-"));
-    const env = await resolveSpawnEnv({ PATH: "/usr/bin:/bin" }, home, async () => null);
+    const env = await resolveSpawnEnv({ PATH: "/usr/bin:/bin" }, home, async () => null, "darwin");
     // Original entries survive; only machine-local candidate dirs may lead.
     expect(env.PATH?.endsWith("/usr/bin:/bin")).toBe(true);
   });

@@ -87,10 +87,14 @@ async function loginShellPath(): Promise<string | null> {
   }
 }
 
-function isOnPath(name: string, pathValue: string | undefined): boolean {
-  // Only reachable on POSIX (the login-shell probe below is darwin-only), but
-  // stay delimiter-correct anyway: a win32 PATH is ';'-separated.
-  const delimiter = process.platform === "win32" ? ";" : ":";
+function isOnPath(
+  name: string,
+  pathValue: string | undefined,
+  platform: NodeJS.Platform = process.platform,
+): boolean {
+  // In practice only reached on POSIX (the login-shell probe is darwin-only),
+  // but stay delimiter-correct: a win32 PATH is ';'-separated.
+  const delimiter = platform === "win32" ? ";" : ":";
   for (const dir of (pathValue ?? "").split(delimiter)) {
     if (!dir) continue;
     try {
@@ -108,14 +112,19 @@ export async function resolveSpawnEnv(
   env: { PATH?: string; [key: string]: string | undefined } = process.env,
   home: string = homedir(),
   shellPathProbe: () => Promise<string | null> = loginShellPath,
+  platform: NodeJS.Platform = process.platform,
 ): Promise<{ PATH?: string; [key: string]: string | undefined }> {
-  const merged = buildSpawnEnv(env, home);
-  if (isOnPath("opencode", merged.PATH)) return merged;
+  const merged = buildSpawnEnv(env, home, platform);
+  if (isOnPath("opencode", merged.PATH, platform)) return merged;
   const probed = await shellPathProbe();
   if (!probed) return merged;
   // Union, not replace: the spawned server also shells out to git and friends
   // that live on the original (Finder-minimal) PATH.
-  return buildSpawnEnv({ ...env, PATH: [probed, env.PATH ?? ""].filter(Boolean).join(":") }, home);
+  return buildSpawnEnv(
+    { ...env, PATH: [probed, env.PATH ?? ""].filter(Boolean).join(":") },
+    home,
+    platform,
+  );
 }
 
 /**
