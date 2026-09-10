@@ -77,3 +77,5 @@ Implement `AgentAdapter` in `src/shared/`, add an entry in main-process wiring f
 ## Release
 
 Versioning from `package.json`. `docs/CHANGELOG.md` gets a `## vX.Y.Z` section per release. Tag `v*` triggers `.github/workflows/release.yml` (tests → changelog extraction → GitHub Release).
+
+Installers are built locally with `npm run dist` (mac) / `npm run dist:win` (Windows) into `dist/`. Before each build, `scripts/archive-dist.mjs` moves installers of older versions into `dist/archive/<version>/`, so `dist/` root only ever holds the current build.
