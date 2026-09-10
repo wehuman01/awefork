@@ -80,7 +80,13 @@ onMounted(() => {
   void init();
   window.addEventListener("keydown", onKeydown);
 });
-onUnmounted(() => window.removeEventListener("keydown", onKeydown));
+onUnmounted(() => {
+  window.removeEventListener("keydown", onKeydown);
+  if (activeDrag) {
+    window.removeEventListener("mousemove", activeDrag.move);
+    window.removeEventListener("mouseup", activeDrag.up);
+  }
+});
 
 // ── Ctrl/⌘+Z: undo the most recent delete still awaiting its flush ──
 // Works even after the toast has faded; the undo window only closes when a
@@ -105,6 +111,10 @@ function onKeydown(event: KeyboardEvent): void {
 
 // ── panel drag handles ───────────────────────────────────────────────
 
+// The in-flight drag's window listeners; only one drag can be live at a time,
+// and an unmount mid-drag must drop them instead of leaking the closures.
+let activeDrag: { move: (event: MouseEvent) => void; up: () => void } | null = null;
+
 function startDrag(side: "sidebar" | "context", event: MouseEvent): void {
   if (event.button !== 0) return;
   const panel = panels[side];
@@ -121,9 +131,11 @@ function startDrag(side: "sidebar" | "context", event: MouseEvent): void {
   const up = (): void => {
     window.removeEventListener("mousemove", move);
     window.removeEventListener("mouseup", up);
+    activeDrag = null;
     persistLayout();
   };
   window.addEventListener("mousemove", move);
   window.addEventListener("mouseup", up);
+  activeDrag = { move, up };
 }
 </script>

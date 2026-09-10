@@ -762,6 +762,15 @@ function handleEvent(event: AgentEvent): void {
     }
     case "message.started": {
       state.running = { ...state.running, [event.sessionId]: true };
+      // Runs started outside awefork (opencode's own TUI) need the poll
+      // backstop too: on builds that stream no deltas, this busy frame is
+      // the only signal the renderer ever receives — without a watch, a
+      // dropped idle leaves the session "running" (and undeletable) forever.
+      // Existing watches keep their sentAt; a prompt awefork just sent armed
+      // one already, and restarting it here would lose the pre-prompt stamp.
+      if (!completionWatches.has(event.sessionId)) {
+        watchCompletion(event.sessionId, Date.now());
+      }
       break;
     }
     case "message.delta": {

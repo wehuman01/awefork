@@ -206,7 +206,6 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
     async subscribe(handler) {
       abortController = new AbortController();
       const { signal } = abortController;
-      const parse = createSseParser();
       const partKinds = new Map<string, "text" | "thinking">();
       let stopped = false;
 
@@ -233,6 +232,10 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
               emit({ type: "server.reconnected" });
             }
             const reader = response.body.getReader();
+            // Fresh parser per connection: a dropped stream can end mid-frame,
+            // and the leftover half-frame would splice into the next
+            // connection's first event and corrupt it.
+            const parse = createSseParser();
             const decoder = new TextDecoder();
             for (;;) {
               const { done, value } = await reader.read();

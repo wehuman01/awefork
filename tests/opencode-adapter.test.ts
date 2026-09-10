@@ -84,6 +84,9 @@ interface FakeState {
   eventFrames?: { type: string; properties: Record<string, unknown> }[];
   /** How many leading GET /event requests fail with 503 before streams work. */
   eventFailuresRemaining?: number;
+  /** First GET /event ends mid-frame before any eventFrames stream — a
+   * connection dying mid-write, to exercise the reconnect path. */
+  eventDropMidFrame?: boolean;
 }
 
 function startFakeServer(state: FakeState): Promise<{ server: Server; baseUrl: string }> {
@@ -121,6 +124,18 @@ function startFakeServer(state: FakeState): Promise<{ server: Server; baseUrl: s
           state.eventFailuresRemaining -= 1;
           res.writeHead(503);
           res.end();
+          return;
+        }
+        if (state.eventDropMidFrame) {
+          state.eventDropMidFrame = false;
+          res.writeHead(200, { "content-type": "text/event-stream" });
+          // Half a frame with no blank-line terminator, then EOF.
+          const partial = `data: ${JSON.stringify({
+            id: "evt-cut",
+            type: "session.updated",
+            properties: { sessionID: "s1" },
+          })}`;
+          res.end(partial.slice(0, partial.length - 12));
           return;
         }
         res.writeHead(200, { "content-type": "text/event-stream" });
@@ -605,6 +620,21 @@ describe("opencode adapter", () => {
     unsubscribe();
     expect(events.filter((e) => e.type === "server.error")).toHaveLength(1);
     expect(events).toContainEqual({ type: "server.reconnected" });
+  });
+
+  it("drops a severed connection's half-frame instead of splicing it into the next stream", async () => {
+    const state = baseState();
+    // The first /event connection dies mid-frame; the immediate reconnect
+    // streams a full frame. A parser reused across connections would hold the
+    // half-frame, merge it into the fresh stream's first frame, and lose that
+    // event to a JSON parse failure.
+    state.eventDropMidFrame = true;
+    const { adapter } = await newAdapter(state);
+    const events: AgentEvent[] = [];
+    const unsubscribe = await adapter.subscribe((event) => events.push(event));
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    unsubscribe();
+    expect(events).toContainEqual({ type: "session.idle", sessionId: "s1" });
   });
 
   it("renameSession PATCHes the title onto the session row", async () => {

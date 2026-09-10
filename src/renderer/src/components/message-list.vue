@@ -7,7 +7,7 @@
           <div class="user-body">
             <p class="message-text">{{ message.text }}</p>
             <p v-if="message.attachmentNames.length > 0" class="att-row">
-              <span v-for="name in message.attachmentNames" :key="name" class="att-chip">
+              <span v-for="(name, i) in message.attachmentNames" :key="i" class="att-chip">
                 📎 {{ name }}
               </span>
             </p>
@@ -63,7 +63,7 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, ref, watch } from "vue";
+import { nextTick, onUnmounted, ref, watch } from "vue";
 import type { SessionSummary } from "../../../shared/types";
 import { isSamePaneStart, shouldFollowStream } from "../message-list-scroll";
 import type { ReadonlyChatMessage } from "../state";
@@ -136,4 +136,10 @@ async function copyMessage(message: ReadonlyChatMessage): Promise<void> {
     // Clipboard denied — the text is still selectable; nothing to recover to.
   }
 }
+
+// The pane can unmount (session cleared) inside the copied-state window; the
+// timer must not fire into the dead component.
+onUnmounted(() => {
+  if (copiedTimer) clearTimeout(copiedTimer);
+});
 </script>

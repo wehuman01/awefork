@@ -404,6 +404,10 @@ function removeNode(node: TurnNode): void {
 
 // ── pan / zoom / fit ────────────────────────────────────────────────
 
+// The in-flight drag's window listeners (canvas pan or minimap); only one
+// pointer drag can be live at a time, and an unmount mid-drag must drop them.
+let activeDrag: { move: (event: MouseEvent) => void; up: () => void } | null = null;
+
 function onMouseDown(event: MouseEvent): void {
   if (event.button !== 0) return;
   panning.value = true;
@@ -417,9 +421,11 @@ function onMouseDown(event: MouseEvent): void {
     panning.value = false;
     window.removeEventListener("mousemove", move);
     window.removeEventListener("mouseup", up);
+    activeDrag = null;
   };
   window.addEventListener("mousemove", move);
   window.addEventListener("mouseup", up);
+  activeDrag = { move, up };
 }
 
 function onWheel(event: WheelEvent): void {
@@ -616,6 +622,10 @@ onUnmounted(() => {
   resizeObserver?.disconnect();
   cardObserver.disconnect();
   draftObserver.disconnect();
+  if (activeDrag) {
+    window.removeEventListener("mousemove", activeDrag.move);
+    window.removeEventListener("mouseup", activeDrag.up);
+  }
 });
 
 // Drop measurements for nodes that left the graph (deleted sessions, project
@@ -683,9 +693,11 @@ function onMinimapDown(event: MouseEvent): void {
   const up = (): void => {
     window.removeEventListener("mousemove", move);
     window.removeEventListener("mouseup", up);
+    activeDrag = null;
   };
   window.addEventListener("mousemove", move);
   window.addEventListener("mouseup", up);
+  activeDrag = { move, up };
 }
 
 // ── formatting ──────────────────────────────────────────────────────
