@@ -650,6 +650,7 @@ async function pollForCompletion(sessionId: string, watch: CompletionWatch): Pro
 
 /** Shared run-finished cleanup, driven by SSE idle or the poll watchdog. */
 function settleRun(sessionId: string): void {
+  stopWatch(sessionId);
   streamBuffers.delete(sessionId);
   const { [sessionId]: goneStream, ...keptStreams } = state.streams;
   void goneStream;

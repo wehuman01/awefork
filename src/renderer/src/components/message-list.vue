@@ -65,6 +65,7 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from "vue";
 import type { SessionSummary } from "../../../shared/types";
+import { isSamePaneStart, shouldFollowStream } from "../message-list-scroll";
 import type { ReadonlyChatMessage } from "../state";
 import { MarkdownView } from "./markdown-view";
 
@@ -79,30 +80,41 @@ const props = defineProps<{
 
 const listEl = ref<HTMLElement | null>(null);
 
-// Follow the stream only while the reader sits at the bottom; scrolling up
-// to reread must survive the next streamed frame. Measured pre-render, so
-// "near the bottom" means near the bottom of what the reader last saw.
-const STICK_DISTANCE_PX = 40;
-
+// Follow the stream only while the reader was at the bottom before the DOM
+// changes. Once they scroll up to reread, every subsequent frame leaves their
+// position alone.
 watch(
   () => [props.messages.length, props.streamText, props.streamThinking],
   () => {
     const list = listEl.value;
     if (!list) return;
-    if (list.scrollHeight - list.scrollTop - list.clientHeight > STICK_DISTANCE_PX) return;
+    const shouldFollow = shouldFollowStream(list.scrollHeight - list.scrollTop - list.clientHeight);
+    if (!shouldFollow) return;
     void nextTick(() => {
-      listEl.value?.scrollTo({ top: listEl.value.scrollHeight });
+      const current = listEl.value;
+      if (current) current.scrollTo({ top: current.scrollHeight });
     });
   },
 );
 
-// Jumping to another turn (or session) swaps the whole list's content; the
-// old scroll position is meaningless there, so the pane starts back at the
-// top. Keyed on the first row's id: appending a prompt keeps it stable, so
-// the stick-to-bottom logic above still owns in-place growth.
+// Switching a turn or session starts at the top. A server refresh can replace
+// an optimistic local prompt with its persisted counterpart; that is still the
+// same pane view, so preserve the reader's scroll position.
+let hasPreviousPane = false;
+let previousSessionId: string | undefined;
+let previousFirstMessage: ReadonlyChatMessage | undefined;
 watch(
-  () => [props.session?.id, props.messages[0]?.id],
-  () => {
+  () => [props.session?.id, props.messages[0]] as const,
+  ([sessionId, firstMessage]) => {
+    const shouldReset =
+      !props.running &&
+      (!hasPreviousPane ||
+        sessionId !== previousSessionId ||
+        !isSamePaneStart(previousFirstMessage, firstMessage));
+    hasPreviousPane = true;
+    previousSessionId = sessionId;
+    previousFirstMessage = firstMessage;
+    if (!shouldReset) return;
     void nextTick(() => {
       listEl.value?.scrollTo({ top: 0 });
     });
