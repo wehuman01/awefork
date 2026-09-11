@@ -1,4 +1,4 @@
-import { computed, reactive, readonly, ref } from "vue";
+import { computed, reactive, readonly, ref, watch } from "vue";
 import {
   type BackendCapabilities,
   type BackendEventEnvelope,
@@ -32,6 +32,8 @@ import type {
   ForkRecord,
   ModelChoice,
   ModelOption,
+  PersistedComposer,
+  PersistedDraft,
   PromptAttachment,
   SessionSummary,
 } from "../../shared/types";
@@ -671,6 +673,10 @@ async function bootBackend(backend: BackendId): Promise<void> {
   await flushTrash();
   await initialSessionLoad();
   state.booted = true;
+  // Needs the session list in place; never blocks first paint. Runs after
+  // every boot — startup and backend switch alike — so each backend hands
+  // back its own unsent draft.
+  void restoreComposer();
 }
 
 export async function init(): Promise<void> {
@@ -1737,6 +1743,157 @@ export function dismissDraft(): void {
   state.draft = null;
 }
 
+// ── composer persistence ──────────────────────────────────────────────
+// The canvas draft is user input with no server-side home until it is
+// sent. Flush it (plus the pane's model picks) to the active backend's
+// composer.json on a trailing debounce, and bring it back after each boot
+// — a crash mid-compose hands the text back instead of eating it. The
+// store is backend-scoped because the draft anchors to a session and
+// sessions belong to their backend.
+
+const PERSIST_DEBOUNCE_MS = 600;
+let persistTimer: ReturnType<typeof setTimeout> | null = null;
+let restoringComposer = false;
+
+/** The reactive draft copied into plain objects the IPC layer can clone. */
+function plainPersistedDraft(): PersistedDraft | null {
+  const draft = state.draft;
+  if (!draft) return null;
+  return {
+    sessionId: draft.sessionId,
+    atMessageId: draft.atMessageId,
+    text: draft.text,
+    model: plainModel(draft.model),
+    attachments: draft.attachments.map((a) => ({
+      id: a.id,
+      name: a.name,
+      mime: a.mime,
+      dataUrl: a.dataUrl,
+    })),
+  };
+}
+
+/** The current state as a persistable composer value; null = nothing to keep. */
+function composerSnapshot(): PersistedComposer | null {
+  // Picks for sessions that no longer exist would pile up forever.
+  const paneModels: Record<string, ModelChoice> = {};
+  for (const [id, model] of Object.entries(state.paneModels)) {
+    if (model && state.sessions.some((s) => s.id === id)) paneModels[id] = model;
+  }
+  const draft = plainPersistedDraft();
+  return draft === null && Object.keys(paneModels).length === 0 ? null : { draft, paneModels };
+}
+
+function scheduleComposerPersist(): void {
+  // Mid-switch the workspace is being reset for the next backend; flushing
+  // here would clobber the outgoing backend's draft with empty state.
+  // switchBackend flushes it explicitly before parking instead.
+  if (restoringComposer || switchingBackend) return;
+  if (persistTimer) clearTimeout(persistTimer);
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    const backend = state.activeBackend;
+    void window.awefork.saveComposer(backend, composerSnapshot()).catch(() => {
+      // A failed sidecar write only costs crash-recovery of unsent input.
+    });
+  }, PERSIST_DEBOUNCE_MS);
+}
+
+/**
+ * Write the current composer state to one backend's file right now.
+ * The switch path calls this for the outgoing backend before the workspace
+ * resets, so the debounced flush can't fire afterwards with cleared state.
+ */
+async function flushComposer(backend: BackendId): Promise<void> {
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+  if (restoringComposer) return;
+  const value = composerSnapshot();
+  try {
+    await window.awefork.saveComposer(backend, value);
+  } catch {
+    // Same contract as the debounced flush: losing the write only costs
+    // crash-recovery of unsent input.
+  }
+}
+
+watch(
+  () => state.draft,
+  () => scheduleComposerPersist(),
+  { deep: true },
+);
+watch(
+  () => state.paneModels,
+  () => scheduleComposerPersist(),
+  { deep: true },
+);
+
+/**
+ * Bring back the unsent draft and pane model picks of the active backend
+ * after a boot. The draft's canvas anchor is recomputed from live data: a
+ * vanished fork point degrades it to a tip draft of its session, and a
+ * vanished session drops it entirely.
+ */
+async function restoreComposer(): Promise<void> {
+  let persisted: PersistedComposer | null = null;
+  try {
+    persisted = await window.awefork.composer(state.activeBackend);
+  } catch {
+    return;
+  }
+  restoringComposer = true;
+  try {
+    state.paneModels = persisted?.paneModels ?? {};
+    const draft = persisted?.draft ?? null;
+    // An empty draft is nothing to hand back; a fresh openDraft is better.
+    if (draft && draft.text.trim() !== "") {
+      if (state.sessions.some((s) => s.id === draft.sessionId)) {
+        const anchor = await draftAnchor(draft.sessionId, draft.atMessageId);
+        if (anchor) {
+          state.draft = {
+            nodeId: anchor.nodeId,
+            sessionId: draft.sessionId,
+            atMessageId: anchor.atMessageId,
+            text: draft.text,
+            model: draft.model,
+            attachments: draft.attachments.map((a) => ({ ...a })),
+          };
+          void ensureModels();
+        }
+      }
+    }
+  } finally {
+    restoringComposer = false;
+  }
+  // Normalize the file: stale sessions and dropped drafts get pruned.
+  scheduleComposerPersist();
+}
+
+/** Where a restored draft should sit on today's canvas. */
+async function draftAnchor(
+  sessionId: string,
+  atMessageId: string | null,
+): Promise<{ nodeId: string; atMessageId: string | null } | null> {
+  let messages: ChatMessage[] = [];
+  try {
+    messages = await window.awefork.messages(state.activeBackend, sessionId);
+  } catch {
+    return null;
+  }
+  const turns = buildTurns(sessionId, messages);
+  if (atMessageId && turns.some((t) => t.messageId === atMessageId)) {
+    return { nodeId: `${sessionId}:${atMessageId}`, atMessageId };
+  }
+  // Tip draft: continue the session wherever it now ends (or its stub).
+  const last = turns[turns.length - 1];
+  return {
+    nodeId: last ? `${sessionId}:${last.messageId}` : `${sessionId}::stub`,
+    atMessageId: null,
+  };
+}
+
 let modelsRequested = false;
 
 async function ensureModels(): Promise<void> {
@@ -1914,6 +2071,11 @@ export function dismissActionError(): void {
   state.actionError = null;
 }
 
+/** Surface a failure toast from outside this module (e.g. markdown-view). */
+export function reportActionError(message: string): void {
+  state.actionError = message;
+}
+
 /**
  * Check for a new release. `startup` respects the user's previous skip choice
  * and stays silent no matter the outcome; `manual` narrates the round-trip as
@@ -2050,6 +2212,10 @@ export async function switchBackend(backend: BackendId): Promise<void> {
   try {
     state.actionError = null;
     await flushPendingDeletes();
+    // The unsent draft belongs to the outgoing backend's store; write it
+    // before the workspace resets, or the debounced flush would fire with
+    // cleared state and eat it.
+    await flushComposer(state.activeBackend);
     const result = await window.awefork.selectBackend(backend);
     if (!result.ok) {
       state.actionError = result.error ?? `无法切换到 ${backend}。`;

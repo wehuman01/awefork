@@ -10,6 +10,8 @@
  * is exactly right while a reply is still streaming in.
  */
 
+import { DRIVE_PATH } from "../../shared/drive-path";
+
 export type MdInline =
   | { kind: "text"; text: string }
   | { kind: "code"; text: string }
@@ -108,6 +110,23 @@ export function parseInline(text: string): MdInline[] {
       continue;
     }
 
+    // Windows drive paths are consumed whole, before the escape rule can
+    // mangle C:\repo\[old]\file.ts into C:repo[old]file.ts, and stay
+    // clickable so a reply's file reference opens with the OS. The letter
+    // must start a word — "file:///C:/x" links from neither its "e:" nor
+    // the drive letter inside the URL tail.
+    if (/[A-Za-z]/.test(ch) && text[i + 1] === ":" && !/[\w/]/.test(text[i - 1] ?? " ")) {
+      const match = DRIVE_PATH.exec(text.slice(i));
+      if (match) {
+        // Trailing sentence punctuation is prose, not part of the path.
+        const href = match[0].replace(/[.,;:!?]+$/, "");
+        flush();
+        out.push({ kind: "link", href, children: [{ kind: "text", text: href }] });
+        i += href.length;
+        continue;
+      }
+    }
+
     // Links (and images, rendered as links to their href — CSP blocks the
     // pixels anyway, but the URL is still worth a click).
     const linkStart = ch === "[" ? i : ch === "!" && text[i + 1] === "[" ? i + 1 : -1;
@@ -124,7 +143,7 @@ export function parseInline(text: string): MdInline[] {
                 .trim()
                 .split(/\s+/)[0] ?? "")
             : "";
-        if (end > 0 && SAFE_HREF.test(href)) {
+        if (end > 0 && (SAFE_HREF.test(href) || DRIVE_PATH.test(href))) {
           flush();
           out.push({ kind: "link", href, children: parseInline(text.slice(linkStart + 1, close)) });
           i = end + 1;

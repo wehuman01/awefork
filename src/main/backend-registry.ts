@@ -21,7 +21,7 @@ import { readBackendSelection, writeBackendSelection } from "./settings-store.js
 const execFileAsync = promisify(execFile);
 
 const OPENCODE_PORT = 4096;
-const STORE_BASES = ["lineage", "pins", "trash", "archive"] as const;
+const STORE_BASES = ["lineage", "pins", "trash", "archive", "composer"] as const;
 type StoreBase = (typeof STORE_BASES)[number];
 type StorePaths = Record<StoreBase, string>;
 

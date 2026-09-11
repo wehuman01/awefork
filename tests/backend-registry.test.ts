@@ -227,6 +227,8 @@ describe("capabilities and store paths", () => {
     expect(codex.pins).toBe(join(userDataDir, "pins-codex.json"));
     expect(codex.lineage).toBe(join(userDataDir, "lineage-codex.json"));
     expect(codex.archive).toBe(join(userDataDir, "archive-codex.json"));
+    expect(codex.composer).toBe(join(userDataDir, "composer-codex.json"));
+    expect(opencode.composer).toBe(join(userDataDir, "composer-opencode.json"));
   });
 });
 

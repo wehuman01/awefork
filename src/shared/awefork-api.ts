@@ -12,6 +12,7 @@ import type {
   ForkRecord,
   ModelChoice,
   ModelOption,
+  PersistedComposer,
   PromptAttachment,
   SessionSummary,
   TrashEntry,
@@ -80,12 +81,17 @@ export interface AweforkApi {
   archive(backend: BackendId): Promise<ArchiveState>;
   archiveAdd(backend: BackendId, kind: ArchiveKind, key: string): Promise<ArchiveState>;
   archiveRemove(backend: BackendId, kind: ArchiveKind, key: string): Promise<ArchiveState>;
+  /** The backend's unsent draft + pane model picks (composer.json sidecar). */
+  composer(backend: BackendId): Promise<PersistedComposer | null>;
+  saveComposer(backend: BackendId, value: PersistedComposer | null): Promise<void>;
   /** Switcher data: installed probe (--version spawn, no server) + persisted selection. */
   backends(): Promise<BackendsResult>;
   /** Persist a selection; {ok:false,error} when the probe fails so the UI bounces back. */
   selectBackend(backend: BackendId): Promise<{ ok: boolean; error?: string }>;
   /** Feature surface of a backend; hides affordances the backend lacks. */
   capabilities(backend: BackendId): Promise<BackendCapabilities>;
+  /** Open a local drive path (reply references) with the OS handler. */
+  openPath(target: string): Promise<{ ok: boolean; error?: string }>;
   openExternal(url: string): Promise<void>;
   convertDocument(filename: string, bytes: Uint8Array): Promise<string>;
   checkUpdates(respectSkip: boolean): Promise<CheckUpdatesResult>;

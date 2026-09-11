@@ -1,6 +1,8 @@
 import { type IpcMainInvokeEvent, ipcMain, shell } from "electron";
 import { readArchive, setArchived } from "../shared/archive-store.js";
 import { type BackendId, isBackendId } from "../shared/backend.js";
+import { readComposer, writeComposer } from "../shared/composer-store.js";
+import { isDrivePath } from "../shared/drive-path.js";
 import { readLineage } from "../shared/lineage-store.js";
 import { prunePin, readPins, togglePin } from "../shared/pins-store.js";
 import { addTrashEntry, readTrash, removeTrashEntry } from "../shared/trash-store.js";
@@ -8,6 +10,7 @@ import type {
   AgentInteractionResponse,
   ArchiveKind,
   ModelChoice,
+  PersistedComposer,
   PromptAttachment,
 } from "../shared/types.js";
 import type { BackendRegistry } from "./backend-registry.js";
@@ -36,13 +39,14 @@ import { checkForUpdates, openRelease, skipUpdate } from "./update-check.js";
  *   renameSession(backend, id, title) -> void
  * Overlay-store channels (per-backend files, no adapter spawn):
  *   pins / togglePin / trash / trashAdd / trashRemove / archive / archiveAdd /
- *   archiveRemove — same shapes as before, backend-routed.
+ *   archiveRemove / composer / saveComposer — same shapes as before,
+ *   backend-routed (composer holds the unsent draft + pane model picks).
  * Backend switcher:
  *   backends      -> { selected, backends: BackendInfo[] } (probe, no spawn)
  *   selectBackend -> { ok, error? }                persists; probe failure bounces back
  *   capabilities  -> { deleteMessage, attachments }
- * App-level (backend-free): openExternal, convertDocument, checkUpdates,
- * skipUpdate, openRelease.
+ * App-level (backend-free): openExternal, openPath, convertDocument,
+ * checkUpdates, skipUpdate, openRelease.
  * Events are forwarded on channel "awefork:event" as {backend, event}.
  */
 export function registerIpc(registry: BackendRegistry): void {
@@ -235,6 +239,19 @@ export function registerIpc(registry: BackendRegistry): void {
       setArchived(registry.storePaths(storeBackend(backend)).archive, kind, key, false),
   );
 
+  // The unsent draft's crash-recovery sidecar, one file per backend — the
+  // draft anchors to a session, and sessions belong to their backend. Written
+  // by the renderer's debounced flush, read back after every backend boot.
+  ipcMain.handle("awefork:composer", async (_event: IpcMainInvokeEvent, backend: BackendId) =>
+    readComposer(registry.storePaths(storeBackend(backend)).composer),
+  );
+
+  ipcMain.handle(
+    "awefork:saveComposer",
+    (_event: IpcMainInvokeEvent, backend: BackendId, value: PersistedComposer | null) =>
+      writeComposer(registry.storePaths(storeBackend(backend)).composer, value),
+  );
+
   // ── backend switcher ────────────────────────────────────────────────────
 
   ipcMain.handle("awefork:backends", () => registry.listBackends());
@@ -252,6 +269,16 @@ export function registerIpc(registry: BackendRegistry): void {
   );
 
   // ── app-level ────────────────────────────────────────────────────────────
+
+  // Local file references in replies (agent output on Windows is full of
+  // them) open with the OS handler. Only drive paths pass the gate — the
+  // same regex the renderer's parser used, so nothing reaches the OS that
+  // the markdown view wouldn't have linked itself.
+  ipcMain.handle("awefork:openPath", async (_event: IpcMainInvokeEvent, target: string) => {
+    if (!isDrivePath(target)) return { ok: false, error: "不是本地路径" };
+    const error = await shell.openPath(target);
+    return error ? { ok: false, error } : { ok: true };
+  });
 
   // Word/RTF attachments are converted here in the main process; the renderer
   // stages the result as a text/plain attachment.
