@@ -2198,11 +2198,112 @@ function restoreRuntime(backend: BackendId): void {
   if (Object.keys(state.recent).length > 0) startRecentTicker();
 }
 
+/**
+ * The workspace of a backend the user switched away from. `messagesBySession`
+ * and `attemptedMessages` are NOT part of it: they are keyed by session id,
+ * the two backends' id spaces never collide, and the graph only renders the
+ * active backend's sessions — so they live as app-lifetime caches instead of
+ * being parked and unparked.
+ */
+interface WorkspaceSnapshot {
+  sessions: SessionSummary[];
+  lineage: Record<string, ForkRecord>;
+  pins: string[];
+  trash: string[];
+  archive: ArchiveState;
+  selectedDirectory: string | null;
+  selectedId: string | null;
+  selectedTurnId: string | null;
+  models: ModelOption[];
+  modelsRequested: boolean;
+  /** Measured card heights, so the restored canvas keeps its exact layout. */
+  cardHeights: Record<string, number>;
+}
+
+const workspaceCache = new Map<BackendId, WorkspaceSnapshot>();
+
+/** Snapshot the visible workspace into the outgoing backend's slot. */
+function parkWorkspace(backend: BackendId): void {
+  workspaceCache.set(backend, {
+    sessions: [...state.sessions],
+    lineage: { ...state.lineage },
+    pins: [...state.pins],
+    trash: [...state.trash],
+    archive: {
+      sessions: [...state.archive.sessions],
+      directories: [...state.archive.directories],
+    },
+    selectedDirectory: state.selectedDirectory,
+    selectedId: state.selectedId,
+    selectedTurnId: state.selectedTurnId,
+    models: [...state.models],
+    modelsRequested,
+    cardHeights: { ...cardHeights },
+  });
+}
+
+/**
+ * Put a parked workspace back on screen. `booted` flips true here, so the
+ * canvas paints from the snapshot at once — no handshake, no session refetch
+ * before first paint. What changed while parked catches up afterwards: runs
+ * that finished already wrote their messages through the event stream, and
+ * revalidateBackend sweeps the rest.
+ */
+function restoreWorkspace(snapshot: WorkspaceSnapshot): void {
+  workspaceGeneration += 1;
+  state.booted = true;
+  state.connectionError = null;
+  state.sessions = snapshot.sessions;
+  state.lineage = snapshot.lineage;
+  state.pins = snapshot.pins;
+  state.trash = snapshot.trash;
+  state.archive = snapshot.archive;
+  state.selectedDirectory = snapshot.selectedDirectory;
+  state.selectedId = snapshot.selectedId;
+  state.selectedTurnId = snapshot.selectedTurnId;
+  state.models = snapshot.models;
+  modelsRequested = snapshot.modelsRequested;
+  state.messagesError = null;
+  state.loadingMessages = false;
+  state.deletedToast = null;
+  state.draft = null;
+  state.focusRequest = null;
+  state.composerFocusRequest = null;
+  state.fitRequest = null;
+  state.turnJumpRequest = null;
+  searchQuery.value = "";
+  for (const key of Object.keys(cardHeights)) delete cardHeights[key];
+  Object.assign(cardHeights, snapshot.cardHeights);
+  const selected = state.selectedId;
+  state.streamParts = selected
+    ? [...(streamBuffers.get(streamKey(state.activeBackend, selected)) ?? [])]
+    : [];
+}
+
+/**
+ * Background catch-up after a cached restore: handshake the server and
+ * refresh the session list (new TUI sessions, deletes, renames). A dead
+ * server only marks connectionError — the cached view stays readable, and
+ * the registry re-spawns the backend on the next call anyway.
+ */
+async function revalidateBackend(backend: BackendId): Promise<void> {
+  const ready = await window.awefork.ready(backend);
+  if (!ready.ok) {
+    state.connectionError = ready.error ?? `Failed to start the ${backend} server.`;
+    return;
+  }
+  await refreshSessions();
+  void restoreComposer();
+}
+
 /** Bumped on every workspace reset for a backend switch; async flows capture
  * it to notice that the world under them moved to another backend. */
 let workspaceGeneration = 0;
 
-/** Clear the whole visible workspace before booting another backend into it. */
+/** Clear the visible workspace before booting a backend into it for the
+ *  first time this run. Session-keyed caches (`messagesBySession`,
+ *  `attemptedMessages`, `paneModels`) survive: the other backend's ids never
+ *  render here, and keeping them is what makes a switch back instant. */
 function resetWorkspace(): void {
   workspaceGeneration += 1;
   state.booted = false;
@@ -2216,14 +2317,11 @@ function resetWorkspace(): void {
   state.selectedDirectory = null;
   state.selectedId = null;
   state.selectedTurnId = null;
-  state.messagesBySession = {};
   state.messagesError = null;
   state.loadingMessages = false;
   state.models = [];
   modelsRequested = false;
-  attemptedMessages.clear();
   state.draft = null;
-  state.paneModels = {};
   state.focusRequest = null;
   state.composerFocusRequest = null;
   state.fitRequest = null;
@@ -2239,8 +2337,9 @@ let switchingBackend = false;
  * FIRST (each entry's trash store is bound to its backend), then the choice
  * is persisted — a failed probe bounces back with the current view intact.
  * The switch itself never touches runs in flight: the old backend's runtime
- * parks in its slot and keeps streaming there, the target's restores, and the
- * boot sequence replays for the backend coming on screen.
+ * parks in its slot and keeps streaming there, the target's restores, and a
+ * backend visited before repaints from its parked workspace at once (with a
+ * background refresh catching up) while a first visit boots from scratch.
  */
 export async function switchBackend(backend: BackendId): Promise<void> {
   if (backend === state.activeBackend || switchingBackend) return;
@@ -2260,16 +2359,26 @@ export async function switchBackend(backend: BackendId): Promise<void> {
     // Flip the active flag BEFORE restoring: events landing in this window
     // route through runSlot, and the target's runtime must already be the
     // visible one or its early frames write into the parked copy and vanish.
+    parkWorkspace(state.activeBackend);
     parkRuntime(state.activeBackend);
     state.activeBackend = backend;
     restoreRuntime(backend);
-    resetWorkspace();
-    try {
-      state.capabilities = await window.awefork.capabilities(backend);
-    } catch {
+    const parked = workspaceCache.get(backend);
+    if (parked) {
+      // Pure value of the descriptor-backed flag; the IPC hop would buy
+      // nothing on a path whose whole point is painting without waiting.
       state.capabilities = backendCapabilities(backend);
+      restoreWorkspace(parked);
+      void revalidateBackend(backend);
+    } else {
+      resetWorkspace();
+      try {
+        state.capabilities = await window.awefork.capabilities(backend);
+      } catch {
+        state.capabilities = backendCapabilities(backend);
+      }
+      await bootBackend(backend);
     }
-    await bootBackend(backend);
   } finally {
     switchingBackend = false;
   }

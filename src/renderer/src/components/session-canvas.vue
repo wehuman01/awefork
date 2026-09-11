@@ -153,7 +153,6 @@
           @paste="onDraftPaste"
         ></textarea>
         <div class="draft-foot">
-          <span class="hint">⌘/Ctrl ⏎ 发送 · Esc 收起</span>
           <ModelPicker
             class="draft-model"
             :model-value="store.draft?.model ?? null"
@@ -172,23 +171,24 @@
             :disabled="!store.draft?.text.trim() || store.draftSending"
             @click="submitDraft"
           >{{ store.draftSending ? "…" : "➤" }}</button>
+          <span class="hint">⌘/Ctrl ⏎ 发送 · Esc 收起</span>
         </div>
       </article>
     </div>
 
     <div v-if="graph.nodes.length === 0 && store.connectionError" class="canvas-empty">
       <div class="empty-mascot">🔌</div>
-      <p class="empty-title">opencode 未连接</p>
+      <p class="empty-title">{{ backendLabel }} 未连接</p>
       <p class="empty-sub">连接恢复后，点左侧「↻ 刷新」重新加载会话</p>
     </div>
     <div
       v-else-if="graph.nodes.length === 0 && !store.booted && !store.loadingMessages"
       class="canvas-loading"
-    >正在连接 opencode…</div>
+    >正在连接 {{ backendLabel }}…</div>
     <div v-else-if="graph.nodes.length === 0 && !store.loadingMessages" class="canvas-empty">
       <div class="empty-mascot">🍑</div>
       <p class="empty-title">这个项目还没有会话</p>
-      <p class="empty-sub">在终端里用 opencode 开一场对话，它就会作为第一个节点出现在这里</p>
+      <p class="empty-sub">在终端里用 {{ backendLabel }} 开一场对话，它就会作为第一个节点出现在这里</p>
     </div>
     <div v-if="store.loadingMessages" class="canvas-loading">正在铺开分支图…</div>
 
@@ -239,6 +239,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { fileKind } from "../../../shared/attachment-kinds";
+import { BACKEND_LABELS } from "../../../shared/backend";
 import type { TurnNode } from "../../../shared/canvas-graph";
 import { draftCellFor, NODE_WIDTH } from "../../../shared/canvas-graph";
 import { type DraftAttachment, readAttachments } from "../attachments";
@@ -277,6 +278,10 @@ const panning = ref(false);
 
 const graph = computed(() => turnGraph.value);
 const selectedTurnId = computed(() => store.selectedTurnId);
+
+/** Backend whose canvas is (or is coming) on screen — drives the connect /
+ *  offline copy, which is otherwise opencode-specific by accident of birth. */
+const backendLabel = computed(() => BACKEND_LABELS[store.activeBackend]);
 
 const worldStyle = computed(() => ({
   transform: `translate(${tx.value}px, ${ty.value}px) scale(${scale.value})`,
@@ -711,7 +716,7 @@ function onMinimapDown(event: MouseEvent): void {
 /** Foot label: first model, "+N" when a turn mixed several; agent name when none reported. */
 function modelLabel(models: string[]): string {
   const [first, ...rest] = models;
-  if (!first) return "opencode";
+  if (!first) return backendLabel.value;
   return rest.length === 0 ? first : `${first} +${rest.length}`;
 }
 
