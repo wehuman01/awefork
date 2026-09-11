@@ -107,13 +107,14 @@ export async function resolveSpawnEnv(
   home: string = homedir(),
   shellPathProbe: () => Promise<string | null> = loginShellPath,
   platform: NodeJS.Platform = process.platform,
+  binaryName: "opencode" | "codex" = "opencode",
 ): Promise<{ PATH?: string; [key: string]: string | undefined }> {
   const merged = buildSpawnEnv(env, home, platform);
   // Check the sources, not the merged PATH string: re-splitting it with ':'
   // would shred Windows drive-letter paths when POSIX behavior is emulated
   // (tests) — and the probe below is darwin-only in production anyway.
   const dirs = [...splitPath(env.PATH, platform), ...candidateBinDirs(env, home, platform)];
-  if (dirs.some((dir) => dirHasBinary(dir, "opencode"))) return merged;
+  if (dirs.some((dir) => dirHasBinary(dir, binaryName))) return merged;
   const probed = await shellPathProbe();
   if (!probed) return merged;
   // Union, not replace: the spawned server also shells out to git and friends

@@ -5,10 +5,15 @@
  * turns, branches, tools and searchable keywords to exercise the canvas,
  * story search, and branch digests without any backend running.
  *
+ * The demo speaks only "opencode": backend arguments are accepted and
+ * ignored, events ship as opencode-tagged envelopes, and backends() lists a
+ * single entry so the top-bar switcher stays hidden outside Electron.
+ *
  * Never loaded in Electron dev (preload defines window.awefork first) or in
  * production builds (import.meta.env.DEV is false).
  */
 
+import type { BackendEventEnvelope } from "../../../shared/backend.js";
 import type {
   AgentEvent,
   ArchiveState,
@@ -403,9 +408,9 @@ export function installMockAdapter(): void {
   let pins: string[] = [];
   let trash: TrashEntry[] = [];
   let archive: ArchiveState = { sessions: [], directories: [] };
-  const handlers = new Set<(event: AgentEvent) => void>();
+  const handlers = new Set<(envelope: BackendEventEnvelope) => void>();
   const emit = (event: AgentEvent): void => {
-    for (const handler of handlers) handler(event);
+    for (const handler of handlers) handler({ backend: "opencode", event });
   };
   let promptSeq = 0;
   const timers = new Map<string, ReturnType<typeof setTimeout>[]>();
@@ -413,10 +418,10 @@ export function installMockAdapter(): void {
   window.awefork = {
     ready: async () => ({ ok: true }),
     sessions: async () => ({ sessions: summaries(), lineage: { ...lineage } }),
-    messages: async (sessionId) => ensureMessages(sessionId).map((m) => ({ ...m })),
+    messages: async (_backend, sessionId) => ensureMessages(sessionId).map((m) => ({ ...m })),
     // The demo keeps only attachment names; hand back readable stand-ins so
     // the retry prefill path still shows chips and resends.
-    messageAttachments: async (sessionId, messageId) => {
+    messageAttachments: async (_backend, sessionId, messageId) => {
       const message = ensureMessages(sessionId).find((m) => m.id === messageId);
       return (message?.attachmentNames ?? []).map((name) => ({
         mime: "text/plain",
@@ -425,7 +430,7 @@ export function installMockAdapter(): void {
       }));
     },
     models: async () => MODELS,
-    createSession: async (directory) => {
+    createSession: async (_backend, directory) => {
       promptSeq += 1;
       const id = `demo-new-${promptSeq}`;
       defs.set(id, {
@@ -442,7 +447,7 @@ export function installMockAdapter(): void {
       if (!created) throw new Error(`demo session ${id} missing after creation`);
       return created;
     },
-    fork: async (sessionId, atMessageId) => {
+    fork: async (_backend, sessionId, atMessageId) => {
       promptSeq += 1;
       const parent = defs.get(sessionId);
       const id = `demo-fork-${promptSeq}`;
@@ -460,19 +465,19 @@ export function installMockAdapter(): void {
       if (!created) throw new Error(`demo fork ${id} missing after creation`);
       return created;
     },
-    deleteSession: async (sessionId) => {
+    deleteSession: async (_backend, sessionId) => {
       defs.delete(sessionId);
       messages.delete(sessionId);
       delete lineage[sessionId];
       pins = pins.filter((id) => id !== sessionId);
       return pins;
     },
-    deleteMessage: async (sessionId, messageId) => {
+    deleteMessage: async (_backend, sessionId, messageId) => {
       const list = ensureMessages(sessionId);
       const index = list.findIndex((m) => m.id === messageId);
       if (index >= 0) list.splice(index, 1);
     },
-    prompt: async (sessionId, text, model, attachments) => {
+    prompt: async (_backend, sessionId, text, model, attachments) => {
       promptSeq += 1;
       const user: ChatMessage = {
         id: `p${promptSeq}`,
@@ -579,36 +584,36 @@ export function installMockAdapter(): void {
       );
       timers.set(sessionId, pending);
     },
-    abort: async (sessionId) => {
+    abort: async (_backend, sessionId) => {
       for (const timer of timers.get(sessionId) ?? []) clearTimeout(timer);
       timers.delete(sessionId);
       emit({ type: "session.idle", sessionId });
     },
-    renameSession: async (sessionId, title) => {
+    renameSession: async (_backend, sessionId, title) => {
       const def = defs.get(sessionId);
       if (def) def.title = title;
     },
     pins: async () => pins,
-    togglePin: async (sessionId) => {
+    togglePin: async (_backend, sessionId) => {
       pins = pins.includes(sessionId)
         ? pins.filter((id) => id !== sessionId)
         : [...pins, sessionId];
       return pins;
     },
     trash: async () => trash,
-    trashAdd: async (sessionId, title) => {
+    trashAdd: async (_backend, sessionId, title) => {
       trash = [
         ...trash.filter((t) => t.id !== sessionId),
         { id: sessionId, title, deletedAt: Date.now() },
       ];
       return trash;
     },
-    trashRemove: async (sessionId) => {
+    trashRemove: async (_backend, sessionId) => {
       trash = trash.filter((t) => t.id !== sessionId);
       return trash;
     },
     archive: async () => archive,
-    archiveAdd: async (kind, key) => {
+    archiveAdd: async (_backend, kind, key) => {
       archive =
         kind === "session"
           ? {
@@ -627,13 +632,21 @@ export function installMockAdapter(): void {
             };
       return archive;
     },
-    archiveRemove: async (kind, key) => {
+    archiveRemove: async (_backend, kind, key) => {
       archive =
         kind === "session"
           ? { ...archive, sessions: archive.sessions.filter((e) => e.id !== key) }
           : { ...archive, directories: archive.directories.filter((e) => e.path !== key) };
       return archive;
     },
+    // The demo speaks opencode only: one switcher entry hides the control,
+    // and its capability surface is the full one.
+    backends: async () => ({
+      selected: "opencode",
+      backends: [{ id: "opencode", label: "opencode", installed: true }],
+    }),
+    selectBackend: async () => ({ ok: true }),
+    capabilities: async () => ({ deleteMessage: true, attachments: true }),
     openExternal: async (url) => {
       window.open(url, "_blank", "noopener");
     },

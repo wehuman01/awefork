@@ -98,6 +98,7 @@
       :running="isRunning"
       :model="paneModel"
       :models="store.models"
+      :allow-attachments="store.capabilities.attachments"
       @send="send"
       @abort="abort"
       @set-model="onSetModel"

@@ -1,80 +1,76 @@
 import { type IpcMainInvokeEvent, ipcMain, shell } from "electron";
 import { readArchive, setArchived } from "../shared/archive-store.js";
+import { type BackendId, isBackendId } from "../shared/backend.js";
 import { readLineage } from "../shared/lineage-store.js";
 import { prunePin, readPins, togglePin } from "../shared/pins-store.js";
 import { addTrashEntry, readTrash, removeTrashEntry } from "../shared/trash-store.js";
-import type {
-  AgentAdapter,
-  AgentEvent,
-  ArchiveKind,
-  ModelChoice,
-  PromptAttachment,
-  TrashEntry,
-} from "../shared/types";
+import type { ArchiveKind, ModelChoice, PromptAttachment } from "../shared/types.js";
+import type { BackendRegistry } from "./backend-registry.js";
 import { convertDocumentToText } from "./document-convert.js";
 import { checkForUpdates, openRelease, skipUpdate } from "./update-check.js";
 
 /**
- * IPC surface (all invoke-channels, prefixed awefork:):
- *   ready      -> { ok, error? }          adapter status after startup
- *   sessions   -> SessionSummary[]        sessions + lineage merged
- *   messages   -> ChatMessage[]           flat message list of a session
- *   models     -> ModelOption[]           models offered by the agent config
- *   messageAttachments -> PromptAttachment[]  one message's file parts (retry)
- *   createSession -> SessionSummary       brand-new empty session (optional directory)
- *   fork       -> SessionSummary          fork (turn-preserving)
- *   deleteSession -> string[]             delete a session, pruned pins back
- *   deleteMessage -> void                 remove one message row (native DELETE)
- *   prompt     -> void                    fire an agent run (optional model + attachments)
- *   abort      -> void                    abort the running turn
- *   renameSession -> void                rename a session (native PATCH)
- *   pins       -> string[]                pinned session ids
- *   togglePin  -> string[]                pin/unpin a session, new list back
- *   trash      -> TrashEntry[]            sessions awaiting their hard delete
- *   trashAdd   -> TrashEntry[]            queue a pending delete, list back
- *   trashRemove-> TrashEntry[]            un-queue (undo), list back
- *   archive    -> ArchiveState            archived sessions + directories
- *   archiveAdd -> ArchiveState            archive a session/directory, state back
- *   archiveRemove -> ArchiveState         restore a session/directory, state back
- *   openExternal -> void                  open a reply link in the system browser
- *   convertDocument -> string             Word/RTF attachment → plain text
- *   checkUpdates  -> CheckUpdatesResult   latest release vs installed version
- *   skipUpdate    -> { ok, error? }       persist a version as "don't nag again"
- *   openRelease   -> { ok, error? }       open the release tag page in the browser
- * Events are forwarded on channel "awefork:event".
+ * IPC surface (all invoke-channels, prefixed awefork:). Every method that
+ * touches an agent adapter or an awefork overlay store takes the backend as
+ * its FIRST argument — the renderer always passes its active backend, main
+ * routes by that argument, and a backend switch can never misroute an
+ * in-flight invoke. Adapter-backed channels:
+ *   ready(backend)          -> { ok, error? }       adapter status after startup
+ *   sessions(backend)       -> {sessions, lineage}  sessions + lineage merged
+ *   messages(backend, id)   -> ChatMessage[]        flat message list of a session
+ *   models(backend)         -> ModelOption[]        models offered by the agent config
+ *   messageAttachments(backend, session, message) -> PromptAttachment[] (retry prefill)
+ *   createSession(backend, directory?) -> SessionSummary
+ *   fork(backend, id, atMessageId | null) -> SessionSummary (turn-preserving)
+ *   deleteSession(backend, id) -> string[]          delete, pruned pins back
+ *   deleteMessage(backend, session, message) -> void (native DELETE)
+ *   prompt(backend, id, text, model, attachments?) -> void
+ *   abort(backend, id)      -> void                 abort the running turn
+ *   renameSession(backend, id, title) -> void
+ * Overlay-store channels (per-backend files, no adapter spawn):
+ *   pins / togglePin / trash / trashAdd / trashRemove / archive / archiveAdd /
+ *   archiveRemove — same shapes as before, backend-routed.
+ * Backend switcher:
+ *   backends      -> { selected, backends: BackendInfo[] } (probe, no spawn)
+ *   selectBackend -> { ok, error? }                persists; probe failure bounces back
+ *   capabilities  -> { deleteMessage, attachments }
+ * App-level (backend-free): openExternal, convertDocument, checkUpdates,
+ * skipUpdate, openRelease.
+ * Events are forwarded on channel "awefork:event" as {backend, event}.
  */
-export function registerIpc(
-  adapterPromise: Promise<AgentAdapter>,
-  lineagePath: string,
-  pinsPath: string,
-  trashPath: string,
-  archivePath: string,
-): void {
-  const withAdapter = async (): Promise<AgentAdapter> => adapterPromise;
+export function registerIpc(registry: BackendRegistry): void {
+  const withAdapter = async (backend: BackendId) => registry.get(backend);
+  // Store channels take the backend from the invoke; unknown ids route to the
+  // default rather than throwing so a stale renderer can't wedge the store.
+  const storeBackend = (value: unknown): BackendId => (isBackendId(value) ? value : "opencode");
 
-  ipcMain.handle("awefork:ready", async () => {
+  ipcMain.handle("awefork:ready", async (_event: IpcMainInvokeEvent, backend: BackendId) => {
     try {
-      await adapterPromise;
+      await withAdapter(storeBackend(backend));
       return { ok: true };
     } catch (error) {
       return { ok: false, error: error instanceof Error ? error.message : String(error) };
     }
   });
 
-  ipcMain.handle("awefork:sessions", async () => {
-    const adapter = await withAdapter();
+  ipcMain.handle("awefork:sessions", async (_event: IpcMainInvokeEvent, backend: BackendId) => {
+    const id = storeBackend(backend);
+    const adapter = await withAdapter(id);
     const sessions = await adapter.listSessions();
-    const lineage = await readLineage(lineagePath);
+    const lineage = await readLineage(registry.storePaths(id).lineage);
     return { sessions, lineage };
   });
 
-  ipcMain.handle("awefork:messages", async (_event: IpcMainInvokeEvent, sessionId: string) => {
-    const adapter = await withAdapter();
-    return adapter.messages(sessionId);
-  });
+  ipcMain.handle(
+    "awefork:messages",
+    async (_event: IpcMainInvokeEvent, backend: BackendId, sessionId: string) => {
+      const adapter = await withAdapter(storeBackend(backend));
+      return adapter.messages(sessionId);
+    },
+  );
 
-  ipcMain.handle("awefork:models", async () => {
-    const adapter = await withAdapter();
+  ipcMain.handle("awefork:models", async (_event: IpcMainInvokeEvent, backend: BackendId) => {
+    const adapter = await withAdapter(storeBackend(backend));
     return adapter.listModels();
   });
 
@@ -82,102 +78,155 @@ export function registerIpc(
   // retried prompt carries the same attachments.
   ipcMain.handle(
     "awefork:messageAttachments",
-    async (_event: IpcMainInvokeEvent, sessionId: string, messageId: string) => {
-      const adapter = await withAdapter();
+    async (
+      _event: IpcMainInvokeEvent,
+      backend: BackendId,
+      sessionId: string,
+      messageId: string,
+    ) => {
+      const adapter = await withAdapter(storeBackend(backend));
       return adapter.messageAttachments(sessionId, messageId);
     },
   );
 
   ipcMain.handle(
     "awefork:createSession",
-    async (_event: IpcMainInvokeEvent, directory?: string) => {
-      const adapter = await withAdapter();
+    async (_event: IpcMainInvokeEvent, backend: BackendId, directory?: string) => {
+      const adapter = await withAdapter(storeBackend(backend));
       return adapter.createSession(directory);
     },
   );
 
   ipcMain.handle(
     "awefork:fork",
-    async (_event: IpcMainInvokeEvent, sessionId: string, atMessageId: string | null) => {
-      const adapter = await withAdapter();
+    async (
+      _event: IpcMainInvokeEvent,
+      backend: BackendId,
+      sessionId: string,
+      atMessageId: string | null,
+    ) => {
+      const adapter = await withAdapter(storeBackend(backend));
       return adapter.fork(sessionId, atMessageId);
     },
   );
 
   // Returns the pins list after pruning the deleted session, so the renderer
   // can update its canvas residents in one round-trip.
-  ipcMain.handle("awefork:deleteSession", async (_event: IpcMainInvokeEvent, sessionId: string) => {
-    const adapter = await withAdapter();
-    await adapter.deleteSession(sessionId);
-    return prunePin(pinsPath, sessionId);
-  });
+  ipcMain.handle(
+    "awefork:deleteSession",
+    async (_event: IpcMainInvokeEvent, backend: BackendId, sessionId: string) => {
+      const id = storeBackend(backend);
+      const adapter = await withAdapter(id);
+      await adapter.deleteSession(sessionId);
+      return prunePin(registry.storePaths(id).pins, sessionId);
+    },
+  );
 
   ipcMain.handle(
     "awefork:prompt",
     async (
       _event: IpcMainInvokeEvent,
+      backend: BackendId,
       sessionId: string,
       text: string,
       model: ModelChoice | null,
       attachments?: PromptAttachment[],
     ) => {
-      const adapter = await withAdapter();
+      const adapter = await withAdapter(storeBackend(backend));
       await adapter.prompt(sessionId, text, model ?? undefined, attachments);
     },
   );
 
-  ipcMain.handle("awefork:abort", async (_event: IpcMainInvokeEvent, sessionId: string) => {
-    const adapter = await withAdapter();
-    await adapter.abort(sessionId);
-  });
+  ipcMain.handle(
+    "awefork:abort",
+    async (_event: IpcMainInvokeEvent, backend: BackendId, sessionId: string) => {
+      const adapter = await withAdapter(storeBackend(backend));
+      await adapter.abort(sessionId);
+    },
+  );
 
   ipcMain.handle(
     "awefork:deleteMessage",
-    async (_event: IpcMainInvokeEvent, sessionId: string, messageId: string) => {
-      const adapter = await withAdapter();
+    async (
+      _event: IpcMainInvokeEvent,
+      backend: BackendId,
+      sessionId: string,
+      messageId: string,
+    ) => {
+      const adapter = await withAdapter(storeBackend(backend));
       await adapter.deleteMessage(sessionId, messageId);
     },
   );
 
   ipcMain.handle(
     "awefork:renameSession",
-    async (_event: IpcMainInvokeEvent, sessionId: string, title: string) => {
-      const adapter = await withAdapter();
+    async (_event: IpcMainInvokeEvent, backend: BackendId, sessionId: string, title: string) => {
+      const adapter = await withAdapter(storeBackend(backend));
       await adapter.renameSession(sessionId, title);
     },
   );
 
-  ipcMain.handle("awefork:pins", async () => readPins(pinsPath));
+  // ── per-backend overlay stores ─────────────────────────────────────────
 
-  ipcMain.handle("awefork:togglePin", (_event: IpcMainInvokeEvent, sessionId: string) =>
-    togglePin(pinsPath, sessionId),
+  ipcMain.handle("awefork:pins", async (_event: IpcMainInvokeEvent, backend: BackendId) =>
+    readPins(registry.storePaths(storeBackend(backend)).pins),
   );
 
-  ipcMain.handle("awefork:trash", async () => readTrash(trashPath));
+  ipcMain.handle(
+    "awefork:togglePin",
+    (_event: IpcMainInvokeEvent, backend: BackendId, sessionId: string) =>
+      togglePin(registry.storePaths(storeBackend(backend)).pins, sessionId),
+  );
+
+  ipcMain.handle("awefork:trash", async (_event: IpcMainInvokeEvent, backend: BackendId) =>
+    readTrash(registry.storePaths(storeBackend(backend)).trash),
+  );
 
   ipcMain.handle(
     "awefork:trashAdd",
-    (_event: IpcMainInvokeEvent, sessionId: string, title: string) =>
-      addTrashEntry(trashPath, sessionId, title),
+    (_event: IpcMainInvokeEvent, backend: BackendId, sessionId: string, title: string) =>
+      addTrashEntry(registry.storePaths(storeBackend(backend)).trash, sessionId, title),
   );
 
-  ipcMain.handle("awefork:trashRemove", (_event: IpcMainInvokeEvent, sessionId: string) =>
-    removeTrashEntry(trashPath, sessionId),
+  ipcMain.handle(
+    "awefork:trashRemove",
+    (_event: IpcMainInvokeEvent, backend: BackendId, sessionId: string) =>
+      removeTrashEntry(registry.storePaths(storeBackend(backend)).trash, sessionId),
   );
 
-  ipcMain.handle("awefork:archive", async () => readArchive(archivePath));
+  ipcMain.handle("awefork:archive", async (_event: IpcMainInvokeEvent, backend: BackendId) =>
+    readArchive(registry.storePaths(storeBackend(backend)).archive),
+  );
 
   ipcMain.handle(
     "awefork:archiveAdd",
-    async (_event: IpcMainInvokeEvent, kind: ArchiveKind, key: string) =>
-      setArchived(archivePath, kind, key, true),
+    async (_event: IpcMainInvokeEvent, backend: BackendId, kind: ArchiveKind, key: string) =>
+      setArchived(registry.storePaths(storeBackend(backend)).archive, kind, key, true),
   );
 
   ipcMain.handle(
     "awefork:archiveRemove",
-    async (_event: IpcMainInvokeEvent, kind: ArchiveKind, key: string) =>
-      setArchived(archivePath, kind, key, false),
+    async (_event: IpcMainInvokeEvent, backend: BackendId, kind: ArchiveKind, key: string) =>
+      setArchived(registry.storePaths(storeBackend(backend)).archive, kind, key, false),
   );
+
+  // ── backend switcher ────────────────────────────────────────────────────
+
+  ipcMain.handle("awefork:backends", () => registry.listBackends());
+
+  ipcMain.handle(
+    "awefork:selectBackend",
+    async (_event: IpcMainInvokeEvent, backend: BackendId) => {
+      if (!isBackendId(backend)) return { ok: false, error: `未知后端：${String(backend)}` };
+      return registry.select(backend);
+    },
+  );
+
+  ipcMain.handle("awefork:capabilities", (_event: IpcMainInvokeEvent, backend: BackendId) =>
+    registry.capabilities(storeBackend(backend)),
+  );
+
+  // ── app-level ────────────────────────────────────────────────────────────
 
   // Word/RTF attachments are converted here in the main process; the renderer
   // stages the result as a text/plain attachment.
@@ -222,17 +271,4 @@ export function registerIpc(
   ipcMain.handle("awefork:open-release", (_event: IpcMainInvokeEvent, version: string) =>
     openRelease(version),
   );
-}
-
-export function forwardEvents(
-  adapterPromise: Promise<AgentAdapter>,
-  send: (event: AgentEvent) => void,
-): void {
-  adapterPromise
-    .then((adapter) => {
-      void adapter.subscribe(send);
-    })
-    .catch(() => {
-      // Startup failure is reported through awefork:ready; nothing to stream.
-    });
 }
