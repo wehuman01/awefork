@@ -2,8 +2,8 @@ import { type IpcMainInvokeEvent, ipcMain, shell } from "electron";
 import { readArchive, setArchived } from "../shared/archive-store.js";
 import { type BackendId, isBackendId } from "../shared/backend.js";
 import { readComposer, writeComposer } from "../shared/composer-store.js";
-import { isDrivePath } from "../shared/drive-path.js";
 import { readLineage } from "../shared/lineage-store.js";
+import { isLocalPath } from "../shared/local-path.js";
 import { prunePin, readPins, togglePin } from "../shared/pins-store.js";
 import { addTrashEntry, readTrash, removeTrashEntry } from "../shared/trash-store.js";
 import type {
@@ -270,12 +270,13 @@ export function registerIpc(registry: BackendRegistry): void {
 
   // ── app-level ────────────────────────────────────────────────────────────
 
-  // Local file references in replies (agent output on Windows is full of
-  // them) open with the OS handler. Only drive paths pass the gate — the
-  // same regex the renderer's parser used, so nothing reaches the OS that
-  // the markdown view wouldn't have linked itself.
+  // Local file references in replies (agent output is full of them — Windows
+  // drive paths and absolute POSIX paths alike) open with the OS handler.
+  // Only absolute local paths pass the gate — the same regexes the
+  // renderer's parser used, so nothing reaches the OS that the markdown
+  // view wouldn't have linked itself.
   ipcMain.handle("awefork:openPath", async (_event: IpcMainInvokeEvent, target: string) => {
-    if (!isDrivePath(target)) return { ok: false, error: "不是本地路径" };
+    if (!isLocalPath(target)) return { ok: false, error: "不是本地路径" };
     const error = await shell.openPath(target);
     return error ? { ok: false, error } : { ok: true };
   });

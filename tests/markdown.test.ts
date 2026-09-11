@@ -227,6 +227,28 @@ describe("Windows drive paths", () => {
     ]);
   });
 
+  it("drops a trailing :line reference from a bare drive path", () => {
+    expect(parseInline("见 C:\\repo\\file.ts:1。")).toEqual([
+      { kind: "text", text: "见 " },
+      {
+        kind: "link",
+        href: "C:\\repo\\file.ts",
+        children: [{ kind: "text", text: "C:\\repo\\file.ts" }],
+      },
+      { kind: "text", text: ":1。" },
+    ]);
+  });
+
+  it("drops a trailing :line:col reference from an explicit drive href", () => {
+    expect(parseInline("[源码](C:\\repo\\file.ts:12:34)")).toEqual([
+      {
+        kind: "link",
+        href: "C:\\repo\\file.ts",
+        children: [{ kind: "text", text: "源码" }],
+      },
+    ]);
+  });
+
   it("leaves colon-bearing words that are not paths alone", () => {
     expect(parseInline("10:30 开会，Note:this 不是路径，C: 也不是")).toEqual([
       { kind: "text", text: "10:30 开会，Note:this 不是路径，C: 也不是" },
@@ -236,6 +258,63 @@ describe("Windows drive paths", () => {
   it("still refuses file: scheme hrefs", () => {
     expect(parseInline("[x](file:///C:/repo/a.ts)")).toEqual([
       { kind: "text", text: "[x](file:///C:/repo/a.ts)" },
+    ]);
+  });
+});
+
+describe("absolute POSIX paths", () => {
+  it("links an explicit POSIX href with a :line reference", () => {
+    // The codex-replied form: [name](/abs/path/file.md:1).
+    expect(
+      parseInline(
+        "[inquery_0905.md](/Users/peng/Desktop/Project/phd/droma/docs/inquery/archive/inquery_0905.md:1)",
+      ),
+    ).toEqual([
+      {
+        kind: "link",
+        href: "/Users/peng/Desktop/Project/phd/droma/docs/inquery/archive/inquery_0905.md",
+        children: [{ kind: "text", text: "inquery_0905.md" }],
+      },
+    ]);
+  });
+
+  it("links an explicit POSIX href without a line reference", () => {
+    expect(parseInline("[design](/repo/docs/design.md)")).toEqual([
+      {
+        kind: "link",
+        href: "/repo/docs/design.md",
+        children: [{ kind: "text", text: "design" }],
+      },
+    ]);
+  });
+
+  it("links a bare absolute path in prose", () => {
+    expect(parseInline("改了 /repo/src/main.ts 两处")).toEqual([
+      { kind: "text", text: "改了 " },
+      {
+        kind: "link",
+        href: "/repo/src/main.ts",
+        children: [{ kind: "text", text: "/repo/src/main.ts" }],
+      },
+      { kind: "text", text: " 两处" },
+    ]);
+  });
+
+  it("drops trailing punctuation and a :line reference from a bare path", () => {
+    expect(parseInline("见 /repo/file.ts:1.")).toEqual([
+      { kind: "text", text: "见 " },
+      {
+        kind: "link",
+        href: "/repo/file.ts",
+        children: [{ kind: "text", text: "/repo/file.ts" }],
+      },
+      { kind: "text", text: ":1." },
+    ]);
+  });
+
+  it("leaves relative slashes and home/relative paths alone", () => {
+    expect(parseInline("km/h 和 and/or 不是路径，./x 和 ~/notes 也打不开")).toEqual([
+      { kind: "text", text: "km/h 和 and/or 不是路径，./x 和 ~/notes 也打不开" },
     ]);
   });
 });

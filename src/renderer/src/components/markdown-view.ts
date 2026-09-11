@@ -7,7 +7,7 @@
  */
 
 import { defineComponent, h, type VNode, type VNodeChild } from "vue";
-import { isDrivePath } from "../../../shared/drive-path";
+import { isLocalPath } from "../../../shared/local-path";
 import {
   type MdBlock,
   type MdInline,
@@ -20,7 +20,7 @@ import CodeBlock from "./code-block.vue";
 
 function openLink(event: MouseEvent, href: string): void {
   event.preventDefault();
-  if (isDrivePath(href)) {
+  if (isLocalPath(href)) {
     void window.awefork
       .openPath(href)
       .then((result) => {

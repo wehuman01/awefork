@@ -10,7 +10,7 @@
  * is exactly right while a reply is still streaming in.
  */
 
-import { DRIVE_PATH } from "../../shared/drive-path";
+import { DRIVE_PATH, isLocalPath, openablePath, POSIX_PATH } from "../../shared/local-path";
 
 export type MdInline =
   | { kind: "text"; text: string }
@@ -118,8 +118,28 @@ export function parseInline(text: string): MdInline[] {
     if (/[A-Za-z]/.test(ch) && text[i + 1] === ":" && !/[\w/]/.test(text[i - 1] ?? " ")) {
       const match = DRIVE_PATH.exec(text.slice(i));
       if (match) {
-        // Trailing sentence punctuation is prose, not part of the path.
-        const href = match[0].replace(/[.,;:!?]+$/, "");
+        // Trailing sentence punctuation and a :line reference are prose,
+        // not part of the path.
+        const href = openablePath(match[0]);
+        flush();
+        out.push({ kind: "link", href, children: [{ kind: "text", text: href }] });
+        i += href.length;
+        continue;
+      }
+    }
+
+    // Absolute POSIX paths get the same treatment. The slash must start a
+    // word — preceded by a word char it is "km/h" or "and/or", preceded by
+    // "~./" it is a home or relative path we can't open as-is, and preceded
+    // by ":" it is the tail of a file:-style URL that must stay plain text.
+    if (
+      ch === "/" &&
+      /[A-Za-z0-9]/.test(text[i + 1] ?? "") &&
+      !/[\w~./:]/.test(text[i - 1] ?? " ")
+    ) {
+      const match = POSIX_PATH.exec(text.slice(i));
+      if (match) {
+        const href = openablePath(match[0]);
         flush();
         out.push({ kind: "link", href, children: [{ kind: "text", text: href }] });
         i += href.length;
@@ -143,15 +163,15 @@ export function parseInline(text: string): MdInline[] {
                 .trim()
                 .split(/\s+/)[0] ?? "")
             : "";
-        // Trailing sentence punctuation is prose, not path — the bare-path
-        // rule above strips it, and an explicit drive href must not smuggle
-        // it back in for shell.openPath to choke on.
-        const driveHref = href.replace(/[.,;:!?]+$/, "");
-        if (end > 0 && (SAFE_HREF.test(href) || DRIVE_PATH.test(driveHref))) {
+        // Trailing sentence punctuation and a :line reference are prose, not
+        // path — the bare-path rules above strip them, and an explicit href
+        // must not smuggle them back in for shell.openPath to choke on.
+        const local = openablePath(href);
+        if (end > 0 && (SAFE_HREF.test(href) || isLocalPath(local))) {
           flush();
           out.push({
             kind: "link",
-            href: SAFE_HREF.test(href) ? href : driveHref,
+            href: SAFE_HREF.test(href) ? href : local,
             children: parseInline(text.slice(linkStart + 1, close)),
           });
           i = end + 1;

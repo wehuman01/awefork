@@ -27,7 +27,7 @@
     "src/shared/canvas-scope.ts",
     "src/shared/turn-search.ts",
     "src/shared/branch-digest.ts",
-    "src/shared/drive-path.ts",
+    "src/shared/local-path.ts",
     "src/shared/agents/*.json",
     "src/shared/agent-descriptor.ts"
   ]
