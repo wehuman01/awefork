@@ -6,6 +6,7 @@ import type {
   ForkRecord,
   ModelChoice,
   ModelOption,
+  PersistedComposer,
   PromptAttachment,
   SessionSummary,
   TrashEntry,
@@ -50,6 +51,9 @@ export interface AweforkApi {
   archive(): Promise<ArchiveState>;
   archiveAdd(kind: ArchiveKind, key: string): Promise<ArchiveState>;
   archiveRemove(kind: ArchiveKind, key: string): Promise<ArchiveState>;
+  composer(): Promise<PersistedComposer | null>;
+  saveComposer(value: PersistedComposer | null): Promise<void>;
+  openPath(target: string): Promise<{ ok: boolean; error?: string }>;
   openExternal(url: string): Promise<void>;
   convertDocument(filename: string, bytes: Uint8Array): Promise<string>;
   checkUpdates(respectSkip: boolean): Promise<CheckUpdatesResult>;

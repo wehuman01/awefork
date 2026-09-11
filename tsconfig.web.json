@@ -24,6 +24,7 @@
     "src/shared/canvas-graph.ts",
     "src/shared/canvas-scope.ts",
     "src/shared/turn-search.ts",
-    "src/shared/branch-digest.ts"
+    "src/shared/branch-digest.ts",
+    "src/shared/drive-path.ts"
   ]
 }

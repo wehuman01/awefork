@@ -7,6 +7,7 @@ import type {
   ChatMessage,
   ModelChoice,
   ModelOption,
+  PersistedComposer,
   PromptAttachment,
   SessionSummary,
   TrashEntry,
@@ -53,6 +54,11 @@ const api: AweforkApi = {
     ipcRenderer.invoke("awefork:archiveAdd", kind, key),
   archiveRemove: (kind: ArchiveKind, key: string): Promise<ArchiveState> =>
     ipcRenderer.invoke("awefork:archiveRemove", kind, key),
+  composer: (): Promise<PersistedComposer | null> => ipcRenderer.invoke("awefork:composer"),
+  saveComposer: (value: PersistedComposer | null): Promise<void> =>
+    ipcRenderer.invoke("awefork:saveComposer", value),
+  openPath: (target: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke("awefork:openPath", target),
   openExternal: (url: string): Promise<void> => ipcRenderer.invoke("awefork:openExternal", url),
   convertDocument: (filename: string, bytes: Uint8Array): Promise<string> =>
     ipcRenderer.invoke("awefork:convertDocument", filename, bytes),

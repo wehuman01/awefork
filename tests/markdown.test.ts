@@ -153,3 +153,72 @@ describe("parseInline", () => {
     expect(parseInline("`unclosed")).toEqual([{ kind: "text", text: "`unclosed" }]);
   });
 });
+
+describe("Windows drive paths", () => {
+  it("links a backslash path and keeps it verbatim", () => {
+    expect(parseInline("改了 C:\\repo\\src\\main.ts 两个字")).toEqual([
+      { kind: "text", text: "改了 " },
+      {
+        kind: "link",
+        href: "C:\\repo\\src\\main.ts",
+        children: [{ kind: "text", text: "C:\\repo\\src\\main.ts" }],
+      },
+      { kind: "text", text: " 两个字" },
+    ]);
+  });
+
+  it("links a forward-slash drive path", () => {
+    expect(parseInline("D:/proj/a.ts")).toEqual([
+      {
+        kind: "link",
+        href: "D:/proj/a.ts",
+        children: [{ kind: "text", text: "D:/proj/a.ts" }],
+      },
+    ]);
+  });
+
+  it("consumes the path whole so escapes cannot mangle it", () => {
+    // Without the drive-path rule, \[ \] inside would drop their backslashes.
+    expect(parseInline("C:\\repo\\[old]\\file.ts")).toEqual([
+      {
+        kind: "link",
+        href: "C:\\repo\\[old]\\file.ts",
+        children: [{ kind: "text", text: "C:\\repo\\[old]\\file.ts" }],
+      },
+    ]);
+  });
+
+  it("drops trailing sentence punctuation from the path", () => {
+    expect(parseInline("见 C:\\repo\\file.ts.")).toEqual([
+      { kind: "text", text: "见 " },
+      {
+        kind: "link",
+        href: "C:\\repo\\file.ts",
+        children: [{ kind: "text", text: "C:\\repo\\file.ts" }],
+      },
+      { kind: "text", text: "." },
+    ]);
+  });
+
+  it("accepts explicit links whose href is a drive path", () => {
+    expect(parseInline("[源码](D:\\proj\\a.ts)")).toEqual([
+      {
+        kind: "link",
+        href: "D:\\proj\\a.ts",
+        children: [{ kind: "text", text: "源码" }],
+      },
+    ]);
+  });
+
+  it("leaves colon-bearing words that are not paths alone", () => {
+    expect(parseInline("10:30 开会，Note:this 不是路径，C: 也不是")).toEqual([
+      { kind: "text", text: "10:30 开会，Note:this 不是路径，C: 也不是" },
+    ]);
+  });
+
+  it("still refuses file: scheme hrefs", () => {
+    expect(parseInline("[x](file:///C:/repo/a.ts)")).toEqual([
+      { kind: "text", text: "[x](file:///C:/repo/a.ts)" },
+    ]);
+  });
+});

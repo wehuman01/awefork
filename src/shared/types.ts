@@ -87,6 +87,40 @@ export interface PromptAttachment {
   dataUrl: string;
 }
 
+/** A file staged in a persisted draft; same shape as the renderer's chips. */
+export interface PersistedDraftAttachment {
+  id: string;
+  name: string;
+  mime: string;
+  dataUrl: string;
+}
+
+/**
+ * The canvas fork composer, frozen at persist time. No canvas node id: the
+ * anchor is recomputed on restore because the graph may have moved (or the
+ * fork point vanished) while the app was away.
+ */
+export interface PersistedDraft {
+  /** Session the draft continues or forks from. */
+  sessionId: string;
+  /** User message to fork after; null = continue the session at its tip. */
+  atMessageId: string | null;
+  text: string;
+  model: ModelChoice | null;
+  attachments: PersistedDraftAttachment[];
+}
+
+/**
+ * Unsent composer state persisted to composer.json, so a crash or restart
+ * hands the user back what they were typing instead of eating it. The pane
+ * composer's text lives in its component and is out of scope; its per-
+ * session model picks ride along here.
+ */
+export interface PersistedComposer {
+  draft: PersistedDraft | null;
+  paneModels: Record<string, ModelChoice>;
+}
+
 /** Fork lineage recorded by awefork when it forks a session. */
 export interface ForkRecord {
   /** Session that was forked from. */

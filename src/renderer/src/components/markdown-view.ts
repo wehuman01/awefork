@@ -7,6 +7,7 @@
  */
 
 import { defineComponent, h, type VNode, type VNodeChild } from "vue";
+import { isDrivePath } from "../../../shared/drive-path";
 import {
   type MdBlock,
   type MdInline,
@@ -14,10 +15,17 @@ import {
   type MdListItem,
   parseMarkdown,
 } from "../markdown";
+import { reportActionError } from "../state";
 import CodeBlock from "./code-block.vue";
 
 function openLink(event: MouseEvent, href: string): void {
   event.preventDefault();
+  if (isDrivePath(href)) {
+    void window.awefork.openPath(href).then((result) => {
+      if (!result.ok) reportActionError(result.error ?? "路径打不开");
+    });
+    return;
+  }
   void window.awefork.openExternal(href);
 }
 

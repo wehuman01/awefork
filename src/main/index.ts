@@ -12,6 +12,7 @@ const lineagePath = join(app.getPath("userData"), "lineage.json");
 const pinsPath = join(app.getPath("userData"), "pins.json");
 const trashPath = join(app.getPath("userData"), "trash.json");
 const archivePath = join(app.getPath("userData"), "archive.json");
+const composerPath = join(app.getPath("userData"), "composer.json");
 
 const adapterPromise = ensureOpencodeServer(PORT)
   .then(({ baseUrl }) => createOpencodeAdapter({ baseUrl, lineagePath }))
@@ -20,7 +21,7 @@ const adapterPromise = ensureOpencodeServer(PORT)
     throw error instanceof Error ? error : new Error(String(error));
   });
 
-registerIpc(adapterPromise, lineagePath, pinsPath, trashPath, archivePath);
+registerIpc(adapterPromise, lineagePath, pinsPath, trashPath, archivePath, composerPath);
 
 let mainWindow: BrowserWindow | null = null;
 

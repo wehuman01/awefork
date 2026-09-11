@@ -1,5 +1,7 @@
 import { type IpcMainInvokeEvent, ipcMain, shell } from "electron";
 import { readArchive, setArchived } from "../shared/archive-store.js";
+import { readComposer, writeComposer } from "../shared/composer-store.js";
+import { isDrivePath } from "../shared/drive-path.js";
 import { readLineage } from "../shared/lineage-store.js";
 import { prunePin, readPins, togglePin } from "../shared/pins-store.js";
 import { addTrashEntry, readTrash, removeTrashEntry } from "../shared/trash-store.js";
@@ -8,6 +10,7 @@ import type {
   AgentEvent,
   ArchiveKind,
   ModelChoice,
+  PersistedComposer,
   PromptAttachment,
   TrashEntry,
 } from "../shared/types";
@@ -35,7 +38,10 @@ import { checkForUpdates, openRelease, skipUpdate } from "./update-check.js";
  *   trashRemove-> TrashEntry[]            un-queue (undo), list back
  *   archive    -> ArchiveState            archived sessions + directories
  *   archiveAdd -> ArchiveState            archive a session/directory, state back
- *   archiveRemove -> ArchiveState         restore a session/directory, state back
+ *   archiveRemove-> ArchiveState          restore a session/directory, state back
+ *   composer   -> PersistedComposer|null  unsent draft + pane model picks
+ *   saveComposer-> void                   persist/clear that composer state
+ *   openPath   -> { ok, error? }          open a Windows drive path with the OS
  *   openExternal -> void                  open a reply link in the system browser
  *   convertDocument -> string             Word/RTF attachment → plain text
  *   checkUpdates  -> CheckUpdatesResult   latest release vs installed version
@@ -49,6 +55,7 @@ export function registerIpc(
   pinsPath: string,
   trashPath: string,
   archivePath: string,
+  composerPath: string,
 ): void {
   const withAdapter = async (): Promise<AgentAdapter> => adapterPromise;
 
@@ -178,6 +185,26 @@ export function registerIpc(
     async (_event: IpcMainInvokeEvent, kind: ArchiveKind, key: string) =>
       setArchived(archivePath, kind, key, false),
   );
+
+  // The unsent draft's crash-recovery sidecar. Written by the renderer's
+  // debounced flush, read back once on startup.
+  ipcMain.handle("awefork:composer", async () => readComposer(composerPath));
+
+  ipcMain.handle(
+    "awefork:saveComposer",
+    (_event: IpcMainInvokeEvent, value: PersistedComposer | null) =>
+      writeComposer(composerPath, value),
+  );
+
+  // Local file references in replies (agent output on Windows is full of
+  // them) open with the OS handler. Only drive paths pass the gate — the
+  // same regex the renderer's parser used, so nothing reaches the OS that
+  // the markdown view wouldn't have linked itself.
+  ipcMain.handle("awefork:openPath", async (_event: IpcMainInvokeEvent, target: string) => {
+    if (!isDrivePath(target)) return { ok: false, error: "不是本地路径" };
+    const error = await shell.openPath(target);
+    return error ? { ok: false, error } : { ok: true };
+  });
 
   // Word/RTF attachments are converted here in the main process; the renderer
   // stages the result as a text/plain attachment.
