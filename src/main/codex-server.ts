@@ -1,0 +1,198 @@
+import { type ChildProcess, execFile, spawn } from "node:child_process";
+import { homedir } from "node:os";
+import { promisify } from "node:util";
+import { CODEX_NOT_LOGGED_IN_MESSAGE } from "../shared/codex-adapter.js";
+import { type CodexJsonRpc, createCodexJsonRpc } from "./codex-jsonrpc.js";
+import { resolveSpawnEnv } from "./opencode-server.js";
+
+const execFileAsync = promisify(execFile);
+
+const NOT_LOGGED_IN_MESSAGE = CODEX_NOT_LOGGED_IN_MESSAGE;
+
+export interface EnsureCodexServerResult {
+  client: CodexJsonRpc;
+  /** CLI version parsed from the initialize response, when it exposes one. */
+  version: string | null;
+  /**
+   * Set when the CLI is installed but not logged in (account/read failed or
+   * reported no usable account) — surfaced once so the UI can say "run codex
+   * login" before the first prompt instead of after.
+   */
+  authMessage: string | null;
+}
+
+/**
+ * Probe whether the codex CLI is on PATH without starting its server — the
+ * backend switcher calls this for every candidate, on boot and on switch.
+ */
+export async function isCodexInstalled(
+  execFn: typeof execFileAsync = execFileAsync,
+): Promise<boolean> {
+  try {
+    await execFn("codex", ["--version"], {
+      timeout: 5000,
+      env: await resolveSpawnEnv(process.env, homedir(), undefined, process.platform, "codex"),
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+interface ServerSlot {
+  child: ChildProcess;
+  result: EnsureCodexServerResult;
+  alive: boolean;
+}
+
+let server: ServerSlot | null = null;
+
+/**
+ * Spawn `codex app-server` as a child and drive it over stdio JSON-RPC.
+ * Readiness is the `initialize` handshake — there is no port to probe. The
+ * npm `codex` shim spawns the real binary as a grandchild, so the child runs
+ * detached in its own process group and shutdown kills the whole group
+ * (mirroring the `taskkill /T` note in opencode-server.ts for Windows).
+ *
+ * `onExit` fires once if the child later dies; the registry drops its cached
+ * adapter so the next codex call lazily re-spawns a fresh one.
+ */
+export async function ensureCodexServer(
+  onExit: () => void = () => {},
+  spawnFn: typeof spawn = spawn,
+): Promise<EnsureCodexServerResult> {
+  if (server?.alive) return server.result;
+  stopCodexServer();
+
+  const child = spawnFn("codex", ["app-server"], {
+    stdio: ["pipe", "pipe", "ignore"],
+    cwd: homedir(),
+    env: await resolveSpawnEnv(process.env, homedir(), undefined, process.platform, "codex"),
+    // Own process group on POSIX (see doc comment); the npm .cmd shim needs
+    // cmd.exe on Windows, same as the opencode spawn.
+    detached: process.platform !== "win32",
+    ...(process.platform === "win32" ? { shell: true, windowsHide: true } : {}),
+  });
+
+  const slot: ServerSlot = {
+    child,
+    alive: true,
+    result: { client: null as unknown as CodexJsonRpc, version: null, authMessage: null },
+  };
+  let exitNotified = false;
+  const markDead = () => {
+    if (!slot.alive) return;
+    slot.alive = false;
+    if (!exitNotified) {
+      exitNotified = true;
+      onExit();
+    }
+  };
+  // A failed spawn (ENOENT — CLI not on PATH) emits "error" and never sets
+  // exitCode; the handshake loop must watch this flag or it idles the deadline.
+  const spawnFailure = { error: null as Error | null };
+  child.on("error", (error) => {
+    spawnFailure.error = error;
+    markDead();
+  });
+  child.on("exit", markDead);
+
+  const client = createCodexJsonRpc(child.stdin, child.stdout, {
+    onNotification: () => {},
+    onDisconnect: markDead,
+  });
+
+  const deadline = Date.now() + 30_000;
+  for (;;) {
+    if (spawnFailure.error) {
+      client.dispose();
+      throw new Error(
+        `Could not start codex app-server: ${spawnFailure.error.message}. Is the "codex" CLI on PATH? Install it with: npm install -g @openai/codex`,
+      );
+    }
+    if (child.exitCode !== null || !slot.alive) {
+      client.dispose();
+      throw new Error(
+        'codex app-server exited during startup. Is the "codex" CLI on PATH and healthy?',
+      );
+    }
+    try {
+      const init = await client.request<{ userAgent?: string }>(
+        "initialize",
+        {
+          clientInfo: { name: "awefork", title: "awefork", version: "0.1.9" },
+        },
+        5_000,
+      );
+      // Auth probe: a codex that never ran `codex login` fails every
+      // turn/start with an auth error — better to know before the prompt.
+      // A successful reply can still report no usable account (fresh
+      // install, logged out) via a null account or requiresOpenaiAuth —
+      // those count as "not logged in" too.
+      let authMessage: string | null = null;
+      try {
+        const account = await client.request<{ account?: unknown; requiresOpenaiAuth?: boolean }>(
+          "account/read",
+          {},
+          10_000,
+        );
+        if (!account?.account || account.requiresOpenaiAuth === true) {
+          authMessage = NOT_LOGGED_IN_MESSAGE;
+        }
+      } catch (error) {
+        authMessage = `${NOT_LOGGED_IN_MESSAGE}（${
+          error instanceof Error ? error.message : String(error)
+        }）`;
+      }
+      server = slot;
+      slot.result = {
+        client,
+        version: parseCliVersion(init?.userAgent),
+        authMessage,
+      };
+      return slot.result;
+    } catch (error) {
+      // Handshake-level failures (timeout while the CLI warms up) retry until
+      // the deadline; the spawn/exit checks above break the loop early.
+      if (Date.now() > deadline) {
+        client.dispose();
+        markDead();
+        throw new Error(
+          `codex app-server did not complete its handshake: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+      await sleep(500);
+    }
+  }
+}
+
+/** Stop the managed codex child (app quit). Safe to call cold. */
+export function stopCodexServer(): void {
+  const current = server;
+  server = null;
+  if (!current || current.child.exitCode !== null) return;
+  if (process.platform === "win32" && current.child.pid) {
+    spawn("taskkill", ["/pid", String(current.child.pid), "/T", "/F"], {
+      stdio: "ignore",
+      windowsHide: true,
+    });
+    return;
+  }
+  try {
+    // Negative pid = the whole process group (npm shim + real binary).
+    if (current.child.pid) process.kill(-current.child.pid, "SIGTERM");
+  } catch {
+    current.child.kill("SIGTERM");
+  }
+}
+
+function parseCliVersion(userAgent: string | undefined | null): string | null {
+  if (typeof userAgent !== "string") return null;
+  return userAgent.match(/\d+\.\d+\.\d+/)?.[0] ?? null;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}

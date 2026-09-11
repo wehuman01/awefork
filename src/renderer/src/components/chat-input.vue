@@ -1,9 +1,9 @@
 <template>
   <form
     class="chat-input"
-    :class="{ dragging: dragOver }"
+    :class="{ dragging: dragOver && allowAttachments }"
     @submit.prevent="submit"
-    @dragover.prevent="dragOver = true"
+    @dragover.prevent="onDragOver"
     @dragleave="dragOver = false"
     @drop.prevent="onDrop"
   >
@@ -35,6 +35,7 @@
         @change="onFilePicked"
       />
       <button
+        v-if="allowAttachments"
         type="button"
         class="attach"
         title="添加附件（图片、文档、文本）"
@@ -63,11 +64,16 @@ import { type DraftAttachment, readAttachments, toPromptAttachments } from "../a
 import ModelPicker from "./model-picker.vue";
 import VariantPicker from "./variant-picker.vue";
 
-const props = defineProps<{
-  running: boolean;
-  model: ModelChoice | null;
-  models: readonly ModelOption[];
-}>();
+const props = withDefaults(
+  defineProps<{
+    running: boolean;
+    model: ModelChoice | null;
+    models: readonly ModelOption[];
+    /** Backend capability gate: codex takes no attachments at all. */
+    allowAttachments?: boolean;
+  }>(),
+  { allowAttachments: true },
+);
 const emit = defineEmits<{
   send: [text: string, attachments: PromptAttachment[]];
   abort: [];
@@ -121,6 +127,10 @@ function flashNotice(message: string): void {
 }
 
 function addFiles(files: FileList | File[]): void {
+  if (!props.allowAttachments) {
+    flashNotice("当前后端不支持附件");
+    return;
+  }
   const notes: string[] = [];
   let list = [...files];
   // The attachment capability flags media input (images); plain-text
@@ -154,12 +164,19 @@ function removeAttachment(id: string): void {
 function onPaste(event: ClipboardEvent): void {
   const files = event.clipboardData?.files;
   if (!files || files.length === 0) return;
+  // Swallow the paste either way: a pasted file would otherwise land as
+  // nothing (or garbage) in the textarea once we refuse it.
   event.preventDefault();
   addFiles(files);
 }
 
+function onDragOver(): void {
+  if (props.allowAttachments) dragOver.value = true;
+}
+
 function onDrop(event: DragEvent): void {
   dragOver.value = false;
+  if (!props.allowAttachments) return;
   const files = event.dataTransfer?.files;
   if (!files || files.length === 0) return;
   addFiles(files);

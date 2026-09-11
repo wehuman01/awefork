@@ -5,6 +5,22 @@
       <span class="brand-name">awefork</span>
       <span class="brand-sub">分支工作台</span>
     </div>
+    <div v-if="backendList.length > 1" class="backend-switch" role="group" aria-label="Agent 后端">
+      <button
+        v-for="entry in backendList"
+        :key="entry.id"
+        type="button"
+        class="backend-btn"
+        :class="{ active: entry.id === activeBackend }"
+        :disabled="!entry.installed"
+        :title="
+          entry.installed ? `切换到 ${entry.label}` : `未在 PATH 上找到 ${entry.label} CLI`
+        "
+        @click="pickBackend(entry.id)"
+      >
+        {{ entry.label }}
+      </button>
+    </div>
     <div v-if="directories.length > 0" class="project-wrap">
       <button type="button" class="project-pill" @click.stop="toggleOpen">
         <span>📁</span>
@@ -27,7 +43,7 @@
     </div>
     <div class="topbar-status" :class="connectionError ? 'bad' : 'ok'">
       <span class="status-dot"></span>
-      {{ connectionError ? "opencode 未连接" : "opencode 已连接" }}
+      {{ connectionError ? `${activeLabel} 未连接` : `${activeLabel} 已连接` }}
     </div>
     <button
       type="button"
@@ -49,15 +65,23 @@
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
+import type { BackendId } from "../../../shared/backend";
 import logoUrl from "../assets/logo.svg";
 import { shortPath } from "../format";
 import { togglePalette } from "../layout";
-import { checkForUpdates, directories, store, switchDirectory } from "../state";
+import { checkForUpdates, directories, store, switchBackend, switchDirectory } from "../state";
 
 const open = ref(false);
 const versionOpen = ref(false);
 const currentDirectory = computed(() => store.selectedDirectory ?? "");
 const connectionError = computed(() => store.connectionError);
+const backendList = computed(() => store.backendList);
+const activeBackend = computed(() => store.activeBackend);
+const activeLabel = computed(
+  () =>
+    backendList.value.find((entry) => entry.id === activeBackend.value)?.label ??
+    activeBackend.value,
+);
 // The version button is always there (so manual checks stay reachable); a
 // placeholder stands in until the first check fills the real version in.
 const versionLabel = computed(() => `v${store.currentVersion ?? "—"}`);
@@ -68,6 +92,10 @@ function toggleOpen(): void {
 
 function toggleVersionMenu(): void {
   versionOpen.value = !versionOpen.value;
+}
+
+async function pickBackend(backend: BackendId): Promise<void> {
+  await switchBackend(backend);
 }
 
 async function pick(directory: string): Promise<void> {

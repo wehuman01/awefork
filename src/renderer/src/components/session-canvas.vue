@@ -735,6 +735,12 @@ function draftAttachments(): readonly DraftAttachment[] {
 function onDraftPaste(event: ClipboardEvent): void {
   const files = event.clipboardData?.files;
   if (!files || files.length === 0) return;
+  // Backend gate first: codex takes no attachments at all, and a staged chip
+  // would silently not ship with the prompt.
+  if (!store.capabilities.attachments) {
+    event.preventDefault();
+    return;
+  }
   let list = [...files];
   const model = store.draft?.model ?? null;
   if (model) {

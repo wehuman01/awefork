@@ -34,6 +34,7 @@
       <BranchContext :style="panelStyle('context')" />
     </div>
     <CommandPalette />
+    <InteractionDialog />
     <div
       v-if="store.actionError"
       class="toast banner-error"
@@ -61,6 +62,7 @@
 import { onMounted, onUnmounted } from "vue";
 import BranchContext from "./components/branch-context.vue";
 import CommandPalette from "./components/command-palette.vue";
+import InteractionDialog from "./components/interaction-dialog.vue";
 import SessionCanvas from "./components/session-canvas.vue";
 import SideBar from "./components/side-bar.vue";
 import TopBar from "./components/top-bar.vue";

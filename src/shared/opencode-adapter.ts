@@ -202,6 +202,13 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
       await client.renameSession(sessionId, title);
     },
 
+    // opencode's stream is one-way (server → client notifications); nothing
+    // it does waits on a reply from the host, so an interaction responder is
+    // meaningless here and an attempt to use one is a programming error.
+    async respondInteraction() {
+      throw new Error("opencode has no server-originated interactions to answer");
+    },
+
     async abort(sessionId) {
       await client.abort(sessionId);
     },

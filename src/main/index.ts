@@ -1,26 +1,12 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { app, BrowserWindow, nativeImage } from "electron";
-import { createOpencodeAdapter } from "../shared/opencode-adapter.js";
-import type { AgentEvent } from "../shared/types.js";
-import { forwardEvents, registerIpc } from "./ipc.js";
-import { ensureOpencodeServer, stopManagedServer } from "./opencode-server.js";
+import { createBackendRegistry } from "./backend-registry.js";
+import { registerIpc } from "./ipc.js";
+import { readBackendSelection } from "./settings-store.js";
 
-const PORT = 4096;
-
-const lineagePath = join(app.getPath("userData"), "lineage.json");
-const pinsPath = join(app.getPath("userData"), "pins.json");
-const trashPath = join(app.getPath("userData"), "trash.json");
-const archivePath = join(app.getPath("userData"), "archive.json");
-
-const adapterPromise = ensureOpencodeServer(PORT)
-  .then(({ baseUrl }) => createOpencodeAdapter({ baseUrl, lineagePath }))
-  .catch((error: unknown) => {
-    // Rejecting the shared promise surfaces the failure via awefork:ready.
-    throw error instanceof Error ? error : new Error(String(error));
-  });
-
-registerIpc(adapterPromise, lineagePath, pinsPath, trashPath, archivePath);
+const registry = createBackendRegistry(app.getPath("userData"));
+registerIpc(registry);
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -59,8 +45,9 @@ async function createWindow(): Promise<void> {
 // Subscribed exactly once, outside createWindow: a macOS Dock re-open runs
 // createWindow again, and a second subscribe would leave the first reconnect
 // loop alive — every event would then arrive twice and double the streams.
-forwardEvents(adapterPromise, (event: AgentEvent) => {
-  mainWindow?.webContents.send("awefork:event", event);
+// Every spawned backend's events arrive here as {backend, event} envelopes.
+registry.forward((envelope) => {
+  mainWindow?.webContents.send("awefork:event", envelope);
 });
 
 app.whenReady().then(() => {
@@ -76,6 +63,13 @@ app.whenReady().then(() => {
       // cosmetic in dev; ignore
     }
   }
+  // Spawn only the persisted selection at launch; the other backend stays
+  // cold until the user first switches to it (registry.get spawns lazily).
+  void readBackendSelection(join(app.getPath("userData"), "settings.json"))
+    .then((backend) => registry.get(backend))
+    .catch(() => {
+      // Startup failures surface through awefork:ready; nothing to do here.
+    });
   void createWindow();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) void createWindow();
@@ -87,5 +81,5 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
-  stopManagedServer();
+  registry.dispose();
 });

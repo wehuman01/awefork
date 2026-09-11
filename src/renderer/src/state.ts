@@ -1,5 +1,12 @@
 import { computed, reactive, readonly, ref } from "vue";
 import {
+  type BackendCapabilities,
+  type BackendEventEnvelope,
+  type BackendId,
+  type BackendInfo,
+  backendCapabilities,
+} from "../../shared/backend";
+import {
   buildTurnGraph,
   chainToTip,
   type TurnGraph,
@@ -18,6 +25,8 @@ import { searchTurns, type TurnSearchHit } from "../../shared/turn-search";
 import { buildTurns, type Turn, turnMessageRange } from "../../shared/turns";
 import type {
   AgentEvent,
+  AgentInteractionRequest,
+  AgentInteractionResponse,
   ArchiveState,
   ChatMessage,
   ForkRecord,
@@ -42,6 +51,18 @@ interface DraftState {
   attachments: DraftAttachment[];
 }
 
+/**
+ * Running state of a backend that is NOT on screen. Parking the visible maps
+ * here on switch — instead of re-keying them — keeps every component read
+ * (`store.running[id]`) on plain session ids while an off-screen backend's
+ * runs keep streaming and settling in their own partition.
+ */
+interface BackendRunState {
+  running: Record<string, boolean>;
+  streams: Record<string, string>;
+  recent: Record<string, number>;
+}
+
 interface AppState {
   connectionError: string | null;
   /**
@@ -50,6 +71,12 @@ interface AppState {
    * cold start or an offline server never claims the project is empty.
    */
   booted: boolean;
+  /** The backend driving the visible canvas; every IPC call carries it. */
+  activeBackend: BackendId;
+  /** Switcher data from main (installed probe + persisted selection). */
+  backendList: BackendInfo[];
+  /** Feature surface of the active backend; hides affordances it lacks. */
+  capabilities: BackendCapabilities;
   sessions: SessionSummary[];
   /**
    * Session ids sitting in the delete grace window: hidden from every view,
@@ -78,7 +105,7 @@ interface AppState {
   messagesError: string | null;
   /** Model catalog from the agent's provider config; loaded on first draft. */
   models: ModelOption[];
-  /** sessionId → true while an agent run is in flight. */
+  /** sessionId → true while an active-backend run is in flight. */
   running: Record<string, boolean>;
   /**
    * sessionId → epoch ms when its last run settled. The card carries a soft
@@ -90,7 +117,16 @@ interface AppState {
   streamParts: LivePart[];
   /** Card-sized tail of every running session's stream, keyed by session id. */
   streams: Record<string, string>;
+  /**
+   * Running state of every backend other than the active one; a switch parks
+   * the visible maps into the old backend's slot and restores the target's.
+   */
+  backgroundRuns: Record<string, BackendRunState>;
   actionError: string | null;
+  /** Pending Codex approvals/inputs, partitioned so background runs survive a switch. */
+  interactions: Record<string, AgentInteractionRequest[]>;
+  /** interactionKey → epoch ms when that request auto-denies (drives the countdown). */
+  interactionDeadlines: Record<string, number>;
   draft: DraftState | null;
   /** True while the draft's fork+prompt round-trip is in flight. */
   draftSending: boolean;
@@ -125,6 +161,9 @@ interface AppState {
 const state = reactive<AppState>({
   connectionError: null,
   booted: false,
+  activeBackend: "opencode",
+  backendList: [],
+  capabilities: { deleteMessage: true, attachments: true },
   sessions: [],
   trash: [],
   deletedToast: null,
@@ -142,7 +181,13 @@ const state = reactive<AppState>({
   recent: {},
   streamParts: [],
   streams: {},
+  backgroundRuns: {
+    opencode: { running: {}, streams: {}, recent: {} },
+    codex: { running: {}, streams: {}, recent: {} },
+  },
   actionError: null,
+  interactions: { opencode: [], codex: [] },
+  interactionDeadlines: {},
   composerFocusRequest: null,
   draft: null,
   draftSending: false,
@@ -354,12 +399,12 @@ export const paneMessages = computed<ChatMessage[]>(() => {
 
 /**
  * One streaming part of a running session (opencode part = one step's text or
- * reasoning). The run's parts are kept in arrival order so the pane can show
- * each step's thinking and reply interleaved on the timeline instead of as two
- * merged blobs.
+ * reasoning; codex item = the same). The run's parts are kept in arrival
+ * order so the pane can show each step's thinking and reply interleaved on
+ * the timeline instead of as two merged blobs.
  */
 export interface LivePart {
-  /** opencode part id; unique within the run. */
+  /** part id (opencode part / codex item); unique within the run. */
   partId: string;
   /** Assistant message (run step) the part belongs to. */
   messageId: string;
@@ -370,6 +415,15 @@ export interface LivePart {
   endedAt: number | null;
 }
 
+/**
+ * Per-backend namespace for the live part buffers: both backends can stream
+ * at once, and the composite key keeps an off-screen run's parts from ever
+ * colliding with (or publishing into) the on-screen session.
+ */
+function streamKey(backend: BackendId, sessionId: string): string {
+  return `${backend}:${sessionId}`;
+}
+
 const streamBuffers = new Map<string, LivePart[]>();
 /** True once the assistant row for these parts has landed complete in state. */
 function rowCompleted(sessionId: string, messageId: string): boolean {
@@ -378,21 +432,69 @@ function rowCompleted(sessionId: string, messageId: string): boolean {
   );
 }
 
+/**
+ * The run-state partition one backend writes to: the visible maps when it is
+ * the active backend, else its parked background slot. Every running/stream/
+ * recent mutation goes through this — components keep reading plain session
+ * ids off the visible maps, background runs stay invisible but alive.
+ */
+function runSlot(backend: BackendId): BackendRunState {
+  if (backend === state.activeBackend) return state;
+  let entry = state.backgroundRuns[backend];
+  if (!entry) {
+    entry = { running: {}, streams: {}, recent: {} };
+    state.backgroundRuns = { ...state.backgroundRuns, [backend]: entry };
+  }
+  return entry;
+}
+
+function setRunning(backend: BackendId, sessionId: string, running: boolean): void {
+  const slot = runSlot(backend);
+  if (running) {
+    slot.running = { ...slot.running, [sessionId]: true };
+    return;
+  }
+  const { [sessionId]: gone, ...kept } = slot.running;
+  void gone;
+  slot.running = kept;
+}
+
+function isRunning(backend: BackendId, sessionId: string): boolean {
+  return Boolean(runSlot(backend).running[sessionId]);
+}
+
+function setStreamTail(backend: BackendId, sessionId: string, tail: string | null): void {
+  const slot = runSlot(backend);
+  if (tail === null) {
+    const { [sessionId]: gone, ...kept } = slot.streams;
+    void gone;
+    slot.streams = kept;
+  } else {
+    slot.streams = { ...slot.streams, [sessionId]: tail };
+  }
+}
+
+function setRecent(backend: BackendId, sessionId: string, at: number): void {
+  const slot = runSlot(backend);
+  slot.recent = { ...slot.recent, [sessionId]: at };
+}
+
+function getRecent(backend: BackendId, sessionId: string): number | undefined {
+  return runSlot(backend).recent[sessionId];
+}
+
 /** Store a session's live parts and mirror what depends on them. */
-function publishParts(sessionId: string, parts: LivePart[]): void {
-  if (parts.length === 0) streamBuffers.delete(sessionId);
-  else streamBuffers.set(sessionId, parts);
-  if (state.selectedId === sessionId) state.streamParts = [...parts];
+function publishParts(backend: BackendId, sessionId: string, parts: LivePart[]): void {
+  const key = streamKey(backend, sessionId);
+  if (parts.length === 0) streamBuffers.delete(key);
+  else streamBuffers.set(key, parts);
+  if (backend === state.activeBackend && state.selectedId === sessionId) {
+    state.streamParts = [...parts];
+  }
   // Card-sized tails keep showing only final reply text; thinking belongs in
   // the pane's collapsible blocks, not in the compact canvas preview.
   const tail = [...parts].reverse().find((p) => p.kind === "text");
-  if (tail) {
-    state.streams = { ...state.streams, [sessionId]: tail.text.slice(-400) };
-  } else {
-    const { [sessionId]: goneTail, ...keptTails } = state.streams;
-    void goneTail;
-    state.streams = keptTails;
-  }
+  setStreamTail(backend, sessionId, tail ? tail.text.slice(-400) : null);
 }
 
 /**
@@ -403,6 +505,7 @@ function publishParts(sessionId: string, parts: LivePart[]): void {
  * block into the collapsed Thought summary.
  */
 function applyPartFrame(
+  backend: BackendId,
   sessionId: string,
   frame:
     | {
@@ -425,7 +528,7 @@ function applyPartFrame(
   // A completed row renders from state; late frames for it must not
   // resurrect content the reload already took over.
   if (rowCompleted(sessionId, frame.messageId)) return;
-  const parts = streamBuffers.get(sessionId) ?? [];
+  const parts = streamBuffers.get(streamKey(backend, sessionId)) ?? [];
   const index = parts.findIndex((p) => p.partId === frame.partId);
   const base: LivePart = parts[index] ?? {
     partId: frame.partId,
@@ -440,6 +543,7 @@ function applyPartFrame(
       ? { ...base, text: base.text + frame.delta }
       : { ...base, text: frame.text, startedAt: frame.startedAt, endedAt: frame.endedAt };
   publishParts(
+    backend,
     sessionId,
     index >= 0 ? parts.map((p, i) => (i === index ? next : p)) : [...parts, next],
   );
@@ -450,14 +554,15 @@ function applyPartFrame(
  * row itself renders that step, and the live timeline keeps only the steps
  * still in flight.
  */
-function pruneSettledParts(sessionId: string, messages: ChatMessage[]): void {
-  const parts = streamBuffers.get(sessionId);
+function pruneSettledParts(backend: BackendId, sessionId: string, messages: ChatMessage[]): void {
+  const parts = streamBuffers.get(streamKey(backend, sessionId));
   if (!parts || parts.length === 0) return;
   const done = new Set(
     messages.filter((m) => m.role === "assistant" && m.completedAt !== null).map((m) => m.id),
   );
   if (!parts.some((p) => done.has(p.messageId))) return;
   publishParts(
+    backend,
     sessionId,
     parts.filter((p) => !done.has(p.messageId)),
   );
@@ -467,13 +572,15 @@ function pruneSettledParts(sessionId: string, messages: ChatMessage[]): void {
 const attemptedMessages = new Set<string>();
 
 /**
- * Poll-based watchdogs for prompts awefork sent, keyed by session. Run-finish
- * signals ride the SSE stream (session.idle / session.status idle) and an
- * event-stream gap loses them forever — so every send also polls messages
- * until the run's assistant row reports a completion time. Whichever signal
- * lands first settles the run; the other becomes a no-op.
+ * Poll-based watchdogs for prompts awefork sent, keyed by backend-scoped
+ * session. Run-finish signals ride the event stream (session.idle / status
+ * idle) and an event-stream gap loses them forever — so every send also polls
+ * messages until the run's assistant row reports a completion time. Whichever
+ * signal lands first settles the run; the other becomes a no-op.
  */
 interface CompletionWatch {
+  /** Backend the watch polls through (messages is backend-routed). */
+  backend: BackendId;
   /** When the prompt was sent; only rows completed after this count. */
   sentAt: number;
   /** Polls since the last liveness sign (delta or observable message growth). */
@@ -483,6 +590,9 @@ interface CompletionWatch {
 }
 
 const completionWatches = new Map<string, CompletionWatch>();
+const interactionTimers = new Map<string, ReturnType<typeof setTimeout>>();
+/** Mirrors main's JSON-RPC safe-reply deadline; exported for the countdown UI. */
+export const INTERACTION_TIMEOUT_MS = 30_000;
 const WATCH_INTERVAL_MS = 1500;
 // Give up after ~4 minutes with no completion AND no liveness sign — every
 // delta resets the ticks, and so does any poll that observes the message list
@@ -500,9 +610,9 @@ let watchTicker: ReturnType<typeof setInterval> | null = null;
 function startWatchTicker(): void {
   if (watchTicker !== null) return;
   watchTicker = setInterval(() => {
-    for (const [sessionId, watch] of [...completionWatches]) {
+    for (const [key, watch] of [...completionWatches]) {
       watch.ticks += 1;
-      void pollForCompletion(sessionId);
+      void pollForCompletion(key);
     }
   }, WATCH_INTERVAL_MS);
 }
@@ -511,6 +621,11 @@ function stopWatchTickerIfIdle(): void {
   if (watchTicker === null || completionWatches.size > 0) return;
   clearInterval(watchTicker);
   watchTicker = null;
+}
+
+/** Session id half of a backend-scoped watch key. */
+function sessionOfKey(key: string): string {
+  return key.slice(key.indexOf(":") + 1);
 }
 
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -527,34 +642,59 @@ function scheduleRefresh(delay = 400): void {
   }, delay);
 }
 
-export async function init(): Promise<void> {
-  const ready = await window.awefork.ready();
+/**
+ * Boot one backend into the visible workspace: ready handshake, overlay
+ * stores, trash flush, first session load. Shared by app start and every
+ * backend switch so both paths behave identically.
+ */
+async function bootBackend(backend: BackendId): Promise<void> {
+  const ready = await window.awefork.ready(backend);
   if (!ready.ok) {
-    state.connectionError = ready.error ?? "Failed to start opencode server.";
+    state.connectionError = ready.error ?? `Failed to start the ${backend} server.`;
     return;
   }
   try {
-    state.pins = await window.awefork.pins();
+    state.pins = await window.awefork.pins(backend);
   } catch {
     state.pins = [];
   }
   try {
-    state.archive = await window.awefork.archive();
+    state.archive = await window.awefork.archive(backend);
   } catch {
     state.archive = { sessions: [], directories: [] };
   }
   try {
-    state.trash = (await window.awefork.trash()).map((entry) => entry.id);
+    state.trash = (await window.awefork.trash(backend)).map((entry) => entry.id);
   } catch {
     state.trash = [];
   }
   await flushTrash();
-  // Subscribe before the first fetch: a cold-started opencode announces its
-  // session scan right as it comes up, and those frames would be dropped by
-  // a listener attached only after the initial load.
-  window.awefork.onEvent(handleEvent);
   await initialSessionLoad();
   state.booted = true;
+}
+
+export async function init(): Promise<void> {
+  let backend: BackendId = "opencode";
+  try {
+    const { selected, backends } = await window.awefork.backends();
+    state.backendList = backends;
+    // A persisted selection whose CLI went missing falls back to opencode —
+    // the backend this app has always shipped with.
+    backend = backends.some((b) => b.id === selected && b.installed) ? selected : "opencode";
+  } catch {
+    state.backendList = [{ id: "opencode", label: "opencode", installed: true }];
+  }
+  state.activeBackend = backend;
+  try {
+    state.capabilities = await window.awefork.capabilities(backend);
+  } catch {
+    state.capabilities = backendCapabilities(backend);
+  }
+  // Subscribe before the first fetch: a cold-started agent announces its
+  // session scan right as it comes up, and those frames would be dropped by
+  // a listener attached only after the initial load.
+  window.awefork.onEvent(handleEnvelope);
+  await bootBackend(backend);
   // New-version check once startup settles: the agent server has just come up,
   // so give the handshake a beat. Fire-and-forget — never blocks first paint,
   // and every failure path stays silent.
@@ -564,7 +704,7 @@ export async function init(): Promise<void> {
 }
 
 /**
- * A cold-started opencode can answer REST before its session scan finishes,
+ * A cold-started agent can answer its API before its session scan finishes,
  * so the first fetch may see an empty list or a transient timeout. Retry
  * with backoff until sessions appear or the attempts run out; a genuinely
  * empty account simply settles after the last attempt.
@@ -588,14 +728,15 @@ async function initialSessionLoad(): Promise<void> {
  * same as a failed in-session hard delete.
  */
 async function flushTrash(): Promise<void> {
+  const backend = state.activeBackend;
   for (const sessionId of [...state.trash]) {
     try {
-      await window.awefork.deleteSession(sessionId);
+      await window.awefork.deleteSession(backend, sessionId);
     } catch {
       // Already gone server-side — nothing left to delete.
     }
     try {
-      state.trash = (await window.awefork.trashRemove(sessionId)).map((entry) => entry.id);
+      state.trash = (await window.awefork.trashRemove(backend, sessionId)).map((entry) => entry.id);
     } catch {
       // A leftover entry just flushes again next startup.
     }
@@ -603,8 +744,9 @@ async function flushTrash(): Promise<void> {
 }
 
 export async function refreshSessions(): Promise<void> {
+  const backend = state.activeBackend;
   try {
-    const { sessions, lineage } = await window.awefork.sessions();
+    const { sessions, lineage } = await window.awefork.sessions(backend);
     state.sessions = sessions;
     state.lineage = lineage;
     // The fetch is the connection test; success revives a UI that an earlier
@@ -618,7 +760,7 @@ export async function refreshSessions(): Promise<void> {
     for (const entry of state.archive.sessions) {
       if (alive.has(entry.id)) continue;
       try {
-        state.archive = await window.awefork.archiveRemove("session", entry.id);
+        state.archive = await window.awefork.archiveRemove(backend, "session", entry.id);
       } catch {
         // Left for the next refresh.
       }
@@ -673,7 +815,7 @@ export async function selectSession(
   state.selectedDirectory = session.directory;
   state.selectedId = session.id;
   state.selectedTurnId = null;
-  state.streamParts = [...(streamBuffers.get(sessionId) ?? [])];
+  state.streamParts = [...(streamBuffers.get(streamKey(state.activeBackend, sessionId)) ?? [])];
   state.messagesError = null;
   if (options.focus) {
     state.focusRequest = { sessionId, nonce: Date.now() };
@@ -726,17 +868,18 @@ async function ensureCanvasMessages(): Promise<void> {
 async function loadSessionMessages(
   sessionId: string,
   reportError = true,
+  backend: BackendId = state.activeBackend,
 ): Promise<ChatMessage[] | null> {
   attemptedMessages.add(sessionId);
   try {
     // Await first, THEN merge: spreading before the await would snapshot the
     // pre-await state, and concurrent loads would overwrite each other.
-    const messages = await window.awefork.messages(sessionId);
+    const messages = await window.awefork.messages(backend, sessionId);
     state.messagesBySession = { ...state.messagesBySession, [sessionId]: messages };
-    pruneSettledParts(sessionId, messages);
+    pruneSettledParts(backend, sessionId, messages);
     return messages;
   } catch (error) {
-    if (reportError && state.selectedId === sessionId) {
+    if (reportError && backend === state.activeBackend && state.selectedId === sessionId) {
       state.messagesError = error instanceof Error ? error.message : String(error);
     }
     return null;
@@ -744,31 +887,39 @@ async function loadSessionMessages(
 }
 
 /** Start (or restart) the poll watchdog for a prompt awefork just sent. */
-function watchCompletion(sessionId: string, sentAt: number): void {
-  stopWatch(sessionId);
-  completionWatches.set(sessionId, { sentAt, ticks: 0, signature: "" });
+function watchCompletion(backend: BackendId, sessionId: string, sentAt: number): void {
+  stopWatch(backend, sessionId);
+  completionWatches.set(streamKey(backend, sessionId), {
+    backend,
+    sentAt,
+    ticks: 0,
+    signature: "",
+  });
   startWatchTicker();
 }
 
-function stopWatch(sessionId: string): void {
-  if (completionWatches.delete(sessionId)) stopWatchTickerIfIdle();
+function stopWatch(backend: BackendId, sessionId: string): void {
+  if (completionWatches.delete(streamKey(backend, sessionId))) stopWatchTickerIfIdle();
 }
 
-async function pollForCompletion(sessionId: string): Promise<void> {
-  const messages = await loadSessionMessages(sessionId, false);
+async function pollForCompletion(key: string): Promise<void> {
+  const watch = completionWatches.get(key);
+  if (!watch) return;
+  const sessionId = sessionOfKey(key);
+  const messages = await loadSessionMessages(sessionId, false, watch.backend);
   // Re-read the live entry: idle may have stopped the watch while the fetch
   // was in flight, and a quick resend may have replaced it — judging by the
   // entry captured before the await would settle the new run against the old
   // prompt's completion rows.
-  const watch = completionWatches.get(sessionId);
-  if (!watch) return;
+  const live = completionWatches.get(key);
+  if (!live) return;
   // Message rows still appearing is liveness too — on opencode builds that
   // stream no deltas, this is the only progress signal the watchdog sees.
   const last = messages?.[messages.length - 1];
   const signature = `${messages?.length ?? 0}:${last?.id ?? ""}:${last?.completedAt ?? ""}`;
-  if (signature !== watch.signature) {
-    watch.ticks = 0;
-    watch.signature = signature;
+  if (signature !== live.signature) {
+    live.ticks = 0;
+    live.signature = signature;
   }
   // A multi-step run completes one assistant row per step; a step that ended
   // in "tool-calls" is mid-run, not done. Treating it as finished settled the
@@ -779,12 +930,12 @@ async function pollForCompletion(sessionId: string): Promise<void> {
     (m) =>
       m.role === "assistant" &&
       m.completedAt !== null &&
-      m.completedAt >= watch.sentAt &&
+      m.completedAt >= live.sentAt &&
       m.finish !== "tool-calls",
   );
-  if (done || watch.ticks >= WATCH_MAX_TICKS) {
-    stopWatch(sessionId);
-    settleRun(sessionId);
+  if (done || live.ticks >= WATCH_MAX_TICKS) {
+    stopWatch(live.backend, sessionId);
+    settleRun(live.backend, sessionId);
   }
 }
 
@@ -808,32 +959,31 @@ function stopRecentTicker(): void {
   recentTicker = null;
 }
 
-function clearRecent(sessionId: string): void {
-  if (!(sessionId in state.recent)) return;
-  const { [sessionId]: gone, ...kept } = state.recent;
+function clearRecent(backend: BackendId, sessionId: string): void {
+  const slot = runSlot(backend);
+  if (!(sessionId in slot.recent)) return;
+  const { [sessionId]: gone, ...kept } = slot.recent;
   void gone;
-  state.recent = kept;
-  if (Object.keys(state.recent).length === 0) stopRecentTicker();
+  slot.recent = kept;
+  if (backend === state.activeBackend && Object.keys(state.recent).length === 0) {
+    stopRecentTicker();
+  }
 }
 
-/** Shared run-finished cleanup, driven by SSE idle or the poll watchdog. */
-function settleRun(sessionId: string): void {
-  stopWatch(sessionId);
-  streamBuffers.delete(sessionId);
-  const { [sessionId]: goneStream, ...keptStreams } = state.streams;
-  void goneStream;
-  state.streams = keptStreams;
-  const { [sessionId]: finished, ...stillRunning } = state.running;
-  void finished;
-  state.running = stillRunning;
+/** Shared run-finished cleanup, driven by event-stream idle or the poll watchdog. */
+function settleRun(backend: BackendId, sessionId: string): void {
+  stopWatch(backend, sessionId);
+  streamBuffers.delete(streamKey(backend, sessionId));
+  setStreamTail(backend, sessionId, null);
+  setRunning(backend, sessionId, false);
   const settledAt = Date.now();
-  state.recent = { ...state.recent, [sessionId]: settledAt };
+  setRecent(backend, sessionId, settledAt);
   startRecentTicker();
   setTimeout(() => {
     // A newer settle overwrote the entry; the older timer must not clear it.
-    if (state.recent[sessionId] === settledAt) clearRecent(sessionId);
+    if (getRecent(backend, sessionId) === settledAt) clearRecent(backend, sessionId);
   }, RECENT_MS);
-  if (state.selectedId === sessionId) {
+  if (backend === state.activeBackend && state.selectedId === sessionId) {
     state.streamParts = [];
   }
 }
@@ -852,32 +1002,108 @@ export function recentAlphaFor(sessionId: string): number {
   return 1 - age / RECENT_MS;
 }
 
-async function finishRun(sessionId: string): Promise<void> {
+async function finishRun(backend: BackendId, sessionId: string): Promise<void> {
   // Replace the live bubble only after its persisted counterpart is in state.
   // Both mutations occur before Vue renders, avoiding an empty or duplicated
   // assistant slot at the end of a streamed response.
-  await loadSessionMessages(sessionId, false);
-  settleRun(sessionId);
-  void refreshSessions();
+  await loadSessionMessages(sessionId, false, backend);
+  settleRun(backend, sessionId);
+  if (backend === state.activeBackend) void refreshSessions();
 }
 
-function handleEvent(event: AgentEvent): void {
+function interactionKey(backend: BackendId, requestId: string): string {
+  return `${backend}:${requestId}`;
+}
+
+/** Remove one queued request (and its auto-deny timer) without replying. */
+function dropInteraction(backend: BackendId, requestId: string): void {
+  const key = interactionKey(backend, requestId);
+  const timer = interactionTimers.get(key);
+  if (timer) clearTimeout(timer);
+  interactionTimers.delete(key);
+  delete state.interactionDeadlines[key];
+  state.interactions[backend] = (state.interactions[backend] ?? []).filter(
+    (item) => item.requestId !== requestId,
+  );
+}
+
+/**
+ * A settled session (idle or failed run) or a dead server makes its queued
+ * requests moot — the JSON-RPC layer already safe-replied them (30s guard) or
+ * the connection is gone. Drop them so no dialog outlives its turn; the
+ * adapter side resolves orphans as no-ops, so no stray reply is needed here.
+ */
+function dropSessionInteractions(backend: BackendId, sessionId?: string): void {
+  for (const item of state.interactions[backend] ?? []) {
+    if (!sessionId || item.sessionId === sessionId) dropInteraction(backend, item.requestId);
+  }
+}
+
+export function respondInteraction(
+  // Only the id travels back over IPC; the request object itself stays
+  // renderer-local (deep-readonly straight out of the store).
+  request: { readonly requestId: string },
+  response: AgentInteractionResponse,
+): void {
+  const backend = state.activeBackend;
+  dropInteraction(backend, request.requestId);
+  void window.awefork.respondInteraction(backend, request.requestId, response).catch((error) => {
+    state.actionError = error instanceof Error ? error.message : String(error);
+  });
+}
+
+function queueInteraction(backend: BackendId, request: AgentInteractionRequest): void {
+  const key = interactionKey(backend, request.requestId);
+  const existing = state.interactions[backend] ?? [];
+  if (existing.some((item) => item.requestId === request.requestId)) return;
+  state.interactions[backend] = [...existing, request];
+  state.interactionDeadlines[key] = Date.now() + INTERACTION_TIMEOUT_MS;
+  interactionTimers.set(
+    key,
+    setTimeout(() => {
+      // An explicit reply or cleanup already removed it; this timer is stale.
+      if (
+        !(state.interactions[backend] ?? []).some((item) => item.requestId === request.requestId)
+      ) {
+        return;
+      }
+      dropInteraction(backend, request.requestId);
+      void window.awefork.respondInteraction(backend, request.requestId, { decision: "deny" });
+    }, INTERACTION_TIMEOUT_MS),
+  );
+}
+
+/**
+ * Route one envelope to its backend's partition. Events from the off-screen
+ * backend keep its parked run state and watchdogs moving (so a switch back
+ * resumes exactly where the run is); only the active backend re-renders the
+ * visible workspace.
+ */
+function handleEnvelope(envelope: BackendEventEnvelope): void {
+  handleEvent(envelope.backend, envelope.event);
+}
+
+function handleEvent(backend: BackendId, event: AgentEvent): void {
   switch (event.type) {
+    case "interaction.requested": {
+      queueInteraction(backend, event.request);
+      break;
+    }
     case "session.updated": {
       // A single run emits several of these; coalesce into one refresh.
-      scheduleRefresh();
+      if (backend === state.activeBackend) scheduleRefresh();
       break;
     }
     case "message.started": {
-      state.running = { ...state.running, [event.sessionId]: true };
-      // Runs started outside awefork (opencode's own TUI) need the poll
+      setRunning(backend, event.sessionId, true);
+      // Runs started outside awefork (the agent's own TUI) need the poll
       // backstop too: on builds that stream no deltas, this busy frame is
       // the only signal the renderer ever receives — without a watch, a
       // dropped idle leaves the session "running" (and undeletable) forever.
       // Existing watches keep their sentAt; a prompt awefork just sent armed
       // one already, and restarting it here would lose the pre-prompt stamp.
-      if (!completionWatches.has(event.sessionId)) {
-        watchCompletion(event.sessionId, Date.now());
+      if (!completionWatches.has(streamKey(backend, event.sessionId))) {
+        watchCompletion(backend, event.sessionId, Date.now());
       }
       break;
     }
@@ -885,13 +1111,13 @@ function handleEvent(event: AgentEvent): void {
       // A delta is proof the run is alive. It re-lights a session whose busy
       // frame never arrived (or that a silent stretch let the watchdog settle)
       // and resets the watchdog so streaming runs cannot time out mid-flight.
-      if (!state.running[event.sessionId]) {
-        state.running = { ...state.running, [event.sessionId]: true };
+      if (!isRunning(backend, event.sessionId)) {
+        setRunning(backend, event.sessionId, true);
       }
-      const watch = completionWatches.get(event.sessionId);
+      const watch = completionWatches.get(streamKey(backend, event.sessionId));
       if (watch) watch.ticks = 0;
-      else watchCompletion(event.sessionId, Date.now());
-      applyPartFrame(event.sessionId, {
+      else watchCompletion(backend, event.sessionId, Date.now());
+      applyPartFrame(backend, event.sessionId, {
         type: "delta",
         messageId: event.messageId,
         partId: event.partId,
@@ -904,8 +1130,11 @@ function handleEvent(event: AgentEvent): void {
       // Snapshots carry no liveness of their own (fork creation replays them
       // for every copied message), so they only fold into an already-running
       // stream — never start one.
-      if (state.running[event.sessionId] || streamBuffers.has(event.sessionId)) {
-        applyPartFrame(event.sessionId, {
+      if (
+        isRunning(backend, event.sessionId) ||
+        streamBuffers.has(streamKey(backend, event.sessionId))
+      ) {
+        applyPartFrame(backend, event.sessionId, {
           type: "snapshot",
           messageId: event.messageId,
           partId: event.partId,
@@ -918,11 +1147,15 @@ function handleEvent(event: AgentEvent): void {
       break;
     }
     case "session.idle": {
-      stopWatch(event.sessionId);
-      void finishRun(event.sessionId);
+      stopWatch(backend, event.sessionId);
+      // The turn finished, so any queued approval/input it blocked on is gone
+      // (codex only ends a turn after its server requests resolve or time out).
+      dropSessionInteractions(backend, event.sessionId);
+      void finishRun(backend, event.sessionId);
       break;
     }
     case "server.reconnected": {
+      if (backend !== state.activeBackend) break;
       // The stream is back after an outage: drop the outage toast and rebuild
       // the list — every event fired while disconnected was missed.
       state.actionError = null;
@@ -930,19 +1163,28 @@ function handleEvent(event: AgentEvent): void {
       break;
     }
     case "server.error": {
+      // Toast regardless of which backend failed — a background run dying is
+      // exactly what the user needs to hear about.
       state.actionError = event.message;
       // A failed prompt (or a server-side run error) never produces a
       // completion signal, so the watchdog would otherwise keep the session
       // "running" for its whole timeout. Settle the named session up front;
       // connection-level errors carry no sessionId and only toast.
       if (event.sessionId) {
-        stopWatch(event.sessionId);
-        settleRun(event.sessionId);
-        // Reload so the optimistic local prompt row disappears if the
-        // request never reached the server, and a mid-flight failure's ⚠
-        // row shows now instead of waiting out the watchdog.
-        void loadSessionMessages(event.sessionId);
-        void refreshSessions();
+        stopWatch(backend, event.sessionId);
+        settleRun(backend, event.sessionId);
+        dropSessionInteractions(backend, event.sessionId);
+        if (backend === state.activeBackend) {
+          // Reload so the optimistic local prompt row disappears if the
+          // request never reached the server, and a mid-flight failure's ⚠
+          // row shows now instead of waiting out the watchdog.
+          void loadSessionMessages(event.sessionId);
+          void refreshSessions();
+        }
+      } else {
+        // Connection-level failure: this backend's queued requests can no
+        // longer be answered meaningfully — take their dialogs down too.
+        dropSessionInteractions(backend);
       }
       break;
     }
@@ -951,10 +1193,11 @@ function handleEvent(event: AgentEvent): void {
 
 /** Pin or unpin a session: pinned branch stories stay on the canvas. */
 export async function togglePin(sessionId: string): Promise<void> {
+  const backend = state.activeBackend;
   // Pinning is a new operation: older pending deletes become final.
   await flushPendingDeletes();
   try {
-    state.pins = await window.awefork.togglePin(sessionId);
+    state.pins = await window.awefork.togglePin(backend, sessionId);
     await ensureCanvasMessages();
   } catch (error) {
     state.actionError = error instanceof Error ? error.message : String(error);
@@ -970,6 +1213,7 @@ export async function togglePin(sessionId: string): Promise<void> {
  * while the session has a run in flight.
  */
 export async function deleteSession(sessionId: string): Promise<void> {
+  const backend = state.activeBackend;
   if (state.running[sessionId]) {
     state.actionError = "会话正在运行，先停止再删除。";
     return;
@@ -991,7 +1235,7 @@ export async function deleteSession(sessionId: string): Promise<void> {
   state.trash = [...state.trash, sessionId];
   if (state.draft?.sessionId === sessionId) state.draft = null;
   try {
-    state.trash = (await window.awefork.trashAdd(sessionId, session.title)).map(
+    state.trash = (await window.awefork.trashAdd(backend, sessionId, session.title)).map(
       (entry) => entry.id,
     );
   } catch (error) {
@@ -1006,7 +1250,7 @@ export async function deleteSession(sessionId: string): Promise<void> {
   // neighbor-selection round-trip below fails. The window stays open until
   // the next operation flushes it — even after the toast text has faded.
   showDeleteToast(sessionId, session.title);
-  pendingDeletes.push(sessionId);
+  pendingDeletes.push({ sessionId, backend });
 
   if (state.selectedId === sessionId) {
     state.selectedId = null;
@@ -1041,6 +1285,7 @@ function landingAfterHide(deletedId: string): string | null {
  * keeps living in the agent backend, so runs in flight are left alone.
  */
 export async function archiveSession(sessionId: string): Promise<void> {
+  const backend = state.activeBackend;
   const session = state.sessions.find((s) => s.id === sessionId);
   if (!session || state.archive.sessions.some((e) => e.id === sessionId)) return;
   state.actionError = null;
@@ -1053,7 +1298,7 @@ export async function archiveSession(sessionId: string): Promise<void> {
   const landing = landingAfterHide(sessionId);
 
   try {
-    state.archive = await window.awefork.archiveAdd("session", sessionId);
+    state.archive = await window.awefork.archiveAdd(backend, "session", sessionId);
   } catch (error) {
     state.actionError = error instanceof Error ? error.message : String(error);
     return;
@@ -1075,6 +1320,7 @@ export async function archiveSession(sessionId: string): Promise<void> {
  * archived after a restore (the two lists combine independently).
  */
 export async function archiveDirectory(directory: string): Promise<void> {
+  const backend = state.activeBackend;
   if (state.archive.directories.some((e) => e.path === directory)) return;
   state.actionError = null;
   await flushPendingDeletes();
@@ -1087,7 +1333,7 @@ export async function archiveDirectory(directory: string): Promise<void> {
   );
 
   try {
-    state.archive = await window.awefork.archiveAdd("directory", directory);
+    state.archive = await window.awefork.archiveAdd(backend, "directory", directory);
   } catch (error) {
     state.actionError = error instanceof Error ? error.message : String(error);
     return;
@@ -1111,7 +1357,7 @@ export async function archiveDirectory(directory: string): Promise<void> {
 /** Restore one archived session: back in the sidebar; the data never moved. */
 export async function restoreSession(sessionId: string): Promise<void> {
   try {
-    state.archive = await window.awefork.archiveRemove("session", sessionId);
+    state.archive = await window.awefork.archiveRemove(state.activeBackend, "session", sessionId);
   } catch (error) {
     state.actionError = error instanceof Error ? error.message : String(error);
   }
@@ -1120,7 +1366,7 @@ export async function restoreSession(sessionId: string): Promise<void> {
 /** Restore an archived directory: everything hidden under the path reappears. */
 export async function restoreDirectory(directory: string): Promise<void> {
   try {
-    state.archive = await window.awefork.archiveRemove("directory", directory);
+    state.archive = await window.awefork.archiveRemove(state.activeBackend, "directory", directory);
   } catch (error) {
     state.actionError = error instanceof Error ? error.message : String(error);
   }
@@ -1132,8 +1378,10 @@ export async function restoreDirectory(directory: string): Promise<void> {
  * anchors the forks hanging off it, so it keeps the whole-session delete; a
  * session whose FIRST row is this turn would be hollowed out by a turn
  * delete, so it too deletes the session. Stubs have no rows to remove.
+ * Backends without message-level delete always get whole-session semantics.
  */
 export function isTurnDelete(node: TurnNode): boolean {
+  if (!state.capabilities.deleteMessage) return false;
   if (node.kind !== "turn" || !isSessionTip(node)) return false;
   const messages = state.messagesBySession[node.sessionId] ?? [];
   const start = messages.findIndex((m) => m.id === node.messageId);
@@ -1147,6 +1395,7 @@ export function isTurnDelete(node: TurnNode): boolean {
  * flight. A partial failure keeps whatever the server actually removed.
  */
 export async function deleteTurn(node: TurnNode): Promise<void> {
+  const backend = state.activeBackend;
   const sessionId = node.sessionId;
   if (state.running[sessionId]) {
     state.actionError = "会话正在运行，先停止再删除。";
@@ -1160,7 +1409,7 @@ export async function deleteTurn(node: TurnNode): Promise<void> {
   state.actionError = null;
   try {
     for (const id of ids) {
-      await window.awefork.deleteMessage(sessionId, id);
+      await window.awefork.deleteMessage(backend, sessionId, id);
     }
   } catch (error) {
     state.actionError = error instanceof Error ? error.message : String(error);
@@ -1189,9 +1438,13 @@ function flatDirectorySessionIds(): string[] {
 
 /** Undo a pending delete: drop it from the queue, put the session back. */
 export async function undoDelete(sessionId: string): Promise<void> {
+  // The trash record lives on the backend the delete was queued on — not
+  // necessarily the one on screen now.
+  const backend =
+    pendingDeletes.find((p) => p.sessionId === sessionId)?.backend ?? state.activeBackend;
   if (state.deletedToast?.sessionId === sessionId) state.deletedToast = null;
   try {
-    state.trash = (await window.awefork.trashRemove(sessionId)).map((entry) => entry.id);
+    state.trash = (await window.awefork.trashRemove(backend, sessionId)).map((entry) => entry.id);
   } catch (error) {
     // The record survived, so the delete is still pending — leave it
     // queued and a later Ctrl+Z can retry the undo.
@@ -1207,7 +1460,11 @@ export async function undoDelete(sessionId: string): Promise<void> {
 
 const TOAST_MS = 6000;
 /** Sessions soft-deleted and still undoable, oldest first; Ctrl+Z pops LIFO. */
-const pendingDeletes: string[] = [];
+interface PendingDelete {
+  sessionId: string;
+  backend: BackendId;
+}
+const pendingDeletes: PendingDelete[] = [];
 
 /**
  * Most recent soft delete still undoable; null once flushed (or undone).
@@ -1215,14 +1472,14 @@ const pendingDeletes: string[] = [];
  */
 export function latestPendingDeleteId(): string | null {
   for (let i = pendingDeletes.length - 1; i >= 0; i -= 1) {
-    const id = pendingDeletes[i];
-    if (id !== undefined && state.trash.includes(id)) return id;
+    const entry = pendingDeletes[i];
+    if (entry !== undefined && state.trash.includes(entry.sessionId)) return entry.sessionId;
   }
   return null;
 }
 
 function removePendingDelete(sessionId: string): void {
-  const index = pendingDeletes.indexOf(sessionId);
+  const index = pendingDeletes.findIndex((p) => p.sessionId === sessionId);
   if (index >= 0) pendingDeletes.splice(index, 1);
 }
 
@@ -1230,11 +1487,12 @@ function removePendingDelete(sessionId: string): void {
  * Finalize the pending soft deletes: the user just started a new operation,
  * which closes the undo window for the older ones. Best effort per session —
  * a failed server delete involuntarily restores that one (hardDeleteSession),
- * the rest still flush.
+ * the rest still flush. Each entry carries the backend its trash store lives
+ * in, so a flush during a backend switch still routes correctly.
  */
 async function flushPendingDeletes(): Promise<void> {
-  for (const sessionId of [...pendingDeletes]) {
-    await hardDeleteSession(sessionId);
+  for (const entry of [...pendingDeletes]) {
+    await hardDeleteSession(entry.backend, entry.sessionId);
   }
 }
 
@@ -1257,19 +1515,19 @@ function showUpdateToast(text: string): void {
   }, TOAST_MS);
 }
 
-async function hardDeleteSession(sessionId: string): Promise<void> {
+async function hardDeleteSession(backend: BackendId, sessionId: string): Promise<void> {
   // Leaves the pending queue only when the outcome is decided: restored,
   // deleted, or (below) still pending after a double failure.
   if (state.deletedToast?.sessionId === sessionId) state.deletedToast = null;
   try {
-    state.pins = await window.awefork.deleteSession(sessionId);
+    state.pins = await window.awefork.deleteSession(backend, sessionId);
   } catch (error) {
     // The server delete failed. An involuntary undo beats a session stuck
     // invisible — but the pending-delete record must be cleared first, or
     // the next startup flush would destroy the session we just restored.
     const reason = error instanceof Error ? error.message : String(error);
     try {
-      state.trash = (await window.awefork.trashRemove(sessionId)).map((entry) => entry.id);
+      state.trash = (await window.awefork.trashRemove(backend, sessionId)).map((entry) => entry.id);
       removePendingDelete(sessionId);
       state.actionError = `删除失败，已把会话放回：${reason}`;
     } catch {
@@ -1280,25 +1538,21 @@ async function hardDeleteSession(sessionId: string): Promise<void> {
     return;
   }
   removePendingDelete(sessionId);
-  stopWatch(sessionId);
-  streamBuffers.delete(sessionId);
+  stopWatch(backend, sessionId);
+  streamBuffers.delete(streamKey(backend, sessionId));
+  setStreamTail(backend, sessionId, null);
+  setRunning(backend, sessionId, false);
+  clearRecent(backend, sessionId);
   const { [sessionId]: goneMessages, ...keptMessages } = state.messagesBySession;
   void goneMessages;
   state.messagesBySession = keptMessages;
-  const { [sessionId]: goneStream, ...keptStreams } = state.streams;
-  void goneStream;
-  state.streams = keptStreams;
   attemptedMessages.delete(sessionId);
-  const { [sessionId]: goneRunning, ...keptRunning } = state.running;
-  void goneRunning;
-  state.running = keptRunning;
-  clearRecent(sessionId);
   const { [sessionId]: goneLineage, ...keptLineage } = state.lineage;
   void goneLineage;
   state.lineage = keptLineage;
   state.sessions = state.sessions.filter((s) => s.id !== sessionId);
   try {
-    state.trash = (await window.awefork.trashRemove(sessionId)).map((entry) => entry.id);
+    state.trash = (await window.awefork.trashRemove(backend, sessionId)).map((entry) => entry.id);
   } catch {
     // Left in the persisted trash; the next startup flush retries the cleanup.
   }
@@ -1311,11 +1565,15 @@ async function hardDeleteSession(sessionId: string): Promise<void> {
  * open project the backend picks the directory (its server cwd).
  */
 export async function createSession(): Promise<void> {
+  const backend = state.activeBackend;
   state.actionError = null;
   // Creating is a new operation: older pending deletes become final.
   await flushPendingDeletes();
   try {
-    const created = await window.awefork.createSession(state.selectedDirectory ?? undefined);
+    const created = await window.awefork.createSession(
+      backend,
+      state.selectedDirectory ?? undefined,
+    );
     await refreshSessions();
     await selectSession(created.id, { focus: true });
     state.composerFocusRequest = Date.now();
@@ -1329,13 +1587,14 @@ export async function createSession(): Promise<void> {
  * the full story with nothing prompted yet. Lands you in the clone.
  */
 export async function cloneSelectedSession(): Promise<void> {
+  const backend = state.activeBackend;
   const sessionId = state.selectedId;
   if (!sessionId || state.running[sessionId]) return;
   state.actionError = null;
   // Cloning is a new operation: older pending deletes become final.
   await flushPendingDeletes();
   try {
-    const forked = await window.awefork.fork(sessionId, null);
+    const forked = await window.awefork.fork(backend, sessionId, null);
     await refreshSessions();
     await selectSession(forked.id, { focus: true });
   } catch (error) {
@@ -1345,12 +1604,13 @@ export async function cloneSelectedSession(): Promise<void> {
 
 /** Rename a session through the agent's native API and update local state. */
 export async function renameSession(sessionId: string, title: string): Promise<void> {
+  const backend = state.activeBackend;
   const trimmed = title.trim();
   if (!trimmed) return;
   // Renaming is a new operation: older pending deletes become final.
   await flushPendingDeletes();
   try {
-    await window.awefork.renameSession(sessionId, trimmed);
+    await window.awefork.renameSession(backend, sessionId, trimmed);
     state.sessions = state.sessions.map((s) => (s.id === sessionId ? { ...s, title: trimmed } : s));
   } catch (error) {
     state.actionError = error instanceof Error ? error.message : String(error);
@@ -1434,6 +1694,7 @@ export function retryNode(node: TurnNode): void {
  * parts, so pull them back and drop them into the just-opened draft as chips.
  * The draft opens immediately (the fetch may take a moment); a failed fetch
  * only costs the prefilled chips, the retried text goes out either way.
+ * Backends that don't keep file bytes (codex) answer [] — text-only prefill.
  */
 async function restoreDraftAttachments(
   nodeId: string,
@@ -1441,7 +1702,11 @@ async function restoreDraftAttachments(
   messageId: string,
 ): Promise<void> {
   try {
-    const attachments = await window.awefork.messageAttachments(sessionId, messageId);
+    const attachments = await window.awefork.messageAttachments(
+      state.activeBackend,
+      sessionId,
+      messageId,
+    );
     if (attachments.length === 0) return;
     const draft = state.draft;
     if (draft?.nodeId !== nodeId) return;
@@ -1478,7 +1743,7 @@ async function ensureModels(): Promise<void> {
   if (modelsRequested) return;
   modelsRequested = true;
   try {
-    state.models = await window.awefork.models();
+    state.models = await window.awefork.models(state.activeBackend);
   } catch (error) {
     // Allow a later draft to retry — the catalog may load once the agent settles.
     modelsRequested = false;
@@ -1498,10 +1763,6 @@ function plainModel(model: ModelChoice | null): ModelChoice | null {
     : null;
 }
 
-function plainAttachments(list: DraftAttachment[]): PromptAttachment[] {
-  return toPromptAttachments(list);
-}
-
 /**
  * Send the draft: a mid-story turn forks the session at that turn and prompts
  * the new branch; a session tip (or a stub) simply continues that session in
@@ -1512,6 +1773,7 @@ function plainAttachments(list: DraftAttachment[]): PromptAttachment[] {
 export async function sendDraft(): Promise<void> {
   const draft = state.draft;
   if (!draft?.text.trim() || state.draftSending) return;
+  const backend = state.activeBackend;
   const text = draft.text.trim();
   state.actionError = null;
   state.draftSending = true;
@@ -1522,7 +1784,7 @@ export async function sendDraft(): Promise<void> {
     const model = plainModel(draft.model);
     const sentAt = Date.now();
     if (draft.atMessageId) {
-      const forked = await window.awefork.fork(draft.sessionId, draft.atMessageId);
+      const forked = await window.awefork.fork(backend, draft.sessionId, draft.atMessageId);
       await refreshSessions();
       // No focus request: the canvas stays parked where the user was looking.
       // The composer floated in the branch's next cell, and that's exactly
@@ -1536,16 +1798,16 @@ export async function sendDraft(): Promise<void> {
     // Mark the target running before the request goes out, like sendPrompt
     // does — continuing and forking must share the same waiting UI, and the
     // canvas card and delete guard must not wait on the first SSE busy frame.
-    state.running = { ...state.running, [targetId]: true };
+    setRunning(backend, targetId, true);
     // Surface the prompt as the target's newest own turn right away; the
     // idle refresh swaps it for the server's row.
-    const attachments = plainAttachments(draft.attachments);
+    const attachments = toPromptAttachments(draft.attachments);
     appendLocalMessage(targetId, text, model, attachments);
-    await window.awefork.prompt(targetId, text, model, attachments);
-    watchCompletion(targetId, sentAt);
+    await window.awefork.prompt(backend, targetId, text, model, attachments);
+    watchCompletion(backend, targetId, sentAt);
     state.draft = null;
   } catch (error) {
-    if (targetId) settleRun(targetId);
+    if (targetId) settleRun(backend, targetId);
     state.actionError = error instanceof Error ? error.message : String(error);
   } finally {
     state.draftSending = false;
@@ -1607,6 +1869,7 @@ export async function sendPrompt(
   model: ModelChoice | null = null,
   attachments: PromptAttachment[] = [],
 ): Promise<void> {
+  const backend = state.activeBackend;
   const sessionId = state.selectedId;
   if (!sessionId || !text.trim()) return;
   state.actionError = null;
@@ -1615,16 +1878,14 @@ export async function sendPrompt(
   // the prompt must reach the session the composer was typing into, even
   // if the user switches selection mid-flush.
   await flushPendingDeletes();
-  state.running = { ...state.running, [sessionId]: true };
+  setRunning(backend, sessionId, true);
   const sentAt = Date.now();
   appendLocalMessage(sessionId, text, model, attachments);
   try {
-    await window.awefork.prompt(sessionId, text, plainModel(model), attachments);
-    watchCompletion(sessionId, sentAt);
+    await window.awefork.prompt(backend, sessionId, text, plainModel(model), attachments);
+    watchCompletion(backend, sessionId, sentAt);
   } catch (error) {
-    const { [sessionId]: stopped, ...rest } = state.running;
-    void stopped;
-    state.running = rest;
+    setRunning(backend, sessionId, false);
     state.actionError = error instanceof Error ? error.message : String(error);
   }
 }
@@ -1640,9 +1901,10 @@ export function requestCanvasFit(): void {
 }
 
 export async function abortRun(): Promise<void> {
-  if (!state.selectedId) return;
+  const sessionId = state.selectedId;
+  if (!sessionId) return;
   try {
-    await window.awefork.abort(state.selectedId);
+    await window.awefork.abort(state.activeBackend, sessionId);
   } catch (error) {
     state.actionError = error instanceof Error ? error.message : String(error);
   }
@@ -1709,4 +1971,104 @@ export async function openReleaseNotes(): Promise<void> {
 function latestSessionId(sessions: SessionSummary[]): string | null {
   if (sessions.length === 0) return null;
   return sessions.reduce((a, b) => (a.updatedAt > b.updatedAt ? a : b)).id;
+}
+
+// ── backend switch ──────────────────────────────────────────────────────
+
+/** Fold the visible run maps into the backend's parked slot. */
+function parkRuntime(backend: BackendId): void {
+  const entry = state.backgroundRuns[backend] ?? { running: {}, streams: {}, recent: {} };
+  state.backgroundRuns[backend] = {
+    running: { ...entry.running, ...state.running },
+    streams: { ...entry.streams, ...state.streams },
+    recent: { ...entry.recent, ...state.recent },
+  };
+  state.running = {};
+  state.streams = {};
+  state.recent = {};
+  state.streamParts = [];
+  stopRecentTicker();
+}
+
+/** Move the target backend's parked run maps back into the visible state. */
+function restoreRuntime(backend: BackendId): void {
+  const entry = state.backgroundRuns[backend] ?? { running: {}, streams: {}, recent: {} };
+  state.running = { ...entry.running };
+  state.streams = { ...entry.streams };
+  state.recent = { ...entry.recent };
+  // Drop the parked copy: while this backend is active its runtime lives in
+  // the visible maps only, and a stale parked copy would otherwise resurrect
+  // "running" flags that settled on screen the next time it parks again.
+  const { [backend]: _parked, ...restParked } = state.backgroundRuns;
+  void _parked;
+  state.backgroundRuns = restParked;
+  if (Object.keys(state.recent).length > 0) startRecentTicker();
+}
+
+/** Clear the whole visible workspace before booting another backend into it. */
+function resetWorkspace(): void {
+  state.booted = false;
+  state.connectionError = null;
+  state.sessions = [];
+  state.lineage = {};
+  state.pins = [];
+  state.trash = [];
+  state.deletedToast = null;
+  state.archive = { sessions: [], directories: [] };
+  state.selectedDirectory = null;
+  state.selectedId = null;
+  state.selectedTurnId = null;
+  state.messagesBySession = {};
+  state.messagesError = null;
+  state.loadingMessages = false;
+  state.models = [];
+  modelsRequested = false;
+  attemptedMessages.clear();
+  state.draft = null;
+  state.paneModels = {};
+  state.focusRequest = null;
+  state.composerFocusRequest = null;
+  state.fitRequest = null;
+  state.turnJumpRequest = null;
+  searchQuery.value = "";
+  for (const key of Object.keys(cardHeights)) delete cardHeights[key];
+}
+
+let switchingBackend = false;
+
+/**
+ * Switch the whole workspace to another agent backend. Pending deletes flush
+ * FIRST (each entry's trash store is bound to its backend), then the choice
+ * is persisted — a failed probe bounces back with the current view intact.
+ * The switch itself never touches runs in flight: the old backend's runtime
+ * parks in its slot and keeps streaming there, the target's restores, and the
+ * boot sequence replays for the backend coming on screen.
+ */
+export async function switchBackend(backend: BackendId): Promise<void> {
+  if (backend === state.activeBackend || switchingBackend) return;
+  switchingBackend = true;
+  try {
+    state.actionError = null;
+    await flushPendingDeletes();
+    const result = await window.awefork.selectBackend(backend);
+    if (!result.ok) {
+      state.actionError = result.error ?? `无法切换到 ${backend}。`;
+      return;
+    }
+    // Flip the active flag BEFORE restoring: events landing in this window
+    // route through runSlot, and the target's runtime must already be the
+    // visible one or its early frames write into the parked copy and vanish.
+    parkRuntime(state.activeBackend);
+    state.activeBackend = backend;
+    restoreRuntime(backend);
+    resetWorkspace();
+    try {
+      state.capabilities = await window.awefork.capabilities(backend);
+    } catch {
+      state.capabilities = backendCapabilities(backend);
+    }
+    await bootBackend(backend);
+  } finally {
+    switchingBackend = false;
+  }
 }
