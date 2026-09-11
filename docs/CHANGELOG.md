@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.2.1
+
+awefork grows a second backend: Codex joins opencode behind a top-bar switcher, and with it comes the whole approval dance — commands, file writes, permission escalations, and tool questions arrive as dialogs you answer before the turn may continue.
+
+### Highlights
+
+- **Codex as a second backend** — a backend registry keeps one adapter per agent and spawns lazily, so launch only boots your persisted selection. The switcher probes PATH without starting anything, a failed probe bounces back with the current view intact, and events from every spawned backend stream out as tagged envelopes — a run left cooking on codex keeps streaming while you work the opencode side.
+- **Approvals you can actually answer** — codex's server-originated requests (command execution, file changes, permission escalation, tool user input, MCP elicitation) surface as a modal dialog with a 30-second auto-decline countdown. Unknown requests get an explicit method-not-found instead of a hang, and an unanswered dialog can never default to allow.
+- **Auth trouble says so up front** — the connect-time account probe reports "run codex login" before your first prompt instead of after it, and a run-time auth failure re-checks the account to say the same thing.
+- **Forks keep their shape on codex** — forking through a turn maps to `thread/fork lastTurnId` on codex 0.154+, with a fork-then-rollback fallback for older CLIs; per-backend overlay stores (`lineage-codex.json` and friends) keep the two agents' pins, trash, and lineage from ever colliding, while legacy bare files stay with opencode.
+- **A dying codex can't take the app with it** — a JSON-RPC reply racing the child's exit used to write to the destroyed stdin pipe and crash the main process; in-flight server requests are now settled on disconnect, reply writes are guarded, and the initialize handshake reports the app's real version instead of a stale constant.
+
+### Install
+
+This release ships notes only — no installers attached yet. Build them yourself with `npm run dist` (unsigned macOS arm64) or `npm run dist:win` (Windows x64); on first launch on macOS, right-click the app and choose Open (or clear the quarantine flag with `xattr -d com.apple.quarantine /Applications/awefork.app`).
+
 ## v0.2.0
 
 The timeline learns to stream a run part by part — thinking folded into collapsible Thought blocks — the sidebar grows a favorites shelf, and a round of quiet hardening lands: leaks plugged, watchdogs calmed, and a reused port that must prove it really is opencode.
