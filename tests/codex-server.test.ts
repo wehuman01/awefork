@@ -102,13 +102,28 @@ describe("ensureCodexServer auth probe", () => {
     expect(result.authMessage).not.toMatch(/（/);
   });
 
-  it("flags requiresOpenaiAuth: true as not logged in", async () => {
+  it("flags a missing account as not logged in even with requiresOpenaiAuth set", async () => {
     const child = fakeCodexChild({
       ...baseScript,
       "account/read": { requiresOpenaiAuth: true },
     });
     const result = await ensureCodexServer(() => {}, spawnFnReturning(child));
     expect(result.authMessage).toMatch(/codex login/);
+  });
+
+  it("treats requiresOpenaiAuth: true alongside an account as logged in", async () => {
+    // Regression: codex 0.154's account/read returns the flag true with a
+    // valid ChatGPT account — it is the provider's auth-mode config, not a
+    // login status, and reading it as "logged out" banned every session.
+    const child = fakeCodexChild({
+      ...baseScript,
+      "account/read": {
+        account: { type: "chatgpt", email: "dev@example.com", planType: "plus" },
+        requiresOpenaiAuth: true,
+      },
+    });
+    const result = await ensureCodexServer(() => {}, spawnFnReturning(child));
+    expect(result.authMessage).toBeNull();
   });
 
   it("keeps flagging a failing account/read with the error detail", async () => {

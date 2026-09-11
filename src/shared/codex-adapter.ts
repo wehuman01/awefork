@@ -126,11 +126,13 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
 
   /**
    * A failed turn/start may be auth, but the RPC error text can't say which.
-   * Re-read the account: a null account or requiresOpenaiAuth counts as
-   * logged out — say "run codex login" instead of the raw error. No extra
-   * reconnect probing lives here: ensureCodexServer re-probes account/read on
-   * every respawn, so once the user logs in the next codex call spins up a
-   * fresh child whose subscribe re-announces the (now clear) banner.
+   * Re-read the account: only a null account counts as logged out — codex
+   * 0.154 reports requiresOpenaiAuth: true alongside a valid account (it is
+   * the provider's "uses OpenAI auth" config flag, not a login flag). No
+   * extra reconnect probing lives here: ensureCodexServer re-probes
+   * account/read on every respawn, so once the user logs in the next codex
+   * call spins up a fresh child whose subscribe re-announces the (now clear)
+   * banner.
    */
   const authFailureDetail = async (): Promise<string | null> => {
     try {
@@ -139,7 +141,7 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
         {},
         10_000,
       );
-      if (!account?.account || account.requiresOpenaiAuth === true) {
+      if (!account?.account) {
         return CODEX_NOT_LOGGED_IN_MESSAGE;
       }
       return null;
@@ -163,22 +165,45 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
     updatedAt: secToMs(thread.updatedAt) ?? Date.now(),
   });
 
-  /** Walk one thread's turns pages (ascending) to the end. */
+  /**
+   * Walk one thread's turns pages (ascending) to the end.
+   *
+   * codex 0.154 keeps paginated threads' turns in a per-home sqlite store and
+   * only projects a rollout into it on write operations, so a thread whose
+   * rollout predates this home (a copy imported from an aweswitch account
+   * home) lists zero turns until something loads it. Resuming once on the
+   * empty first walk covers both browsing (messages) and fork's item lookup;
+   * a refused resume (a live writer elsewhere) keeps the empty result, which
+   * is what a genuinely empty new thread looks like anyway.
+   */
   async function listTurns(threadId: string): Promise<CodexTurn[]> {
-    const turns: CodexTurn[] = [];
-    let cursor: string | null | undefined;
-    do {
-      const page = await client.request<Paginated<CodexTurn>>("thread/turns/list", {
-        threadId,
-        cursor: cursor ?? null,
-        limit: PAGE_LIMIT,
-        // turns/list defaults to descending; awefork's message list is oldest-first.
-        sortDirection: "asc",
-        itemsView: "full",
-      });
-      turns.push(...(page.data ?? []));
-      cursor = page.nextCursor ?? null;
-    } while (cursor);
+    const walk = async (): Promise<CodexTurn[]> => {
+      const turns: CodexTurn[] = [];
+      let cursor: string | null | undefined;
+      do {
+        const page = await client.request<Paginated<CodexTurn>>("thread/turns/list", {
+          threadId,
+          cursor: cursor ?? null,
+          limit: PAGE_LIMIT,
+          // turns/list defaults to descending; awefork's message list is oldest-first.
+          sortDirection: "asc",
+          itemsView: "full",
+        });
+        turns.push(...(page.data ?? []));
+        cursor = page.nextCursor ?? null;
+      } while (cursor);
+      return turns;
+    };
+    let turns = await walk();
+    if (turns.length === 0) {
+      try {
+        await resumeThread(threadId);
+        turns = await walk();
+      } catch {
+        // Browse must stay read-only against a thread another writer owns;
+        // the retry is only for this home's own cold copies.
+      }
+    }
     indexTurnItems(threadId, turns);
     return turns;
   }

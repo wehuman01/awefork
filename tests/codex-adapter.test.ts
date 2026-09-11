@@ -224,6 +224,52 @@ describe("createCodexAdapter messages()", () => {
     expect(callsOf("thread/resume")).toHaveLength(0);
   });
 
+  it("re-lists a cold paginated thread's turns after one resume", async () => {
+    // codex 0.154 keeps paginated turns in a per-home sqlite store and only
+    // projects a rollout into it on write operations, so a thread imported
+    // from another account home (awefork's multihome continue flow) lists
+    // zero turns until something loads it once — fork's item lookup included.
+    let listCalls = 0;
+    const { client, callsOf } = fakeClient({
+      "thread/read": () => ({ thread: THREAD_FIXTURE }),
+      "thread/resume": () => ({ thread: THREAD_FIXTURE }),
+      "thread/turns/list": () =>
+        ++listCalls === 1 ? { data: [], nextCursor: null } : turnPageFixture([TURN_FIXTURE]),
+    });
+    const adapter = createCodexAdapter({
+      client,
+      lineagePath: await tempLineagePath(),
+      cliVersion: "0.154.0",
+    });
+
+    const rows = await adapter.messages("s1");
+    expect(rows.map((r) => r.id)).toEqual(["u1", "turn-1"]);
+    expect(callsOf("thread/resume")).toHaveLength(1);
+    expect(callsOf("thread/turns/list")).toHaveLength(2);
+  });
+
+  it("keeps a cold thread's empty browse when the resume is refused", async () => {
+    // A live writer elsewhere refuses the resume; browse stays read-only and
+    // empty instead of erroring or spinning on retries.
+    const { client, callsOf } = fakeClient({
+      "thread/read": () => ({ thread: THREAD_FIXTURE }),
+      "thread/resume": () => {
+        throw new Error("thread s1 already has an active writer");
+      },
+      "thread/turns/list": () => ({ data: [], nextCursor: null }),
+    });
+    const adapter = createCodexAdapter({
+      client,
+      lineagePath: await tempLineagePath(),
+      cliVersion: "0.154.0",
+    });
+
+    expect(await adapter.messages("s1")).toEqual([]);
+    expect(callsOf("thread/resume")).toHaveLength(1);
+    // A refused resume skips the re-walk — nothing could have changed.
+    expect(callsOf("thread/turns/list")).toHaveLength(1);
+  });
+
   it("falls back to thread/resume on CLIs without thread/read", async () => {
     // Pre-0.154 has no thread/read — and no writer lock to collide with, so
     // resume is the right (and only) way to load the thread there.
@@ -437,6 +483,33 @@ describe("createCodexAdapter fork()", () => {
     });
     const adapter = createCodexAdapter({ client, lineagePath: await tempLineagePath() });
     await expect(adapter.fork("s1", "ghost")).rejects.toThrow(/not found in session s1/);
+  });
+
+  it("resolves the fork point after loading a cold paginated thread", async () => {
+    // Regression: forking at a message of an imported copy failed with
+    // "Message … not found in session …" because the copy's paginated store
+    // had never materialized; the item lookup must load the thread first.
+    let listCalls = 0;
+    const { client, callsOf } = fakeClient({
+      "thread/resume": () => ({ thread: THREAD_FIXTURE }),
+      "thread/turns/list": () =>
+        ++listCalls === 1 ? { data: [], nextCursor: null } : turnPageFixture([TURN_FIXTURE]),
+      "thread/fork": () => ({
+        thread: { id: "fork-3", forkedFromId: "s1", cwd: "/demo", createdAt: 1, updatedAt: 1 },
+      }),
+    });
+    const adapter = createCodexAdapter({
+      client,
+      lineagePath: await tempLineagePath(),
+      cliVersion: "0.154.0",
+    });
+
+    const forked = await adapter.fork("s1", "u1");
+    expect(forked.id).toBe("fork-3");
+    expect(callsOf("thread/fork")[0]?.params).toMatchObject({
+      threadId: "s1",
+      lastTurnId: "turn-1",
+    });
   });
 });
 

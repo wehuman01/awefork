@@ -146,9 +146,9 @@ export async function ensureCodexServer(
       );
       // Auth probe: a codex that never ran `codex login` fails every
       // turn/start with an auth error — better to know before the prompt.
-      // A successful reply can still report no usable account (fresh
-      // install, logged out) via a null account or requiresOpenaiAuth —
-      // those count as "not logged in" too.
+      // Only a null account means logged out. requiresOpenaiAuth is NOT a
+      // login flag: on 0.154 it mirrors the provider's "uses OpenAI auth"
+      // config and comes back true alongside a perfectly valid account.
       let authMessage: string | null = null;
       try {
         const account = await client.request<{ account?: unknown; requiresOpenaiAuth?: boolean }>(
@@ -156,7 +156,7 @@ export async function ensureCodexServer(
           {},
           10_000,
         );
-        if (!account?.account || account.requiresOpenaiAuth === true) {
+        if (!account?.account) {
           authMessage = NOT_LOGGED_IN_MESSAGE;
         }
       } catch (error) {
