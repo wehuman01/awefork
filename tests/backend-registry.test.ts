@@ -19,12 +19,20 @@ const mocks = vi.hoisted(() => ({
   ensureOpencodeServer: vi.fn(),
   stopManagedServer: vi.fn(),
   execFile: vi.fn(),
+  discoverCodexHomes: vi.fn(),
 }));
 
-vi.mock("../src/main/codex-server", () => ({
+vi.mock("../src/main/codex-server.js", () => ({
   ensureCodexServer: mocks.ensureCodexServer,
   isCodexInstalled: mocks.isCodexInstalled,
   stopCodexServer: mocks.stopCodexServer,
+}));
+
+// Keep home discovery synthetic: the real probe would pick up whatever
+// aweswitch accounts exist on the dev machine and skew spawn counts.
+vi.mock("../src/main/codex-homes.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/main/codex-homes.js")>()),
+  discoverCodexHomes: mocks.discoverCodexHomes,
 }));
 
 vi.mock("../src/main/opencode-server", () => ({
@@ -73,11 +81,28 @@ function failingCodexClient(): CodexJsonRpc {
   };
 }
 
+/** A codex client answering list paging with no sessions. */
+function listCodexClient(): CodexJsonRpc {
+  return {
+    request: vi.fn().mockResolvedValue({ data: [], nextCursor: null }),
+    setNotificationHandler: vi.fn(),
+    setRequestHandler: vi.fn(),
+    dispose: vi.fn(),
+  };
+}
+
+function mockDefaultHomeOnly(): void {
+  mocks.discoverCodexHomes.mockReturnValue([
+    { path: "/homes/default", id: "default", label: "Codex" },
+  ]);
+}
+
 let userDataDir: string;
 let registry: BackendRegistry;
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  mockDefaultHomeOnly();
   userDataDir = await mkdtemp(join(tmpdir(), "awefork-registry-"));
   registry = createBackendRegistry(userDataDir);
   // By default the opencode CLI "is on PATH" with a version inside the
@@ -113,25 +138,33 @@ describe("routing and adapter lifecycle", () => {
     expect(mocks.ensureCodexServer).not.toHaveBeenCalled();
   });
 
-  it("builds the codex adapter from the server handshake", async () => {
+  it("creates the codex facade without spawning until first used", async () => {
     mocks.ensureCodexServer.mockResolvedValue({
-      client: failingCodexClient(),
+      client: listCodexClient(),
       version: "0.154.0",
       authMessage: null,
     });
 
     const adapter = await registry.get("codex");
     expect(adapter.kind).toBe("codex");
+    // Spawning is deferred to the first home-touching call, not get().
+    expect(mocks.ensureCodexServer).not.toHaveBeenCalled();
+    await adapter.listSessions();
+    expect(mocks.ensureCodexServer).toHaveBeenCalledTimes(1);
     expect(mocks.ensureOpencodeServer).not.toHaveBeenCalled();
   });
 
-  it("does not cache a failed spawn — the next call retries", async () => {
-    mocks.ensureCodexServer
-      .mockRejectedValueOnce(new Error("spawn ENOENT"))
-      .mockResolvedValue({ client: failingCodexClient(), version: null, authMessage: null });
+  it("does not cache a failed home spawn — the next call retries", async () => {
+    mocks.ensureCodexServer.mockResolvedValue({
+      client: listCodexClient(),
+      version: null,
+      authMessage: null,
+    });
+    const adapter = await registry.get("codex");
 
-    await expect(registry.get("codex")).rejects.toThrow("spawn ENOENT");
-    await expect(registry.get("codex")).resolves.toHaveProperty("kind", "codex");
+    mocks.ensureCodexServer.mockRejectedValueOnce(new Error("spawn ENOENT"));
+    await expect(adapter.listSessions()).rejects.toThrow("spawn ENOENT");
+    await expect(adapter.listSessions()).resolves.toEqual([]);
     expect(mocks.ensureCodexServer).toHaveBeenCalledTimes(2);
   });
 });
@@ -162,12 +195,13 @@ describe("event envelopes", () => {
     let onExit: (() => void) | null = null;
     mocks.ensureCodexServer.mockImplementation((callback: () => void) => {
       onExit = callback;
-      return Promise.resolve({ client: failingCodexClient(), version: null, authMessage: null });
+      return Promise.resolve({ client: listCodexClient(), version: null, authMessage: null });
     });
     const envelopes: BackendEventEnvelope[] = [];
     registry.forward((envelope) => envelopes.push(envelope));
 
-    await registry.get("codex");
+    const adapter = await registry.get("codex");
+    await adapter.listSessions(); // first use materializes the home server
     expect(envelopes).toEqual([]); // no crash yet → no reconnect noise
 
     onExit?.();
@@ -178,11 +212,11 @@ describe("event envelopes", () => {
       },
     ]);
 
-    await registry.get("codex"); // lazy re-spawn
+    await adapter.listSessions(); // lazy re-spawn
     expect(mocks.ensureCodexServer).toHaveBeenCalledTimes(2);
     expect(envelopes.at(-1)).toEqual({ backend: "codex", event: { type: "server.reconnected" } });
 
-    await registry.get("codex"); // cached again: no third spawn, no second banner
+    await adapter.listSessions(); // cached again: no third spawn, no second banner
     expect(mocks.ensureCodexServer).toHaveBeenCalledTimes(2);
     expect(envelopes.filter((e) => e.event.type === "server.reconnected")).toHaveLength(1);
   });
@@ -308,24 +342,20 @@ describe("dispose", () => {
       spawned: true,
     });
     mocks.ensureCodexServer.mockResolvedValue({
-      client: failingCodexClient(),
+      client: listCodexClient(),
       version: null,
       authMessage: null,
     });
     await registry.get("opencode");
-    await registry.get("codex");
+    const codex = await registry.get("codex");
+    await codex.listSessions(); // materialize the home server before dispose
 
     registry.dispose();
     expect(mocks.stopManagedServer).toHaveBeenCalledTimes(1);
     expect(mocks.stopCodexServer).toHaveBeenCalledTimes(1);
 
     // After dispose the registry is cold again: a new get re-spawns.
-    mocks.ensureCodexServer.mockResolvedValue({
-      client: failingCodexClient(),
-      version: null,
-      authMessage: null,
-    });
-    await registry.get("codex");
+    await (await registry.get("codex")).listSessions();
     expect(mocks.ensureCodexServer).toHaveBeenCalledTimes(2);
   });
 });
@@ -349,8 +379,10 @@ describe("interaction replies route by backend", () => {
     const envelopes: BackendEventEnvelope[] = [];
     registry.forward((envelope) => envelopes.push(envelope));
 
-    // Subscribe installs the request handler.
+    // Subscribe installs the request handler — but the facade defers the
+    // inner adapter's creation to first use, so touch a home first.
     const adapter = await registry.get("codex");
+    await adapter.listSessions();
     if (!onRequest) throw new Error("adapter never installed a request handler");
     const pending = onRequest("item/commandExecution/requestApproval", {
       threadId: "s1",
