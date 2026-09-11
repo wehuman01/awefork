@@ -21,12 +21,17 @@ import CodeBlock from "./code-block.vue";
 function openLink(event: MouseEvent, href: string): void {
   event.preventDefault();
   if (isDrivePath(href)) {
-    void window.awefork.openPath(href).then((result) => {
-      if (!result.ok) reportActionError(result.error ?? "路径打不开");
-    });
+    void window.awefork
+      .openPath(href)
+      .then((result) => {
+        if (!result.ok) reportActionError(result.error ?? "路径打不开");
+      })
+      .catch(() => reportActionError("路径打不开"));
     return;
   }
-  void window.awefork.openExternal(href);
+  void window.awefork.openExternal(href).catch(() => {
+    // Nothing sane to tell the user about a dead link click.
+  });
 }
 
 function renderInline(nodes: readonly MdInline[]): VNodeChild[] {

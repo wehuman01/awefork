@@ -1845,7 +1845,13 @@ async function restoreComposer(): Promise<void> {
   }
   restoringComposer = true;
   try {
-    state.paneModels = persisted?.paneModels ?? {};
+    // Same existence filter as the write path: picks for sessions that
+    // vanished while the app was away don't resurrect in memory.
+    const paneModels: Record<string, ModelChoice> = {};
+    for (const [id, model] of Object.entries(persisted?.paneModels ?? {})) {
+      if (state.sessions.some((s) => s.id === id)) paneModels[id] = model;
+    }
+    state.paneModels = paneModels;
     const draft = persisted?.draft ?? null;
     // An empty draft is nothing to hand back; a fresh openDraft is better.
     if (draft && draft.text.trim() !== "") {
@@ -1931,6 +1937,9 @@ export async function sendDraft(): Promise<void> {
   const draft = state.draft;
   if (!draft?.text.trim() || state.draftSending) return;
   const backend = state.activeBackend;
+  const generation = workspaceGeneration;
+  // True once a backend switch reset the workspace under this send.
+  const stale = () => generation !== workspaceGeneration;
   const text = draft.text.trim();
   state.actionError = null;
   state.draftSending = true;
@@ -1938,10 +1947,15 @@ export async function sendDraft(): Promise<void> {
   try {
     // Sending is a new operation: older pending deletes become final.
     await flushPendingDeletes();
+    // The draft was already persisted to the outgoing backend's store by the
+    // switch, so dropping the send here hands it back on the next visit
+    // instead of firing an invisible run and writing over the new backend.
+    if (stale()) return;
     const model = plainModel(draft.model);
     const sentAt = Date.now();
     if (draft.atMessageId) {
       const forked = await window.awefork.fork(backend, draft.sessionId, draft.atMessageId);
+      if (stale()) return;
       await refreshSessions();
       // No focus request: the canvas stays parked where the user was looking.
       // The composer floated in the branch's next cell, and that's exactly
@@ -1952,6 +1966,7 @@ export async function sendDraft(): Promise<void> {
       await selectSession(draft.sessionId);
       targetId = draft.sessionId;
     }
+    if (stale()) return;
     // Mark the target running before the request goes out, like sendPrompt
     // does — continuing and forking must share the same waiting UI, and the
     // canvas card and delete guard must not wait on the first SSE busy frame.
@@ -1962,7 +1977,17 @@ export async function sendDraft(): Promise<void> {
     appendLocalMessage(targetId, text, model, attachments);
     await window.awefork.prompt(backend, targetId, text, model, attachments);
     watchCompletion(backend, targetId, sentAt);
-    state.draft = null;
+    if (!stale()) {
+      state.draft = null;
+      // The sent draft must leave the sidecar now, not on the next debounce
+      // — a crash inside that window would resurrect it as unsent.
+      void flushComposer(backend);
+    } else {
+      // The switch landed after the prompt went out: the run is real (it
+      // streams through the parked runtime), so the outgoing backend's
+      // persisted draft is stale and must not come back.
+      void window.awefork.saveComposer(backend, null).catch(() => {});
+    }
   } catch (error) {
     if (targetId) settleRun(backend, targetId);
     state.actionError = error instanceof Error ? error.message : String(error);
@@ -2028,13 +2053,17 @@ export async function sendPrompt(
 ): Promise<void> {
   const backend = state.activeBackend;
   const sessionId = state.selectedId;
+  const generation = workspaceGeneration;
   if (!sessionId || !text.trim()) return;
   state.actionError = null;
   // Sending is a new operation: older pending deletes become final. The
   // session is captured before the flush because the flush awaits IPC —
   // the prompt must reach the session the composer was typing into, even
-  // if the user switches selection mid-flush.
+  // if the user switches selection mid-flush. A backend switch is the one
+  // mid-flush change that aborts: the target session left the screen, and
+  // firing the run anyway would start something the user cannot see.
   await flushPendingDeletes();
+  if (generation !== workspaceGeneration) return;
   setRunning(backend, sessionId, true);
   const sentAt = Date.now();
   appendLocalMessage(sessionId, text, model, attachments);
@@ -2167,8 +2196,13 @@ function restoreRuntime(backend: BackendId): void {
   if (Object.keys(state.recent).length > 0) startRecentTicker();
 }
 
+/** Bumped on every workspace reset for a backend switch; async flows capture
+ * it to notice that the world under them moved to another backend. */
+let workspaceGeneration = 0;
+
 /** Clear the whole visible workspace before booting another backend into it. */
 function resetWorkspace(): void {
+  workspaceGeneration += 1;
   state.booted = false;
   state.connectionError = null;
   state.sessions = [];

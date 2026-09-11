@@ -210,6 +210,23 @@ describe("Windows drive paths", () => {
     ]);
   });
 
+  it("drops trailing sentence punctuation from an explicit drive href", () => {
+    expect(parseInline("[源码](C:\\repo\\file.ts.)")).toEqual([
+      {
+        kind: "link",
+        href: "C:\\repo\\file.ts",
+        children: [{ kind: "text", text: "源码" }],
+      },
+    ]);
+    expect(parseInline("[源码](C:\\repo\\file.ts,)")).toEqual([
+      {
+        kind: "link",
+        href: "C:\\repo\\file.ts",
+        children: [{ kind: "text", text: "源码" }],
+      },
+    ]);
+  });
+
   it("leaves colon-bearing words that are not paths alone", () => {
     expect(parseInline("10:30 开会，Note:this 不是路径，C: 也不是")).toEqual([
       { kind: "text", text: "10:30 开会，Note:this 不是路径，C: 也不是" },

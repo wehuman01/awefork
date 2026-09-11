@@ -143,9 +143,17 @@ export function parseInline(text: string): MdInline[] {
                 .trim()
                 .split(/\s+/)[0] ?? "")
             : "";
-        if (end > 0 && (SAFE_HREF.test(href) || DRIVE_PATH.test(href))) {
+        // Trailing sentence punctuation is prose, not path — the bare-path
+        // rule above strips it, and an explicit drive href must not smuggle
+        // it back in for shell.openPath to choke on.
+        const driveHref = href.replace(/[.,;:!?]+$/, "");
+        if (end > 0 && (SAFE_HREF.test(href) || DRIVE_PATH.test(driveHref))) {
           flush();
-          out.push({ kind: "link", href, children: parseInline(text.slice(linkStart + 1, close)) });
+          out.push({
+            kind: "link",
+            href: SAFE_HREF.test(href) ? href : driveHref,
+            children: parseInline(text.slice(linkStart + 1, close)),
+          });
           i = end + 1;
           continue;
         }
