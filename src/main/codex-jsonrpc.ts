@@ -66,6 +66,8 @@ export function createCodexJsonRpc(
   options: CodexJsonRpcOptions,
 ): CodexJsonRpc {
   const pending = new Map<number, PendingEntry>();
+  /** Server requests whose guard timer is still live; settled on disconnect. */
+  const openServerRequests = new Set<() => void>();
   let nextId = 1;
   let buffer = "";
   let disconnected = false;
@@ -81,17 +83,27 @@ export function createCodexJsonRpc(
       entry.reject(new Error("codex app-server connection lost"));
     }
     pending.clear();
+    // Settle in-flight server requests as well: their fallback timers (and
+    // any late user reply resolving the handler) would otherwise write to the
+    // dead stdin, raising an unhandled stream error in the main process.
+    for (const cancel of openServerRequests) cancel();
+    openServerRequests.clear();
     stdout.removeListener("data", onData);
     stdout.removeListener("end", onEnd);
     stdout.removeListener("error", onEnd);
+    stdout.removeListener("close", onEnd);
     options.onDisconnect?.();
   };
 
+  // Writing to a destroyed pipe emits 'error' with no listener — a crash —
+  // so every reply path checks the flag; request() checks it on entry.
   const replyResult = (id: number | string, result: unknown) => {
+    if (disconnected) return;
     stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, result })}\n`);
   };
 
   const replyError = (id: number | string, code: number, message: string) => {
+    if (disconnected) return;
     stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, error: { code, message } })}\n`);
   };
 
@@ -112,6 +124,7 @@ export function createCodexJsonRpc(
     const finish = (result: unknown, error?: unknown) => {
       if (settled) return;
       settled = true;
+      openServerRequests.delete(cancel);
       clearTimeout(timer);
       if (error) replyError(id, -32000, error instanceof Error ? error.message : String(error));
       else replyResult(id, result);
@@ -121,6 +134,11 @@ export function createCodexJsonRpc(
       if (fallback === undefined) finish(null, "awefork 未获得用户输入，请求已超时");
       else finish(fallback);
     }, requestTimeoutMs);
+    // Disconnect settles the request here (the reply write is a guarded
+    // no-op), so neither the timer above nor a late handler resolution can
+    // reach the dead stdin.
+    const cancel = () => finish(null, "codex app-server connection lost");
+    openServerRequests.add(cancel);
     Promise.resolve(handleRequest(method, params)).then(
       (result) => finish(result ?? {}),
       (error) => finish(null, error),

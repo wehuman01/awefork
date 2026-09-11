@@ -154,9 +154,9 @@ export function registerIpc(registry: BackendRegistry): void {
 
   // Reply to a pending backend interaction (approval/tool-user-input). The
   // adapter resolves its pending request by `requestId`, so the renderer
-  // only ever sees the id the backend handed out. Throws when the request
-  // already timed out or the backend never knew it, which surfaces as an
-  // invoke rejection the renderer can settle as a failed reply.
+  // only ever sees the id the backend handed out. Replying to an unknown or
+  // already-settled request is a silent no-op — the JSON-RPC layer safe-
+  // replied it at its deadline, so a stale dialog click cannot double-answer.
   ipcMain.handle(
     "awefork:respondInteraction",
     async (

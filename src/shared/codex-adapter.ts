@@ -359,7 +359,6 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
 
     async fork(sessionId, atMessageId) {
       let lastTurnId: string | null = null;
-      const rollbackTurns = 0;
       if (atMessageId) {
         const turn = await turnOfItem(sessionId, atMessageId);
         if (!turn) {

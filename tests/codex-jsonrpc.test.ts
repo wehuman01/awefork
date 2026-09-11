@@ -336,6 +336,37 @@ describe("createCodexJsonRpc", () => {
     vi.useRealTimers();
   });
 
+  it("settles an in-flight server request on disconnect — its deadline timer and a late reply never write to the dead stdin", async () => {
+    // Regression: a reply written after the stream ended hit a destroyed
+    // pipe, whose 'error' event had no listener and crashed the main process.
+    vi.useFakeTimers();
+    const { stdin, stdout, written } = fakeStreams();
+    let resolveHandler: (value: unknown) => void = () => {};
+    const rpc = createCodexJsonRpc(stdin, stdout, {
+      onNotification: () => {},
+      onRequest: () => new Promise<unknown>((resolve) => (resolveHandler = resolve)),
+    });
+    stdout.emit(
+      "data",
+      `${JSON.stringify({
+        jsonrpc: "2.0",
+        id: 34,
+        method: "item/commandExecution/requestApproval",
+        params: { command: "cargo test" },
+      })}\n`,
+    );
+    expect(written).toHaveLength(0);
+    // The child dies before the user answers.
+    stdout.emit("end");
+    vi.advanceTimersByTime(60_000);
+    resolveHandler({ decision: "accept" });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(written).toHaveLength(0);
+    rpc.dispose();
+    vi.useRealTimers();
+  });
+
   it("answers new-API approval requests with the safe decline when nobody is subscribed yet", async () => {
     const { stdin, stdout, written } = fakeStreams();
     const seen: string[] = [];

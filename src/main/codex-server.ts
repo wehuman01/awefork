@@ -1,6 +1,7 @@
 import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { homedir } from "node:os";
 import { promisify } from "node:util";
+import { app } from "electron";
 import { CODEX_NOT_LOGGED_IN_MESSAGE } from "../shared/codex-adapter.js";
 import { type CodexJsonRpc, createCodexJsonRpc } from "./codex-jsonrpc.js";
 import { resolveSpawnEnv } from "./opencode-server.js";
@@ -96,6 +97,11 @@ export async function ensureCodexServer(
     markDead();
   });
   child.on("exit", markDead);
+  // A request racing the child's death surfaces on stdin as an 'error' event
+  // (EPIPE / ERR_STREAM_DESTROYED); with no listener that is an uncaught
+  // exception. The jsonrpc layer learns of the death via stdout and settles
+  // everything itself, so the event needs no handling beyond not crashing.
+  child.stdin?.on?.("error", () => {});
 
   const client = createCodexJsonRpc(child.stdin, child.stdout, {
     onNotification: () => {},
@@ -120,7 +126,7 @@ export async function ensureCodexServer(
       const init = await client.request<{ userAgent?: string }>(
         "initialize",
         {
-          clientInfo: { name: "awefork", title: "awefork", version: "0.1.9" },
+          clientInfo: { name: "awefork", title: "awefork", version: clientVersion() },
         },
         5_000,
       );
@@ -191,6 +197,19 @@ export function stopCodexServer(): void {
 function parseCliVersion(userAgent: string | undefined | null): string | null {
   if (typeof userAgent !== "string") return null;
   return userAgent.match(/\d+\.\d+\.\d+/)?.[0] ?? null;
+}
+
+/**
+ * Real app version for the initialize handshake. `app` only exists inside a
+ * running Electron app — tests import this module cold (same lazy pattern as
+ * update-check), where the read fails soft to a placeholder.
+ */
+function clientVersion(): string {
+  try {
+    return app.getVersion();
+  } catch {
+    return "0.0.0";
+  }
 }
 
 function sleep(ms: number): Promise<void> {
