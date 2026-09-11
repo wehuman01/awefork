@@ -88,7 +88,8 @@
         </div>
       </template>
     </MessageList>
-    <div v-else class="ctx-empty">
+    <FileChangesCard v-if="selectedSession && store.capabilities.fileChanges" />
+    <div v-if="!selectedSession" class="ctx-empty">
       <p>左侧选会话，或在画布上点一张卡片。</p>
     </div>
 
@@ -126,6 +127,7 @@ import {
   store,
 } from "../state";
 import ChatInput from "./chat-input.vue";
+import FileChangesCard from "./file-changes-card.vue";
 import MessageList from "./message-list.vue";
 
 const pane = computed(() => paneTurn.value);

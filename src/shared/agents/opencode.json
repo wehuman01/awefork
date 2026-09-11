@@ -3,6 +3,12 @@
   "compat": { "min": "1.18.0", "max": "1.19.0" },
   "capabilities": { "deleteMessage": true, "attachments": true },
   "fork": { "cut": "next-user-exclusive" },
+  "fileChanges": {
+    "tools": ["edit", "write"],
+    "stateKeyPath": "state.key",
+    "filePathPaths": ["state.input.filePath", "filePath"],
+    "doneStates": ["output-available", "error"]
+  },
   "endpoints": {
     "sessions": "/session",
     "session": "/session/{id}",

@@ -113,6 +113,8 @@ export interface OpencodeClient {
    */
   listSessions(directory?: string): Promise<OcSession[]>;
   listProjects(): Promise<OcProject[]>;
+  /** GET /session/:id — one session's own row (the file-change recorder's project root). */
+  session(sessionId: string): Promise<OcSession>;
   messages(sessionId: string): Promise<OcMessage[]>;
   listModels(): Promise<ModelOption[]>;
   /**
@@ -202,6 +204,7 @@ export function createOpencodeClient(
       return request<OcSession[]>(`${endpoint("sessions")}?${query.toString()}`);
     },
     listProjects: () => request<OcProject[]>(endpoint("projects")),
+    session: (id) => request<OcSession>(endpoint("session", { id })),
     messages: (id) => request<OcMessage[]>(endpoint("sessionMessages", { id })),
     listModels: async () => {
       // Read only ids and names — the response also carries provider secrets.

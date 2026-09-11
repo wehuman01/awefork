@@ -106,6 +106,8 @@ async function bootState() {
     }),
     skipUpdate: async () => ({ ok: true }),
     openRelease: async () => ({ ok: true }),
+    fileChanges: async () => null,
+    fileChangeDiff: async () => null,
     onEvent: (_handler: (envelope: BackendEventEnvelope) => void) => () => {},
   };
   (globalThis as unknown as { window: { awefork: AweforkApi } }).window = { awefork: api };

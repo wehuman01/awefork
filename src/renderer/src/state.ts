@@ -35,6 +35,7 @@ import type {
   PersistedComposer,
   PersistedDraft,
   PromptAttachment,
+  SessionFileChanges,
   SessionSummary,
 } from "../../shared/types";
 import { type DraftAttachment, draftFromPrompt, toPromptAttachments } from "./attachments";
@@ -103,6 +104,12 @@ interface AppState {
    */
   selectedTurnId: string | null;
   messagesBySession: Record<string, ChatMessage[]>;
+  /**
+   * Per-session file-change index (observer sidecar), keyed by session id
+   * like messagesBySession — session ids never collide across backends, so
+   * the map survives switches without parking.
+   */
+  fileChangesBySession: Record<string, SessionFileChanges | null>;
   loadingMessages: boolean;
   messagesError: string | null;
   /** Model catalog from the agent's provider config; loaded on first draft. */
@@ -165,7 +172,7 @@ const state = reactive<AppState>({
   booted: false,
   activeBackend: "opencode",
   backendList: [],
-  capabilities: { deleteMessage: true, attachments: true },
+  capabilities: { deleteMessage: true, attachments: true, fileChanges: true },
   sessions: [],
   trash: [],
   deletedToast: null,
@@ -176,6 +183,7 @@ const state = reactive<AppState>({
   selectedId: null,
   selectedTurnId: null,
   messagesBySession: {},
+  fileChangesBySession: {},
   loadingMessages: false,
   messagesError: null,
   models: [],
@@ -878,6 +886,9 @@ async function loadSessionMessages(
   reportError = true,
   backend: BackendId = state.activeBackend,
 ): Promise<ChatMessage[] | null> {
+  // First load only: the watchdog polls this function every interval while a
+  // run streams, and the index refresh rides the run-settle path instead.
+  const firstLoad = !attemptedMessages.has(sessionId);
   attemptedMessages.add(sessionId);
   try {
     // Await first, THEN merge: spreading before the await would snapshot the
@@ -885,6 +896,7 @@ async function loadSessionMessages(
     const messages = await window.awefork.messages(backend, sessionId);
     state.messagesBySession = { ...state.messagesBySession, [sessionId]: messages };
     pruneSettledParts(backend, sessionId, messages);
+    if (firstLoad) refreshFileChanges(sessionId, backend);
     return messages;
   } catch (error) {
     if (reportError && backend === state.activeBackend && state.selectedId === sessionId) {
@@ -892,6 +904,24 @@ async function loadSessionMessages(
     }
     return null;
   }
+}
+
+/**
+ * Refresh a session's file-change index. Never blocks the message load —
+ * the card is an overlay on data that is already rendered. Skipped for
+ * backends without recording (the invoke would only come back empty).
+ */
+function refreshFileChanges(sessionId: string, backend: BackendId): void {
+  if (!backendCapabilities(backend).fileChanges) return;
+  void window.awefork
+    .fileChanges(backend, sessionId)
+    .then((changes) => {
+      state.fileChangesBySession = { ...state.fileChangesBySession, [sessionId]: changes };
+    })
+    .catch(() => {
+      // A missing sidecar is the common case (sessions edited offline); the
+      // pane shows the not-recorded hint instead.
+    });
 }
 
 /** Start (or restart) the poll watchdog for a prompt awefork just sent. */
@@ -1015,6 +1045,9 @@ async function finishRun(backend: BackendId, sessionId: string): Promise<void> {
   // Both mutations occur before Vue renders, avoiding an empty or duplicated
   // assistant slot at the end of a streamed response.
   await loadSessionMessages(sessionId, false, backend);
+  // The run's file changes settle with it; the card appears without the user
+  // reselecting anything.
+  refreshFileChanges(sessionId, backend);
   settleRun(backend, sessionId);
   if (backend === state.activeBackend) void refreshSessions();
 }

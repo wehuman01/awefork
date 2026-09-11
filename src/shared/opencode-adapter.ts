@@ -3,7 +3,9 @@ import {
   firstString,
   type OpenCodeDescriptor,
   opencodeDescriptor,
+  readPath,
 } from "./agent-descriptor.js";
+import { createFileChangeRecorder, type FileChangeRecorder } from "./file-change-recorder.js";
 import { recordFork, removeFork } from "./lineage-store.js";
 import {
   createOpencodeClient,
@@ -24,6 +26,8 @@ export interface OpenCodeAdapterOptions {
   baseUrl: string;
   /** Path to the lineage sidecar file. */
   lineagePath: string;
+  /** Root dir for per-session file-change sidecars; absent = no recording. */
+  fileChangesDir?: string;
   /** Descriptor override for tests; defaults to the bundled agents/opencode.json. */
   descriptor?: OpenCodeDescriptor;
 }
@@ -46,6 +50,50 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
   let abortController: AbortController | null = null;
   /** Set by subscribe; lets detached prompts report request-level failures. */
   let emitEvent: ((event: AgentEvent) => void) | null = null;
+
+  /**
+   * Observer-seat file-change recording: every tool-part snapshot frame rides
+   * the same SSE stream as text parts, so the recorder hangs off the part
+   * translation below. One recorder per session keeps message/path state
+   * independent per branch.
+   */
+  const fileChangesFact = descriptor.fileChanges;
+  const recorders = new Map<string, FileChangeRecorder>();
+  const onToolPart =
+    options.fileChangesDir && fileChangesFact
+      ? (sessionId: string, messageId: string, part: unknown): void => {
+          const tool =
+            firstString(part, [descriptor.messages.parts.tool.nameField]) ??
+            descriptor.messages.parts.tool.fallbackName;
+          const stateKey = readPath(part, fileChangesFact.stateKeyPath);
+          const partId = readPath(part, "id");
+          let recorder = recorders.get(sessionId);
+          if (!recorder) {
+            recorder = createFileChangeRecorder({
+              rootDir: options.fileChangesDir ?? "",
+              fact: fileChangesFact,
+              directoryOf: async (id) => {
+                try {
+                  const session = await client.session(id);
+                  return firstString(session, descriptor.sessions.fields.directory);
+                } catch {
+                  // A session the server no longer names records nothing.
+                  return null;
+                }
+              },
+            });
+            recorders.set(sessionId, recorder);
+          }
+          recorder.observe({
+            sessionId,
+            messageId,
+            partId: typeof partId === "string" ? partId : "",
+            tool,
+            filePath: firstString(part, fileChangesFact.filePathPaths),
+            stateKey: typeof stateKey === "string" ? stateKey : null,
+          });
+        }
+      : undefined;
 
   const mapSession = (raw: unknown): SessionSummary => {
     const parentSessionId = firstString(raw, descriptor.sessions.fields.parentSessionId);
@@ -266,7 +314,7 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
               const { done, value } = await reader.read();
               if (done) break;
               for (const event of parse(decoder.decode(value, { stream: true }))) {
-                emitToAgentEvent(event, emit, partKinds, descriptor);
+                emitToAgentEvent(event, emit, partKinds, descriptor, onToolPart);
               }
             }
           } catch (error) {
@@ -322,6 +370,7 @@ function emitToAgentEvent(
   emit: (event: AgentEvent) => void,
   partKinds: Map<string, "text" | "thinking">,
   descriptor: OpenCodeDescriptor,
+  onToolPart?: (sessionId: string, messageId: string, part: unknown) => void,
 ): void {
   const props = event.properties;
   const { events } = descriptor;
@@ -376,6 +425,13 @@ function emitToAgentEvent(
     // older opencode builds put the text delta in this same frame.
     const kind = typeof part?.type === "string" ? events.partSnapshot.kinds[part.type] : undefined;
     if (partId && kind) partKinds.set(partId, kind);
+    // Tool parts carry no text stream, but they are where file changes live:
+    // hand the raw part to the recorder before anything else falls through.
+    if (onToolPart && partId && !kind) {
+      const id = sessionId();
+      const messageId = firstString(props, events.messageIdPaths);
+      if (id && messageId) onToolPart(id, messageId, part);
+    }
 
     const id = sessionId();
     const messageId = firstString(props, events.messageIdPaths);

@@ -33,6 +33,8 @@ export interface BackendsResult {
 export interface BackendCapabilities {
   deleteMessage: boolean;
   attachments: boolean;
+  /** Per-turn file-change recording from tool events (observer sidecar). */
+  fileChanges: boolean;
 }
 
 /**
@@ -61,8 +63,13 @@ export function isBackendId(value: unknown): value is BackendId {
  * its differences migrate to a descriptor too.
  */
 export function backendCapabilities(backend: BackendId): BackendCapabilities {
-  if (backend === "codex") return { deleteMessage: false, attachments: false };
-  return opencodeDescriptor().capabilities;
+  if (backend === "codex") return { deleteMessage: false, attachments: false, fileChanges: false };
+  return {
+    ...opencodeDescriptor().capabilities,
+    // The descriptor's optional fileChanges section is the capability: no
+    // section, no recorder, no card.
+    fileChanges: opencodeDescriptor().fileChanges !== undefined,
+  };
 }
 
 /**

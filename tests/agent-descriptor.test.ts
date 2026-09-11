@@ -29,6 +29,12 @@ describe("bundled opencode descriptor", () => {
     const descriptor = opencodeDescriptor();
     expect(descriptor.kind).toBe("opencode");
     expect(descriptor.capabilities).toEqual({ deleteMessage: true, attachments: true });
+    expect(descriptor.fileChanges).toEqual({
+      tools: ["edit", "write"],
+      stateKeyPath: "state.key",
+      filePathPaths: ["state.input.filePath", "filePath"],
+      doneStates: ["output-available", "error"],
+    });
     expect(descriptor.compat).toEqual({ min: "1.18.0", max: "1.19.0" });
     expect(descriptor.events.partSnapshot.kinds).toEqual({ text: "text", reasoning: "thinking" });
   });
@@ -105,6 +111,35 @@ describe("vocabulary enforcement", () => {
         }),
       ),
     ).toThrow(/expected "text" or "thinking"/);
+  });
+
+  it("rejects an unknown key inside fileChanges", () => {
+    expect(() =>
+      parseOpenCodeDescriptor(
+        drifted((root) => {
+          (root.fileChanges as Record<string, unknown>).edits = ["edit"];
+        }),
+      ),
+    ).toThrowError(/fileChanges: unknown key\(s\) edits/);
+  });
+
+  it("rejects a fileChanges stateKeyPath into a prototype", () => {
+    expect(() =>
+      parseOpenCodeDescriptor(
+        drifted((root) => {
+          (root.fileChanges as Record<string, unknown>).stateKeyPath = "state.__proto__";
+        }),
+      ),
+    ).toThrowError(/bad path segment/);
+  });
+
+  it("accepts a descriptor without the optional fileChanges section", () => {
+    const descriptor = parseOpenCodeDescriptor(
+      drifted((root) => {
+        delete root.fileChanges;
+      }),
+    );
+    expect(descriptor.fileChanges).toBeUndefined();
   });
 
   it("rejects an unknown fork cut strategy", () => {

@@ -2,6 +2,15 @@ import { type IpcMainInvokeEvent, ipcMain, shell } from "electron";
 import { readArchive, setArchived } from "../shared/archive-store.js";
 import { type BackendId, isBackendId } from "../shared/backend.js";
 import { readComposer, writeComposer } from "../shared/composer-store.js";
+import { lineDiff } from "../shared/diff.js";
+import {
+  clearSessionChanges,
+  type FileChangeEntry,
+  findEntry,
+  readSessionChanges,
+  readSnapshotBlob,
+  sessionChangesDir,
+} from "../shared/file-changes.js";
 import { readLineage } from "../shared/lineage-store.js";
 import { isLocalPath } from "../shared/local-path.js";
 import { prunePin, readPins, togglePin } from "../shared/pins-store.js";
@@ -129,6 +138,12 @@ export function registerIpc(registry: BackendRegistry): void {
       const id = storeBackend(backend);
       const adapter = await withAdapter(id);
       await adapter.deleteSession(sessionId);
+      // The file-change sidecar is evidence about a session that no longer
+      // exists; it leaves with the session (best effort — the delete already
+      // succeeded and must not report failure over a sidecar).
+      void clearSessionChanges(sessionChangesDir(registry.fileChangesDir(id), sessionId)).catch(
+        () => {},
+      );
       return prunePin(registry.storePaths(id).pins, sessionId);
     },
   );
@@ -250,6 +265,49 @@ export function registerIpc(registry: BackendRegistry): void {
     "awefork:saveComposer",
     (_event: IpcMainInvokeEvent, backend: BackendId, value: PersistedComposer | null) =>
       writeComposer(registry.storePaths(storeBackend(backend)).composer, value),
+  );
+
+  // ── per-turn file changes (observer sidecar) ─────────────────────────────
+
+  // The whole session index in one read; the pane maps entries onto turns.
+  ipcMain.handle(
+    "awefork:fileChanges",
+    async (_event: IpcMainInvokeEvent, backend: BackendId, sessionId: string) =>
+      readSessionChanges(
+        sessionChangesDir(registry.fileChangesDir(storeBackend(backend)), sessionId),
+      ),
+  );
+
+  /**
+   * The saved diff of one entry, recomputed from its two snapshots — the same
+   * lineDiff that produced the persisted totals, so the expanded view can
+   * never disagree with the collapsed row. Entries without a snapshot pair
+   * (binary/oversized/unknown) resolve to null.
+   */
+  ipcMain.handle(
+    "awefork:fileChangeDiff",
+    async (
+      _event: IpcMainInvokeEvent,
+      backend: BackendId,
+      sessionId: string,
+      messageId: string,
+      path: string,
+    ) => {
+      const sessionDir = sessionChangesDir(
+        registry.fileChangesDir(storeBackend(backend)),
+        sessionId,
+      );
+      const changes = await readSessionChanges(sessionDir);
+      if (!changes) return null;
+      const entry: FileChangeEntry | null = findEntry(changes, messageId, path);
+      if (!entry || entry.before === null || entry.after === null) return null;
+      const [before, after] = await Promise.all([
+        readSnapshotBlob(sessionDir, messageId, entry.before),
+        readSnapshotBlob(sessionDir, messageId, entry.after),
+      ]);
+      if (before === null || after === null) return null;
+      return lineDiff(before, after);
+    },
   );
 
   // ── backend switcher ────────────────────────────────────────────────────

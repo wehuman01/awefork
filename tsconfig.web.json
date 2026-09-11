@@ -28,6 +28,7 @@
     "src/shared/turn-search.ts",
     "src/shared/branch-digest.ts",
     "src/shared/local-path.ts",
+    "src/shared/diff.ts",
     "src/shared/agents/*.json",
     "src/shared/agent-descriptor.ts"
   ]

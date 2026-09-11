@@ -17,6 +17,7 @@ describe("backendCapabilities", () => {
     expect(backendCapabilities("opencode")).toEqual({
       deleteMessage: true,
       attachments: true,
+      fileChanges: true,
     });
   });
 
@@ -24,6 +25,7 @@ describe("backendCapabilities", () => {
     expect(backendCapabilities("codex")).toEqual({
       deleteMessage: false,
       attachments: false,
+      fileChanges: false,
     });
   });
 });

@@ -120,6 +120,19 @@ export interface AgentPartDeltaEvent {
   readonly deltaField: string;
 }
 
+/**
+ * Per-turn file-change recording facts: which tools touch files, where the
+ * state discriminator and the file path live inside a tool part, and which
+ * state values mean the tool finished. Optional — a descriptor without this
+ * section runs with recording off.
+ */
+export interface AgentFileChangesFact {
+  readonly tools: readonly string[];
+  readonly stateKeyPath: string;
+  readonly filePathPaths: readonly string[];
+  readonly doneStates: readonly string[];
+}
+
 export interface AgentEvents {
   /** Frame names that mean "re-read this session". */
   readonly refresh: readonly string[];
@@ -144,6 +157,8 @@ export interface OpenCodeDescriptor {
    * passes the NEXT user message after the fork anchor — "next-user-exclusive".
    */
   readonly fork: { readonly cut: "next-user-exclusive" };
+  /** Present = the adapter records per-turn file changes from tool parts. */
+  readonly fileChanges?: AgentFileChangesFact;
   readonly endpoints: AgentEndpoints;
   readonly sessions: { readonly fields: AgentSessionFields };
   readonly messages: { readonly fields: AgentMessageFields; readonly parts: AgentMessageParts };
@@ -248,7 +263,17 @@ export function parseOpenCodeDescriptor(value: unknown): OpenCodeDescriptor {
   const root = objectAt(value, "agent descriptor");
   onlyKeys(
     root,
-    ["kind", "compat", "capabilities", "fork", "endpoints", "sessions", "messages", "events"],
+    [
+      "kind",
+      "compat",
+      "capabilities",
+      "fork",
+      "fileChanges",
+      "endpoints",
+      "sessions",
+      "messages",
+      "events",
+    ],
     "agent descriptor",
   );
   if (root.kind !== "opencode") {
@@ -273,6 +298,25 @@ export function parseOpenCodeDescriptor(value: unknown): OpenCodeDescriptor {
   onlyKeys(fork, ["cut"], "fork");
   if (fork.cut !== "next-user-exclusive") {
     throw new DescriptorSchemaError(`fork.cut: unknown strategy "${String(fork.cut)}"`);
+  }
+
+  // Optional section: present = file-change recording is on for this backend.
+  let fileChanges: AgentFileChangesFact | undefined;
+  if (root.fileChanges !== undefined) {
+    const changes = objectAt(root.fileChanges, "fileChanges");
+    onlyKeys(changes, ["tools", "stateKeyPath", "filePathPaths", "doneStates"], "fileChanges");
+    const stateKeyPath = stringAt(changes.stateKeyPath, "fileChanges.stateKeyPath");
+    for (const segment of stateKeyPath.split(".")) {
+      if (segment === "" || FORBIDDEN_SEGMENTS.has(segment)) {
+        throw new DescriptorSchemaError(`fileChanges.stateKeyPath: bad path segment "${segment}"`);
+      }
+    }
+    fileChanges = {
+      tools: stringsAt(changes.tools, "fileChanges.tools"),
+      stateKeyPath,
+      filePathPaths: dotPathsAt(changes.filePathPaths, "fileChanges.filePathPaths"),
+      doneStates: stringsAt(changes.doneStates, "fileChanges.doneStates"),
+    };
   }
 
   const endpoints = section(root, "endpoints", "agent descriptor");
@@ -371,6 +415,7 @@ export function parseOpenCodeDescriptor(value: unknown): OpenCodeDescriptor {
     compat: parsedCompat,
     capabilities: parsedCapabilities,
     fork: { cut: "next-user-exclusive" },
+    ...(fileChanges ? { fileChanges } : {}),
     endpoints: parsedEndpoints,
     sessions: { fields: sessionsFields },
     messages: {

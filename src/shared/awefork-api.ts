@@ -4,6 +4,7 @@ import type {
   BackendId,
   BackendsResult,
 } from "./backend.js";
+import type { LineDiffResult } from "./diff.js";
 import type {
   AgentInteractionResponse,
   ArchiveKind,
@@ -14,6 +15,7 @@ import type {
   ModelOption,
   PersistedComposer,
   PromptAttachment,
+  SessionFileChanges,
   SessionSummary,
   TrashEntry,
 } from "./types.js";
@@ -84,6 +86,15 @@ export interface AweforkApi {
   /** The backend's unsent draft + pane model picks (composer.json sidecar). */
   composer(backend: BackendId): Promise<PersistedComposer | null>;
   saveComposer(backend: BackendId, value: PersistedComposer | null): Promise<void>;
+  /** Per-turn file-change index of one session (observer sidecar). */
+  fileChanges(backend: BackendId, sessionId: string): Promise<SessionFileChanges | null>;
+  /** The saved diff of one entry, from its snapshot pair; null when unknown. */
+  fileChangeDiff(
+    backend: BackendId,
+    sessionId: string,
+    messageId: string,
+    path: string,
+  ): Promise<LineDiffResult | null>;
   /** Switcher data: installed probe (--version spawn, no server) + persisted selection. */
   backends(): Promise<BackendsResult>;
   /** Persist a selection; {ok:false,error} when the probe fails so the UI bounces back. */

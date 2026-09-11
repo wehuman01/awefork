@@ -313,10 +313,12 @@ describe("capabilities and store paths", () => {
     expect(registry.capabilities("codex")).toEqual({
       deleteMessage: false,
       attachments: false,
+      fileChanges: false,
     });
     expect(registry.capabilities("opencode")).toEqual({
       deleteMessage: true,
       attachments: true,
+      fileChanges: true,
     });
   });
 

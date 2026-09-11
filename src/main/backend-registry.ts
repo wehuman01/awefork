@@ -36,6 +36,8 @@ export interface BackendRegistry {
   capabilities(backend: BackendId): BackendCapabilities;
   /** Per-backend overlay-store paths (legacy bare files stay on opencode). */
   storePaths(backend: BackendId): StorePaths;
+  /** Root of the per-session file-change sidecar directories. */
+  fileChangesDir(backend: BackendId): string;
   /** Forward every spawned backend's events as tagged envelopes, forever. */
   forward(send: (envelope: BackendEventEnvelope) => void): void;
   dispose(): void;
@@ -69,6 +71,9 @@ export function createBackendRegistry(userDataDir: string): BackendRegistry {
     return paths;
   };
 
+  const fileChangesRoot = (backend: BackendId): string =>
+    join(userDataDir, "file-changes", backend);
+
   const subscribeAdapter = (backend: BackendId, adapter: AgentAdapter): void => {
     void adapter
       .subscribe((event) => {
@@ -88,6 +93,7 @@ export function createBackendRegistry(userDataDir: string): BackendRegistry {
             const adapter = createOpencodeAdapter({
               baseUrl,
               lineagePath: storePaths("opencode").lineage,
+              fileChangesDir: fileChangesRoot("opencode"),
             });
             subscribeAdapter("opencode", adapter);
             return adapter;
@@ -110,6 +116,8 @@ export function createBackendRegistry(userDataDir: string): BackendRegistry {
 
   return {
     get: ensureBackend,
+
+    fileChangesDir: fileChangesRoot,
 
     async listBackends() {
       const [selected, opencode, codexInstalled] = await Promise.all([

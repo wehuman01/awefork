@@ -55,6 +55,7 @@ The idea of treating sessions as a branching graph originates from [PiX](https:/
 - **Thinking effort** — pick the run's reasoning variant (minimal/low/medium/high…) next to the model; canvas cards show `model · variant` for what each turn actually used.
 - **Image attachments** — paste or drop images into either composer (capability-gated per model); sent rows carry 📎 chips.
 - **Retry failed turns** — the ↻ on a failed turn (card or pane header) reopens its prompt prefilled with the original text and model; edit and resend — mid-story turns retry as a fresh fork, the failed original stays untouched.
+- **File changes per turn** — as edit/write tool events stream in, awefork snapshots the touched files on the spot; the turn carries a file card with status, +/− line counts, the saved diff (unchanged by later edits), and an open-file action. Turns that ran outside awefork — forked or offline — say "not recorded" instead of guessing. opencode only.
 - **Continue** — send messages from awefork; replies stream in live. Replying while an older turn is selected branches from that turn.
 - **Canvas** — selecting a turn highlights its full path from the root and dims the rest; fit view, and an always-on minimap with a live viewport rectangle.
 - **Command palette** — ⌘K / Ctrl+K to jump between sessions and fire actions; drag the column handles to resize, double-click to fold.

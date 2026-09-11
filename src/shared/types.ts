@@ -169,6 +169,41 @@ export interface ArchiveState {
   directories: ArchivedDirectoryEntry[];
 }
 
+// ── per-turn file changes (observer sidecar) ─────────────────────────────────
+
+/**
+ * Why a file-change row shows what it shows. "unknown" is the observer
+ * seat's honest answer whenever it cannot produce a truthful pair of
+ * snapshots (mid-run connect, binary, oversized, unreadable).
+ */
+export type FileChangeStatus = "modified" | "created" | "deleted" | "unknown";
+
+/** One file one assistant message touched, with the evidence it kept. */
+export interface FileChangeEntry {
+  /** Absolute path exactly as the agent reported it. */
+  path: string;
+  status: FileChangeStatus;
+  /** Net line totals of this entry's diff; null when unknown. */
+  added: number | null;
+  removed: number | null;
+  /** Short human reason shown when status is "unknown". */
+  note: string | null;
+  /** Snapshot blob names relative to the session dir; null when not captured. */
+  before: string | null;
+  after: string | null;
+}
+
+/**
+ * One session's file-change index (index.json of the sidecar directory).
+ * Entries key on assistant message ids; the pane maps them onto turns.
+ */
+export interface SessionFileChanges {
+  version: 1;
+  /** Tool names the recorder tracks — the renderer's "not recorded" hint. */
+  tools: string[];
+  messages: Record<string, FileChangeEntry[]>;
+}
+
 /**
  * Normalized event feed forwarded to the renderer.
  * Kept intentionally small: the UI only needs to know what changed.

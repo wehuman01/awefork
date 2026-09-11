@@ -1,5 +1,6 @@
 import { getEventListeners } from "node:events";
-import { mkdtemp } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -90,7 +91,13 @@ interface FakeState {
   eventDropMidFrame?: boolean;
 }
 
-function startFakeServer(state: FakeState): Promise<{ server: Server; baseUrl: string }> {
+function startFakeServer(state: FakeState): Promise<{
+  server: Server;
+  baseUrl: string;
+  /** Push a frame onto the live SSE stream (file-change timing tests). */
+  pushEvent: (frame: { type: string; properties: Record<string, unknown> }) => void;
+}> {
+  const sseResponses: import("node:http").ServerResponse[] = [];
   const server = createServer((req, res) => {
     const url = new URL(req.url ?? "/", "http://localhost");
     const body: string[] = [];
@@ -140,6 +147,11 @@ function startFakeServer(state: FakeState): Promise<{ server: Server; baseUrl: s
           return;
         }
         res.writeHead(200, { "content-type": "text/event-stream" });
+        sseResponses.push(res);
+        res.on("close", () => {
+          const at = sseResponses.indexOf(res);
+          if (at >= 0) sseResponses.splice(at, 1);
+        });
         const frames = state.eventFrames ?? [
           { id: "evt-1", type: "session.idle", properties: { sessionID: "s1" } },
         ];
@@ -164,6 +176,19 @@ function startFakeServer(state: FakeState): Promise<{ server: Server; baseUrl: s
       }
 
       const deleteMatch = url.pathname.match(/^\/session\/([^/]+)$/);
+      if (method === "GET" && deleteMatch) {
+        // One session's own row — the file-change recorder resolves the
+        // session's directory (project root) through this endpoint.
+        const id = deleteMatch[1] ?? "";
+        const target = state.sessions.find((s) => s.id === id);
+        if (!target) {
+          res.writeHead(404);
+          res.end(JSON.stringify({ data: { message: `Session not found: ${id}` } }));
+          return;
+        }
+        res.end(JSON.stringify(target));
+        return;
+      }
       if (method === "DELETE" && deleteMatch) {
         const id = deleteMatch[1] ?? "";
         state.deleteCalls.push(id);
@@ -266,7 +291,15 @@ function startFakeServer(state: FakeState): Promise<{ server: Server; baseUrl: s
     server.listen(0, "127.0.0.1", () => {
       const address = server.address();
       const port = typeof address === "object" && address ? address.port : 0;
-      resolve({ server, baseUrl: `http://127.0.0.1:${port}` });
+      resolve({
+        server,
+        baseUrl: `http://127.0.0.1:${port}`,
+        pushEvent: (frame) => {
+          for (const res of sseResponses) {
+            res.write(`data: ${JSON.stringify({ id: "evt-pushed", ...frame })}\n\n`);
+          }
+        },
+      });
     });
   });
 }
@@ -1043,6 +1076,142 @@ describe("opencode adapter", () => {
     await new Promise((resolve) => setTimeout(resolve, 100));
     unsubscribe();
     expect(events).toContainEqual({ type: "session.idle", sessionId: "s1" });
+  });
+});
+
+describe("opencode adapter · file changes", () => {
+  it("records an edit's before/after snapshots from tool part frames", async () => {
+    const base = await mkdtemp(join(tmpdir(), "awefork-fc-"));
+    cleanup.push(() => rm(base, { recursive: true, force: true }));
+    const project = join(base, "proj");
+    await mkdir(project, { recursive: true });
+    const file = join(project, "app.ts");
+    await writeFile(file, "one\ntwo\n");
+
+    const state = baseState();
+    const session = state.sessions.find((s) => s.id === "s1");
+    if (session) session.directory = project;
+    const { server, baseUrl, pushEvent } = await startFakeServer(state);
+    const changesRoot = join(base, "file-changes");
+    const lineagePath = join(base, "lineage.json");
+    cleanup.push(async () => {
+      adapter.dispose();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    });
+    const adapter = createOpencodeAdapter({
+      baseUrl,
+      lineagePath,
+      fileChangesDir: changesRoot,
+    });
+
+    const events: AgentEvent[] = [];
+    const unsubscribe = await adapter.subscribe((event) => events.push(event));
+    try {
+      // The stream's default session.idle frame doubles as the
+      // connection-established signal; pushing before it would write into a
+      // response that does not exist yet.
+      for (let i = 0; i < 40 && events.length === 0; i += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      expect(events.length).toBeGreaterThan(0);
+      // Tool part frames ride the same stream as text parts; the frames are
+      // pushed with real time between them so the recorder's "before" read
+      // lands before the edit does.
+      pushEvent({
+        type: "message.part.updated",
+        properties: {
+          sessionID: "s1",
+          messageID: "a1",
+          part: {
+            id: "t1",
+            type: "tool",
+            tool: "edit",
+            state: { key: "running", input: { filePath: file } },
+          },
+        },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      await writeFile(file, "one\nTWO\nthree\n");
+      pushEvent({
+        type: "message.part.updated",
+        properties: {
+          sessionID: "s1",
+          messageID: "a1",
+          part: {
+            id: "t1",
+            type: "tool",
+            tool: "edit",
+            state: { key: "output-available", input: { filePath: file } },
+          },
+        },
+      });
+
+      const index = join(changesRoot, "s1", "index.json");
+      for (let i = 0; i < 40; i += 1) {
+        if (existsSync(index)) break;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      const recorded = JSON.parse(await readFile(index, "utf8")) as {
+        messages: Record<string, Array<{ path: string; status: string; added: number }>>;
+      };
+      const entry = recorded.messages.a1?.find((e) => e.path === file);
+      expect(entry?.status).toBe("modified");
+      expect(entry?.added).toBe(2);
+      const before = await readFile(join(changesRoot, "s1", "a1", "0.before"), "utf8");
+      const after = await readFile(join(changesRoot, "s1", "a1", "0.after"), "utf8");
+      expect(before).toBe("one\ntwo\n");
+      expect(after).toBe("one\nTWO\nthree\n");
+      // The recorder is invisible on the event wire: tool parts produce no
+      // AgentEvents (the text/thinking snapshots still flow).
+      expect(events).not.toContainEqual(expect.objectContaining({ type: "message.part" }));
+    } finally {
+      unsubscribe();
+    }
+  });
+
+  it("records nothing when the descriptor has no fileChanges section", async () => {
+    const base = await mkdtemp(join(tmpdir(), "awefork-fc-"));
+    cleanup.push(() => rm(base, { recursive: true, force: true }));
+    const file = join(base, "app.ts");
+    await writeFile(file, "one\n");
+
+    const descriptor = parseOpenCodeDescriptor({
+      ...(opencodeDescriptor() as unknown as object),
+      fileChanges: undefined,
+    });
+    const state = baseState();
+    const { server, baseUrl, pushEvent } = await startFakeServer(state);
+    const adapter = createOpencodeAdapter({
+      baseUrl,
+      lineagePath: join(base, "lineage.json"),
+      fileChangesDir: join(base, "file-changes"),
+      descriptor,
+    });
+    cleanup.push(async () => {
+      adapter.dispose();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    });
+
+    const unsubscribe = await adapter.subscribe(() => {});
+    try {
+      pushEvent({
+        type: "message.part.updated",
+        properties: {
+          sessionID: "s1",
+          messageID: "a1",
+          part: {
+            id: "t1",
+            type: "tool",
+            tool: "edit",
+            state: { key: "output-available", input: { filePath: file } },
+          },
+        },
+      });
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(existsSync(join(base, "file-changes"))).toBe(false);
+    } finally {
+      unsubscribe();
+    }
   });
 });
 

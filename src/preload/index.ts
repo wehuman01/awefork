@@ -6,6 +6,7 @@ import type {
   BackendId,
   BackendsResult,
 } from "../shared/backend.js";
+import type { LineDiffResult } from "../shared/diff.js";
 import type {
   AgentInteractionResponse,
   ArchiveKind,
@@ -15,6 +16,7 @@ import type {
   ModelOption,
   PersistedComposer,
   PromptAttachment,
+  SessionFileChanges,
   SessionSummary,
   TrashEntry,
 } from "../shared/types.js";
@@ -89,6 +91,15 @@ const api: AweforkApi = {
     ipcRenderer.invoke("awefork:composer", backend),
   saveComposer: (backend: BackendId, value: PersistedComposer | null): Promise<void> =>
     ipcRenderer.invoke("awefork:saveComposer", backend, value),
+  fileChanges: (backend: BackendId, sessionId: string): Promise<SessionFileChanges | null> =>
+    ipcRenderer.invoke("awefork:fileChanges", backend, sessionId),
+  fileChangeDiff: (
+    backend: BackendId,
+    sessionId: string,
+    messageId: string,
+    path: string,
+  ): Promise<LineDiffResult | null> =>
+    ipcRenderer.invoke("awefork:fileChangeDiff", backend, sessionId, messageId, path),
   backends: (): Promise<BackendsResult> => ipcRenderer.invoke("awefork:backends"),
   selectBackend: (backend: BackendId): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke("awefork:selectBackend", backend),

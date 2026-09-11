@@ -653,7 +653,10 @@ export function installMockAdapter(): void {
       ],
     }),
     selectBackend: async () => ({ ok: true }),
-    capabilities: async () => ({ deleteMessage: true, attachments: true }),
+    capabilities: async () => ({ deleteMessage: true, attachments: true, fileChanges: false }),
+    // The demo has no sidecar recorder; the pane never shows the card here.
+    fileChanges: async () => null,
+    fileChangeDiff: async () => null,
     openExternal: async (url) => {
       window.open(url, "_blank", "noopener");
     },
