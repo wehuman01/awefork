@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.2.0
+
+The timeline learns to stream a run part by part — thinking folded into collapsible Thought blocks — the sidebar grows a favorites shelf, and a round of quiet hardening lands: leaks plugged, watchdogs calmed, and a reused port that must prove it really is opencode.
+
+### Highlights
+
+- **Per-part streaming timeline** — a run no longer melts into one buffer: thinking and reply chunks interleave on the timeline keyed by part id, message.part snapshots reconcile to self-heal gaps, and unknown parts are dropped instead of smearing into their neighbors. Finished reasoning collapses into a Thought block with a title and duration, thinking renders as markdown, and a braille spinner ticks while the model works.
+- **Favorites shelf** — starred sessions gather in their own sidebar shelf as plain bookmarks, while the canvas tells only the selected session's whole story. Esc dismisses a draft without tripping the IME, and delete/archive trade their modal confirmations for undo and toasts.
+- **Leaks unplugged** — panel and canvas drags release their window listeners on unmount, the copy timer clears with its component, and every reconnect builds a fresh SSE parser so a half-frame from a dropped stream can't corrupt the next connection.
+- **One pulse for the watchdogs** — completion watchdogs share a single poll interval; a settled run stops its watch instead of resurrecting itself, and a late `message.started` gets the watch it was missing.
+- **The port proves itself** — before reusing a local port for the bundled opencode server, the app checks that the port really serves an opencode instead of trusting whatever happens to be listening.
+- **Recent, then quiet** — a session that just settled takes a tint that fades over five minutes across the sidebar, canvas cards, and minimap; a still-loading canvas shows a connecting state instead of a false empty one.
+- **The question stays on screen** — switching panes anchors the scroll at the turn's opening prompt (chain context above the fold), and the message list keeps your position when optimistic rows are replaced by real ones.
+
+### Fixes
+
+- **The selected session keeps its directory** — selecting a session now syncs its directory along with its id, instead of leaving the header pointed at the previous folder.
+- **Documented opencode compatibility** — both READMEs now state which opencode versions awefork is built against.
+
+### Install
+
+This release ships notes only — no installers attached yet. Build them yourself with `npm run dist` (unsigned macOS arm64) or `npm run dist:win` (Windows x64); on first launch on macOS, right-click the app and choose Open (or clear the quarantine flag with `xattr -d com.apple.quarantine /Applications/awefork.app`).
+
 ## v0.1.9
 
 v0.1.6 taught `archive.json` to survive racing clicks; this release gives every sidecar the same spine — and the dist folder learns to tidy up after itself.
