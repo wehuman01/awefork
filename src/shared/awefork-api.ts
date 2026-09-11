@@ -5,11 +5,11 @@ import type {
   BackendsResult,
 } from "./backend.js";
 import type {
+  AgentInteractionResponse,
   ArchiveKind,
   ArchiveState,
   ChatMessage,
   ForkRecord,
-  InteractionResponse,
   ModelChoice,
   ModelOption,
   PromptAttachment,
@@ -69,7 +69,7 @@ export interface AweforkApi {
   respondInteraction(
     backend: BackendId,
     requestId: string,
-    response: InteractionResponse,
+    response: AgentInteractionResponse,
   ): Promise<void>;
   renameSession(backend: BackendId, sessionId: string, title: string): Promise<void>;
   pins(backend: BackendId): Promise<string[]>;

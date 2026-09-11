@@ -2,6 +2,8 @@ import { recordFork, removeFork } from "./lineage-store.js";
 import type {
   AgentAdapter,
   AgentEvent,
+  AgentInteractionRequest,
+  AgentInteractionResponse,
   ChatMessage,
   ModelOption,
   PromptAttachment,
@@ -25,6 +27,9 @@ import type {
 export interface CodexRpc {
   request<T = unknown>(method: string, params?: unknown, timeoutMs?: number): Promise<T>;
   setNotificationHandler(handler: (method: string, params: unknown) => void): void;
+  setRequestHandler?: (
+    handler?: (method: string, params: unknown) => unknown | Promise<unknown>,
+  ) => void;
 }
 
 export interface CodexAdapterOptions {
@@ -88,6 +93,17 @@ interface Paginated<T> {
   nextCursor?: string | null;
 }
 
+interface PendingInteraction {
+  method: string;
+  resolve: (result: unknown) => void;
+}
+
+/**
+ * Shared with main's codex-server (its startup banner uses the same line) so
+ * a run-time auth failure and the connect-time banner read identically.
+ */
+export const CODEX_NOT_LOGGED_IN_MESSAGE = "codex 未登录或无可用账号：请先在终端运行 codex login";
+
 const PAGE_LIMIT = 100;
 
 export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
@@ -98,9 +114,37 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
   const activeTurns = new Map<string, string>();
   /** threadId → itemId → containing turn id, rebuilt whenever turns load. */
   const turnIndex = new Map<string, Map<string, string>>();
+  const pendingInteractions = new Map<string, PendingInteraction>();
+  let nextInteractionId = 1;
   let forkFallbackLogged = false;
 
   const emit = (event: AgentEvent) => emitEvent?.(event);
+
+  /**
+   * A failed turn/start may be auth, but the RPC error text can't say which.
+   * Re-read the account: a null account or requiresOpenaiAuth counts as
+   * logged out — say "run codex login" instead of the raw error. No extra
+   * reconnect probing lives here: ensureCodexServer re-probes account/read on
+   * every respawn, so once the user logs in the next codex call spins up a
+   * fresh child whose subscribe re-announces the (now clear) banner.
+   */
+  const authFailureDetail = async (): Promise<string | null> => {
+    try {
+      const account = await client.request<{ account?: unknown; requiresOpenaiAuth?: boolean }>(
+        "account/read",
+        {},
+        10_000,
+      );
+      if (!account?.account || account.requiresOpenaiAuth === true) {
+        return CODEX_NOT_LOGGED_IN_MESSAGE;
+      }
+      return null;
+    } catch (error) {
+      return `${CODEX_NOT_LOGGED_IN_MESSAGE}（${
+        error instanceof Error ? error.message : String(error)
+      }）`;
+    }
+  };
 
   const secToMs = (seconds: number | null | undefined): number | null =>
     typeof seconds === "number" ? seconds * 1000 : null;
@@ -388,13 +432,21 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
         // prompt() resolves, so a swallowed error would leave a phantom run
         // polling for a turn that never started.
         const detail = error instanceof Error ? error.message : String(error);
+        const authDetail = await authFailureDetail();
         emit({
           type: "server.error",
           sessionId,
-          message: `codex prompt failed: ${detail}`,
+          message: authDetail ?? `codex prompt failed: ${detail}`,
         });
         throw error instanceof Error ? error : new Error(detail);
       }
+    },
+
+    async respondInteraction(requestId, response) {
+      const pending = pendingInteractions.get(requestId);
+      if (!pending) return;
+      pendingInteractions.delete(requestId);
+      pending.resolve(interactionReply(pending.method, response));
     },
 
     async abort(sessionId) {
@@ -411,19 +463,40 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
       client.setNotificationHandler((method, params) => {
         emitCodexNotification(method, params, emit, activeTurns);
       });
+      client.setRequestHandler?.((method, params) => {
+        const requestId = `codex-interaction-${nextInteractionId++}`;
+        const request = interactionRequest(requestId, method, params);
+        if (!request) {
+          // Unmappable or malformed params: refuse the request over the wire
+          // AND toast it — a silent refusal would look like a hung turn.
+          emit({
+            type: "server.error",
+            message: `codex 请求了 awefork 无法展示的交互（${method}），已拒绝`,
+          });
+          return Promise.reject(new Error(`awefork 无法处理 codex 请求 ${method}`));
+        }
+        return new Promise<unknown>((resolve) => {
+          pendingInteractions.set(requestId, { method, resolve });
+          emit({ type: "interaction.requested", request });
+        });
+      });
       if (options.authMessage) {
         emit({ type: "server.error", message: options.authMessage });
       }
       return () => {
         stopped.flag = true;
         emitEvent = null;
+        pendingInteractions.clear();
         client.setNotificationHandler(() => {});
+        client.setRequestHandler?.(undefined);
       };
     },
 
     dispose() {
       emitEvent = null;
+      pendingInteractions.clear();
       client.setNotificationHandler(() => {});
+      client.setRequestHandler?.(undefined);
     },
   };
 }
@@ -579,4 +652,127 @@ function reasoningTextOf(item: CodexItem): string {
     typeof part === "string" ? part : (part.text ?? ""),
   );
   return [...content, ...(item.summary ?? [])].join("\n\n").trim();
+}
+
+function interactionRequest(
+  requestId: string,
+  method: string,
+  params: unknown,
+): AgentInteractionRequest | null {
+  const p = (params ?? {}) as Record<string, unknown>;
+  const sessionId = typeof p.threadId === "string" ? p.threadId : null;
+  const reason = typeof p.reason === "string" ? p.reason : undefined;
+  switch (method) {
+    case "item/commandExecution/requestApproval": {
+      const command = typeof p.command === "string" ? p.command : "";
+      if (!command) return null;
+      return {
+        requestId,
+        sessionId,
+        kind: "command-approval",
+        title: "允许执行命令？",
+        detail: reason ?? "Codex 请求执行一条命令。",
+        command,
+        cwd: typeof p.cwd === "string" ? p.cwd : undefined,
+        reason,
+      };
+    }
+    case "item/fileChange/requestApproval":
+      return {
+        requestId,
+        sessionId,
+        kind: "file-approval",
+        title: "允许修改文件？",
+        detail: reason ?? "Codex 请求修改文件。",
+        grantRoot: typeof p.grantRoot === "string" ? p.grantRoot : undefined,
+        reason,
+      };
+    case "item/permissions/requestApproval":
+      return {
+        requestId,
+        sessionId,
+        kind: "permission-approval",
+        title: "允许额外权限？",
+        detail: reason ?? "Codex 请求扩大本回合权限。",
+        requested: permissionSummary(p.permissions),
+        reason,
+      };
+    case "item/tool/requestUserInput": {
+      const questions = Array.isArray(p.questions)
+        ? p.questions.flatMap((question) => {
+            const q = question as Record<string, unknown>;
+            const id = typeof q.id === "string" ? q.id : null;
+            const questionText = typeof q.question === "string" ? q.question : null;
+            if (!id || !questionText) return [];
+            return [
+              {
+                id,
+                header: typeof q.header === "string" ? q.header : "需要你的输入",
+                question: questionText,
+                options: Array.isArray(q.options)
+                  ? q.options.flatMap((option) => {
+                      const o = option as Record<string, unknown>;
+                      return typeof o.label === "string"
+                        ? [
+                            {
+                              label: o.label,
+                              description: typeof o.description === "string" ? o.description : "",
+                            },
+                          ]
+                        : [];
+                    })
+                  : undefined,
+                isSecret: q.isSecret === true,
+              },
+            ];
+          })
+        : [];
+      if (questions.length === 0) return null;
+      return {
+        requestId,
+        sessionId,
+        kind: "user-input",
+        title: "Codex 需要你的输入",
+        detail: reason ?? "",
+        questions,
+      };
+    }
+    case "mcpServer/elicitation/request":
+      return {
+        requestId,
+        sessionId,
+        kind: "mcp-elicitation",
+        title: "MCP 服务请求输入",
+        detail: typeof p.message === "string" ? p.message : (reason ?? ""),
+        serverName: typeof p.serverName === "string" ? p.serverName : "MCP",
+      };
+    default:
+      return null;
+  }
+}
+
+function interactionReply(method: string, response: AgentInteractionResponse): unknown {
+  const allowed = response.decision === "allow";
+  switch (method) {
+    case "item/commandExecution/requestApproval":
+    case "item/fileChange/requestApproval":
+      return { decision: allowed ? "accept" : "decline" };
+    case "item/permissions/requestApproval":
+      return { permissions: allowed ? {} : { fileSystem: null, network: null } };
+    case "item/tool/requestUserInput":
+      return response.decision === "answers" ? { answers: response.answers } : { answers: {} };
+    case "mcpServer/elicitation/request":
+      return { action: allowed ? "accept" : "decline" };
+    default:
+      return { decision: { denied: { rejection: "用户拒绝了该操作" } } };
+  }
+}
+
+function permissionSummary(value: unknown): string[] {
+  if (!value || typeof value !== "object") return ["额外权限"];
+  const permissions = value as Record<string, unknown>;
+  const result: string[] = [];
+  if (permissions.fileSystem) result.push("文件系统访问");
+  if (permissions.network) result.push("网络访问");
+  return result.length > 0 ? result : ["额外权限"];
 }

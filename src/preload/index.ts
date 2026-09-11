@@ -7,10 +7,10 @@ import type {
   BackendsResult,
 } from "../shared/backend.js";
 import type {
+  AgentInteractionResponse,
   ArchiveKind,
   ArchiveState,
   ChatMessage,
-  InteractionResponse,
   ModelChoice,
   ModelOption,
   PromptAttachment,
@@ -64,7 +64,7 @@ const api: AweforkApi = {
   respondInteraction: (
     backend: BackendId,
     requestId: string,
-    response: InteractionResponse,
+    response: AgentInteractionResponse,
   ): Promise<void> =>
     ipcRenderer.invoke("awefork:respondInteraction", backend, requestId, response),
   renameSession: (backend: BackendId, sessionId: string, title: string): Promise<void> =>

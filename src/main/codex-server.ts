@@ -1,12 +1,13 @@
 import { type ChildProcess, execFile, spawn } from "node:child_process";
 import { homedir } from "node:os";
 import { promisify } from "node:util";
+import { CODEX_NOT_LOGGED_IN_MESSAGE } from "../shared/codex-adapter.js";
 import { type CodexJsonRpc, createCodexJsonRpc } from "./codex-jsonrpc.js";
 import { resolveSpawnEnv } from "./opencode-server.js";
 
 const execFileAsync = promisify(execFile);
 
-const NOT_LOGGED_IN_MESSAGE = "codex 未登录或无可用账号：请先在终端运行 codex login";
+const NOT_LOGGED_IN_MESSAGE = CODEX_NOT_LOGGED_IN_MESSAGE;
 
 export interface EnsureCodexServerResult {
   client: CodexJsonRpc;

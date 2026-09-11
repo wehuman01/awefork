@@ -2,8 +2,12 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { type CodexRpc, createCodexAdapter } from "../src/shared/codex-adapter";
-import type { AgentEvent } from "../src/shared/types";
+import {
+  CODEX_NOT_LOGGED_IN_MESSAGE,
+  type CodexRpc,
+  createCodexAdapter,
+} from "../src/shared/codex-adapter";
+import type { AgentEvent, AgentInteractionRequest } from "../src/shared/types";
 
 /**
  * Scripted JSON-RPC stand-in: one handler per method (keyed on params when a
@@ -15,6 +19,7 @@ type RequestHandler = (params: Record<string, unknown>) => unknown;
 function fakeClient(handlers: Record<string, RequestHandler>) {
   const calls: Array<{ method: string; params: unknown }> = [];
   let onNotification: (method: string, params: unknown) => void = () => {};
+  let onRequest: ((method: string, params: unknown) => unknown | Promise<unknown>) | undefined;
   const client: CodexRpc = {
     async request<T>(method: string, params?: unknown): Promise<T> {
       calls.push({ method, params });
@@ -25,12 +30,20 @@ function fakeClient(handlers: Record<string, RequestHandler>) {
     setNotificationHandler(handler) {
       onNotification = handler;
     },
+    setRequestHandler(handler) {
+      onRequest = handler;
+    },
   };
   return {
     client,
     calls,
     callsOf: (method: string) => calls.filter((c) => c.method === method),
     notify: (method: string, params: unknown) => onNotification(method, params),
+    /** Drive a codex server→client request through the adapter's handler. */
+    serverRequest: (method: string, params: unknown): Promise<unknown> => {
+      if (!onRequest) throw new Error("adapter never installed a request handler");
+      return Promise.resolve(onRequest(method, params));
+    },
   };
 }
 
@@ -383,6 +396,8 @@ describe("createCodexAdapter prompt/abort", () => {
       "turn/start": () => {
         throw new Error("Usage limit reached");
       },
+      // A healthy account probe keeps the failure message raw (not auth).
+      "account/read": () => ({ account: { accountId: "acc-1" } }),
     });
     const adapter = createCodexAdapter({ client, lineagePath: await tempLineagePath() });
     const events: AgentEvent[] = [];
@@ -620,5 +635,266 @@ describe("createCodexAdapter unsupported surfaces", () => {
     await adapter.deleteSession("s1");
     expect(callsOf("thread/delete")[0]?.params).toEqual({ threadId: "s1" });
     expect(JSON.parse(await readFile(lineagePath, "utf8"))).toEqual({});
+  });
+});
+
+describe("createCodexAdapter auth recovery", () => {
+  it("says to run codex login when a failed turn/start coincides with no account", async () => {
+    const { client, callsOf } = fakeClient({
+      "turn/start": () => {
+        throw new Error("stream disconnected before headers");
+      },
+      "account/read": () => ({ account: null, requiresOpenaiAuth: true }),
+    });
+    const adapter = createCodexAdapter({ client, lineagePath: await tempLineagePath() });
+    const events: AgentEvent[] = [];
+    adapter.subscribe((event) => events.push(event));
+
+    // The original failure still rejects (no watchdog is armed), but the
+    // toast names the actual problem and the remedy.
+    await expect(adapter.prompt("s1", "hi")).rejects.toThrow("stream disconnected before headers");
+    expect(events).toEqual([
+      {
+        type: "server.error",
+        sessionId: "s1",
+        message: CODEX_NOT_LOGGED_IN_MESSAGE,
+      },
+    ]);
+    expect(callsOf("account/read")).toHaveLength(1);
+  });
+
+  it("keeps the raw failure message when an account is present", async () => {
+    const { client } = fakeClient({
+      "turn/start": () => {
+        throw new Error("thread not found");
+      },
+      "account/read": () => ({ account: { accountId: "acc-1" } }),
+    });
+    const adapter = createCodexAdapter({ client, lineagePath: await tempLineagePath() });
+    const events: AgentEvent[] = [];
+    adapter.subscribe((event) => events.push(event));
+
+    await expect(adapter.prompt("s1", "hi")).rejects.toThrow("thread not found");
+    expect(events).toEqual([
+      { type: "server.error", sessionId: "s1", message: "codex prompt failed: thread not found" },
+    ]);
+  });
+
+  it("wraps the login hint with the probe error when account/read itself fails", async () => {
+    const { client } = fakeClient({
+      "turn/start": () => {
+        throw new Error("boom");
+      },
+    });
+    const adapter = createCodexAdapter({ client, lineagePath: await tempLineagePath() });
+    const events: AgentEvent[] = [];
+    adapter.subscribe((event) => events.push(event));
+
+    await expect(adapter.prompt("s1", "hi")).rejects.toThrow("boom");
+    expect(events).toEqual([
+      {
+        type: "server.error",
+        sessionId: "s1",
+        message: `${CODEX_NOT_LOGGED_IN_MESSAGE}（no fixture for account/read）`,
+      },
+    ]);
+  });
+});
+
+describe("createCodexAdapter server interactions", () => {
+  async function interactionFixture() {
+    const fake = fakeClient({});
+    const adapter = createCodexAdapter({
+      client: fake.client,
+      lineagePath: await tempLineagePath(),
+    });
+    const events: AgentEvent[] = [];
+    const unsubscribe = await adapter.subscribe((event) => events.push(event));
+    const requested = () =>
+      events
+        .filter(
+          (event): event is Extract<AgentEvent, { type: "interaction.requested" }> =>
+            event.type === "interaction.requested",
+        )
+        .map((event) => event.request);
+    const errors = () =>
+      events.filter(
+        (event): event is Extract<AgentEvent, { type: "server.error" }> =>
+          event.type === "server.error",
+      );
+    return { adapter, fake, unsubscribe, requested, errors };
+  }
+
+  it("normalizes a command approval and writes the user's decision back", async () => {
+    const { adapter, fake, requested } = await interactionFixture();
+    const pending = fake.serverRequest("item/commandExecution/requestApproval", {
+      threadId: "s1",
+      command: "npm test",
+      cwd: "/demo/shop-api",
+      reason: "verify the fix",
+    });
+
+    const [request] = requested();
+    expect(request).toMatchObject({
+      kind: "command-approval",
+      sessionId: "s1",
+      title: "允许执行命令？",
+      command: "npm test",
+      cwd: "/demo/shop-api",
+      reason: "verify the fix",
+    });
+    // The wire reply is the protocol's accept shape; the renderer never sees
+    // the synthetic requestId and the JSON-RPC id stays inside main.
+    adapter.respondInteraction(request.requestId, { decision: "allow" });
+    await expect(pending).resolves.toEqual({ decision: "accept" });
+  });
+
+  it("declines a file approval and surfaces the requested grant root", async () => {
+    const { adapter, fake, requested } = await interactionFixture();
+    const pending = fake.serverRequest("item/fileChange/requestApproval", {
+      threadId: "s1",
+      grantRoot: "/demo/shop-api",
+      reason: "patch login.ts",
+    });
+
+    const [request] = requested();
+    expect(request).toMatchObject({
+      kind: "file-approval",
+      sessionId: "s1",
+      grantRoot: "/demo/shop-api",
+      reason: "patch login.ts",
+    });
+    adapter.respondInteraction(request.requestId, { decision: "deny" });
+    await expect(pending).resolves.toEqual({ decision: "decline" });
+  });
+
+  it("maps permission approvals: deny nulls every scope, allow grants this turn only", async () => {
+    const { adapter, fake, requested, unsubscribe } = await interactionFixture();
+    const denyPending = fake.serverRequest("item/permissions/requestApproval", {
+      threadId: "s1",
+      permissions: { fileSystem: { read: ["."] }, network: true },
+      reason: "fetch deps",
+    });
+    const [request] = requested();
+    expect(request).toMatchObject({
+      kind: "permission-approval",
+      requested: ["文件系统访问", "网络访问"],
+    });
+    adapter.respondInteraction(request.requestId, { decision: "deny" });
+    await expect(denyPending).resolves.toEqual({
+      permissions: { fileSystem: null, network: null },
+    });
+
+    const allowPending = fake.serverRequest("item/permissions/requestApproval", {
+      threadId: "s1",
+      permissions: { network: true },
+    });
+    const requests = requested();
+    const second = requests[requests.length - 1];
+    adapter.respondInteraction(second.requestId, { decision: "allow" });
+    await expect(allowPending).resolves.toEqual({ permissions: {} });
+    unsubscribe();
+  });
+
+  it("normalizes tool questions and submits the collected answers", async () => {
+    const { adapter, fake, requested } = await interactionFixture();
+    const pending = fake.serverRequest("item/tool/requestUserInput", {
+      threadId: "s1",
+      questions: [
+        {
+          id: "q1",
+          header: "数据库",
+          question: "用哪个迁移策略？",
+          options: [{ label: "expand-contract" }, { label: "直接重写" }],
+        },
+        { id: "q2", question: "API token？", isSecret: true },
+      ],
+    });
+
+    const [request] = requested();
+    expect(request?.kind).toBe("user-input");
+    if (request?.kind !== "user-input") throw new Error("unreachable");
+    expect(request.questions).toEqual([
+      {
+        id: "q1",
+        header: "数据库",
+        question: "用哪个迁移策略？",
+        options: [
+          { label: "expand-contract", description: "" },
+          { label: "直接重写", description: "" },
+        ],
+        isSecret: false,
+      },
+      {
+        id: "q2",
+        header: "需要你的输入",
+        question: "API token？",
+        options: undefined,
+        isSecret: true,
+      },
+    ]);
+    adapter.respondInteraction(request.requestId, {
+      decision: "answers",
+      answers: { q1: "expand-contract", q2: "sk-123" },
+    });
+    await expect(pending).resolves.toEqual({
+      answers: { q1: "expand-contract", q2: "sk-123" },
+    });
+  });
+
+  it("accepts and declines MCP elicitation requests", async () => {
+    const { adapter, fake, requested } = await interactionFixture();
+    const pending = fake.serverRequest("mcpServer/elicitation/request", {
+      serverName: "aweshelf",
+      message: "允许读取书架数据？",
+    });
+
+    const [request] = requested();
+    expect(request).toMatchObject({
+      kind: "mcp-elicitation",
+      serverName: "aweshelf",
+      detail: "允许读取书架数据？",
+    });
+    adapter.respondInteraction(request.requestId, { decision: "allow" });
+    await expect(pending).resolves.toEqual({ action: "accept" });
+
+    const secondPending = fake.serverRequest("mcpServer/elicitation/request", {
+      serverName: "aweshelf",
+      message: "再来一次",
+    });
+    const requests = requested();
+    const second = requests[requests.length - 1];
+    adapter.respondInteraction(second.requestId, { decision: "deny" });
+    await expect(secondPending).resolves.toEqual({ action: "decline" });
+  });
+
+  it("refuses an unmappable request with a visible error and never hangs the turn", async () => {
+    const { fake, requested, errors } = await interactionFixture();
+    const pending = fake.serverRequest("item/commandExecution/requestApproval", {
+      threadId: "s1",
+      // A command approval without a command cannot be displayed safely.
+    });
+    await expect(pending).rejects.toThrow("awefork 无法处理 codex 请求");
+    expect(requested()).toHaveLength(0);
+    expect(errors()).toHaveLength(1);
+    expect(errors()[0]?.message).toContain("item/commandExecution/requestApproval");
+  });
+
+  it("ignores replies for unknown request ids and stops after unsubscribe", async () => {
+    const { adapter, fake, unsubscribe } = await interactionFixture();
+    // Unknown id: a no-op, not a crash (the request may have timed out or the
+    // dialog may have been cleaned up by an idle event).
+    await adapter.respondInteraction("codex-interaction-999", { decision: "deny" });
+
+    const pending = fake.serverRequest("item/fileChange/requestApproval", {
+      threadId: "s1",
+      reason: "edit",
+    });
+    unsubscribe();
+    // Teardown drops every pending interaction; a late reply is a no-op.
+    await adapter.respondInteraction("codex-interaction-1", { decision: "allow" });
+    await expect(
+      Promise.race([pending, new Promise((resolve) => setTimeout(resolve, 20))]),
+    ).resolves.toBeUndefined();
   });
 });

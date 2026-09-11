@@ -5,8 +5,8 @@ import { readLineage } from "../shared/lineage-store.js";
 import { prunePin, readPins, togglePin } from "../shared/pins-store.js";
 import { addTrashEntry, readTrash, removeTrashEntry } from "../shared/trash-store.js";
 import type {
+  AgentInteractionResponse,
   ArchiveKind,
-  InteractionResponse,
   ModelChoice,
   PromptAttachment,
 } from "../shared/types.js";
@@ -163,7 +163,7 @@ export function registerIpc(registry: BackendRegistry): void {
       _event: IpcMainInvokeEvent,
       backend: BackendId,
       requestId: string,
-      response: InteractionResponse,
+      response: AgentInteractionResponse,
     ) => {
       const adapter = await withAdapter(storeBackend(backend));
       await adapter.respondInteraction(requestId, response);

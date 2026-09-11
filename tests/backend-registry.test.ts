@@ -44,6 +44,7 @@ function failingCodexClient(): CodexJsonRpc {
   return {
     request: vi.fn().mockRejectedValue(new Error("offline")),
     setNotificationHandler: vi.fn(),
+    setRequestHandler: vi.fn(),
     dispose: vi.fn(),
   };
 }
@@ -255,5 +256,62 @@ describe("dispose", () => {
     });
     await registry.get("codex");
     expect(mocks.ensureCodexServer).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("interaction replies route by backend", () => {
+  it("lands a codex interaction reply on the codex adapter's pending request", async () => {
+    let onRequest: ((method: string, params: unknown) => Promise<unknown>) | null = null;
+    const client: CodexJsonRpc = {
+      request: vi.fn().mockResolvedValue({}),
+      setNotificationHandler: vi.fn(),
+      setRequestHandler: vi.fn((handler: typeof onRequest) => {
+        onRequest = handler;
+      }),
+      dispose: vi.fn(),
+    };
+    mocks.ensureCodexServer.mockResolvedValue({
+      client,
+      version: "0.154.0",
+      authMessage: null,
+    });
+    const envelopes: BackendEventEnvelope[] = [];
+    registry.forward((envelope) => envelopes.push(envelope));
+
+    // Subscribe installs the request handler.
+    const adapter = await registry.get("codex");
+    if (!onRequest) throw new Error("adapter never installed a request handler");
+    const pending = onRequest("item/commandExecution/requestApproval", {
+      threadId: "s1",
+      command: "npm test",
+    });
+
+    // The IPC layer resolves the same cached adapter by backend argument and
+    // forwards the reply; the synthetic requestId never touches the wire id.
+    const routed = await registry.get("codex");
+    const requested = envelopes.find((envelope) => envelope.event.type === "interaction.requested");
+    if (requested?.event.type !== "interaction.requested") throw new Error("no request event");
+    await routed.respondInteraction(requested.event.request.requestId, { decision: "allow" });
+    await expect(pending).resolves.toEqual({ decision: "accept" });
+  });
+
+  it("treats a reply for an unknown request id as a no-op, not an error", async () => {
+    mocks.ensureCodexServer.mockResolvedValue({
+      client: failingCodexClient(),
+      version: null,
+      authMessage: null,
+    });
+    const adapter = await registry.get("codex");
+    await expect(
+      adapter.respondInteraction("codex-interaction-404", { decision: "deny" }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("keeps opencode's interaction responder an explicit unsupported error", async () => {
+    mocks.ensureOpencodeServer.mockResolvedValue({ baseUrl: "http://127.0.0.1:1" });
+    const adapter = await registry.get("opencode");
+    await expect(adapter.respondInteraction("any", { decision: "deny" })).rejects.toThrow(
+      "opencode has no server-originated interactions to answer",
+    );
   });
 });

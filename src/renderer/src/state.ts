@@ -25,6 +25,8 @@ import { searchTurns, type TurnSearchHit } from "../../shared/turn-search";
 import { buildTurns, type Turn, turnMessageRange } from "../../shared/turns";
 import type {
   AgentEvent,
+  AgentInteractionRequest,
+  AgentInteractionResponse,
   ArchiveState,
   ChatMessage,
   ForkRecord,
@@ -121,6 +123,10 @@ interface AppState {
    */
   backgroundRuns: Record<string, BackendRunState>;
   actionError: string | null;
+  /** Pending Codex approvals/inputs, partitioned so background runs survive a switch. */
+  interactions: Record<string, AgentInteractionRequest[]>;
+  /** interactionKey → epoch ms when that request auto-denies (drives the countdown). */
+  interactionDeadlines: Record<string, number>;
   draft: DraftState | null;
   /** True while the draft's fork+prompt round-trip is in flight. */
   draftSending: boolean;
@@ -180,6 +186,8 @@ const state = reactive<AppState>({
     codex: { running: {}, streams: {}, recent: {} },
   },
   actionError: null,
+  interactions: { opencode: [], codex: [] },
+  interactionDeadlines: {},
   composerFocusRequest: null,
   draft: null,
   draftSending: false,
@@ -582,6 +590,9 @@ interface CompletionWatch {
 }
 
 const completionWatches = new Map<string, CompletionWatch>();
+const interactionTimers = new Map<string, ReturnType<typeof setTimeout>>();
+/** Mirrors main's JSON-RPC safe-reply deadline; exported for the countdown UI. */
+export const INTERACTION_TIMEOUT_MS = 30_000;
 const WATCH_INTERVAL_MS = 1500;
 // Give up after ~4 minutes with no completion AND no liveness sign — every
 // delta resets the ticks, and so does any poll that observes the message list
@@ -1000,6 +1011,68 @@ async function finishRun(backend: BackendId, sessionId: string): Promise<void> {
   if (backend === state.activeBackend) void refreshSessions();
 }
 
+function interactionKey(backend: BackendId, requestId: string): string {
+  return `${backend}:${requestId}`;
+}
+
+/** Remove one queued request (and its auto-deny timer) without replying. */
+function dropInteraction(backend: BackendId, requestId: string): void {
+  const key = interactionKey(backend, requestId);
+  const timer = interactionTimers.get(key);
+  if (timer) clearTimeout(timer);
+  interactionTimers.delete(key);
+  delete state.interactionDeadlines[key];
+  state.interactions[backend] = (state.interactions[backend] ?? []).filter(
+    (item) => item.requestId !== requestId,
+  );
+}
+
+/**
+ * A settled session (idle or failed run) or a dead server makes its queued
+ * requests moot — the JSON-RPC layer already safe-replied them (30s guard) or
+ * the connection is gone. Drop them so no dialog outlives its turn; the
+ * adapter side resolves orphans as no-ops, so no stray reply is needed here.
+ */
+function dropSessionInteractions(backend: BackendId, sessionId?: string): void {
+  for (const item of state.interactions[backend] ?? []) {
+    if (!sessionId || item.sessionId === sessionId) dropInteraction(backend, item.requestId);
+  }
+}
+
+export function respondInteraction(
+  // Only the id travels back over IPC; the request object itself stays
+  // renderer-local (deep-readonly straight out of the store).
+  request: { readonly requestId: string },
+  response: AgentInteractionResponse,
+): void {
+  const backend = state.activeBackend;
+  dropInteraction(backend, request.requestId);
+  void window.awefork.respondInteraction(backend, request.requestId, response).catch((error) => {
+    state.actionError = error instanceof Error ? error.message : String(error);
+  });
+}
+
+function queueInteraction(backend: BackendId, request: AgentInteractionRequest): void {
+  const key = interactionKey(backend, request.requestId);
+  const existing = state.interactions[backend] ?? [];
+  if (existing.some((item) => item.requestId === request.requestId)) return;
+  state.interactions[backend] = [...existing, request];
+  state.interactionDeadlines[key] = Date.now() + INTERACTION_TIMEOUT_MS;
+  interactionTimers.set(
+    key,
+    setTimeout(() => {
+      // An explicit reply or cleanup already removed it; this timer is stale.
+      if (
+        !(state.interactions[backend] ?? []).some((item) => item.requestId === request.requestId)
+      ) {
+        return;
+      }
+      dropInteraction(backend, request.requestId);
+      void window.awefork.respondInteraction(backend, request.requestId, { decision: "deny" });
+    }, INTERACTION_TIMEOUT_MS),
+  );
+}
+
 /**
  * Route one envelope to its backend's partition. Events from the off-screen
  * backend keep its parked run state and watchdogs moving (so a switch back
@@ -1012,6 +1085,10 @@ function handleEnvelope(envelope: BackendEventEnvelope): void {
 
 function handleEvent(backend: BackendId, event: AgentEvent): void {
   switch (event.type) {
+    case "interaction.requested": {
+      queueInteraction(backend, event.request);
+      break;
+    }
     case "session.updated": {
       // A single run emits several of these; coalesce into one refresh.
       if (backend === state.activeBackend) scheduleRefresh();
@@ -1071,6 +1148,9 @@ function handleEvent(backend: BackendId, event: AgentEvent): void {
     }
     case "session.idle": {
       stopWatch(backend, event.sessionId);
+      // The turn finished, so any queued approval/input it blocked on is gone
+      // (codex only ends a turn after its server requests resolve or time out).
+      dropSessionInteractions(backend, event.sessionId);
       void finishRun(backend, event.sessionId);
       break;
     }
@@ -1093,6 +1173,7 @@ function handleEvent(backend: BackendId, event: AgentEvent): void {
       if (event.sessionId) {
         stopWatch(backend, event.sessionId);
         settleRun(backend, event.sessionId);
+        dropSessionInteractions(backend, event.sessionId);
         if (backend === state.activeBackend) {
           // Reload so the optimistic local prompt row disappears if the
           // request never reached the server, and a mid-flight failure's ⚠
@@ -1100,6 +1181,10 @@ function handleEvent(backend: BackendId, event: AgentEvent): void {
           void loadSessionMessages(event.sessionId);
           void refreshSessions();
         }
+      } else {
+        // Connection-level failure: this backend's queued requests can no
+        // longer be answered meaningfully — take their dialogs down too.
+        dropSessionInteractions(backend);
       }
       break;
     }

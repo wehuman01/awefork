@@ -18,16 +18,23 @@ interface PendingEntry {
   reject: (reason: Error) => void;
 }
 
+export type CodexRequestHandler = (method: string, params: unknown) => unknown | Promise<unknown>;
+
 export interface CodexJsonRpcOptions {
   onNotification: (method: string, params: unknown) => void;
   /** Fired once when the stream ends, errors, or the client is disposed. */
   onDisconnect?: () => void;
+  /** Handles server→client requests after the adapter has subscribed. */
+  onRequest?: CodexRequestHandler;
+  /** Safe-reply deadline for a server request. */
+  requestTimeoutMs?: number;
 }
 
 export interface CodexJsonRpc {
   request<T = unknown>(method: string, params?: unknown, timeoutMs?: number): Promise<T>;
   /** Replace the notification handler (the adapter installs its own post-handshake). */
   setNotificationHandler(handler: (method: string, params: unknown) => void): void;
+  setRequestHandler(handler?: CodexRequestHandler): void;
   dispose(): void;
 }
 
@@ -40,28 +47,18 @@ interface RpcFrame {
   error?: { code?: number; message?: string; data?: unknown };
 }
 
-/** Reason sent with every deny decision so codex logs why it was refused. */
-const APPROVAL_DENIED_REASON = "awefork has no approval UI; request denied";
-
-/**
- * Server→client requests answered without a user in the loop. v1 has no
- * approval UI, so every approval is explicitly denied: a well-formed denial
- * (rather than an error reply) lets the agent finish the turn and report the
- * refusal. Method names and decision shapes verified against the codex
- * 0.154 app-server schema.
- */
-const REQUEST_REPLIES: Record<string, () => unknown> = {
-  // New approval API (turns started via turn/start) — decision enum.
-  "item/commandExecution/requestApproval": () => ({ decision: "decline" }),
-  "item/fileChange/requestApproval": () => ({ decision: "decline" }),
-  // Legacy approval methods (deprecated send APIs) — ReviewDecision shape.
-  execCommandApproval: () => ({
-    decision: { denied: { rejection: APPROVAL_DENIED_REASON } },
-  }),
-  applyPatchApproval: () => ({
-    decision: { denied: { rejection: APPROVAL_DENIED_REASON } },
-  }),
+/** Safe replies verified against the Codex 0.154 app-server schema. */
+const SAFE_REPLIES: Record<string, unknown> = {
+  "item/commandExecution/requestApproval": { decision: "decline" },
+  "item/fileChange/requestApproval": { decision: "decline" },
+  "item/permissions/requestApproval": { permissions: { fileSystem: null, network: null } },
+  "mcpServer/elicitation/request": { action: "decline" },
+  execCommandApproval: { decision: { denied: { rejection: "用户拒绝了该操作" } } },
+  applyPatchApproval: { decision: { denied: { rejection: "用户拒绝了该操作" } } },
 };
+
+const KNOWN_REQUESTS = new Set([...Object.keys(SAFE_REPLIES), "item/tool/requestUserInput"]);
+const REQUEST_TIMEOUT_MS = 30_000;
 
 export function createCodexJsonRpc(
   stdin: { write(chunk: string | Uint8Array): boolean },
@@ -73,6 +70,8 @@ export function createCodexJsonRpc(
   let buffer = "";
   let disconnected = false;
   let notify = options.onNotification;
+  let handleRequest = options.onRequest;
+  const requestTimeoutMs = options.requestTimeoutMs ?? REQUEST_TIMEOUT_MS;
 
   const notifyDisconnect = () => {
     if (disconnected) return;
@@ -92,11 +91,40 @@ export function createCodexJsonRpc(
     stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, result })}\n`);
   };
 
-  const replyError = (id: number | string, message: string) => {
-    // A server→client request left unanswered would hang the agent (it waits
-    // on approval replies); answering with an error lets it fail the request
-    // and end the turn visibly.
-    stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32601, message } })}\n`);
+  const replyError = (id: number | string, code: number, message: string) => {
+    stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, error: { code, message } })}\n`);
+  };
+
+  const safeReply = (method: string) => SAFE_REPLIES[method];
+
+  const handleServerRequest = (id: number | string, method: string, params: unknown) => {
+    if (!KNOWN_REQUESTS.has(method)) {
+      replyError(id, -32601, `awefork does not handle ${method}`);
+      return;
+    }
+    if (!handleRequest) {
+      const fallback = safeReply(method);
+      if (fallback === undefined) replyError(id, -32000, "awefork 未获得用户输入，请求已取消");
+      else replyResult(id, fallback);
+      return;
+    }
+    let settled = false;
+    const finish = (result: unknown, error?: unknown) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (error) replyError(id, -32000, error instanceof Error ? error.message : String(error));
+      else replyResult(id, result);
+    };
+    const timer = setTimeout(() => {
+      const fallback = safeReply(method);
+      if (fallback === undefined) finish(null, "awefork 未获得用户输入，请求已超时");
+      else finish(fallback);
+    }, requestTimeoutMs);
+    Promise.resolve(handleRequest(method, params)).then(
+      (result) => finish(result ?? {}),
+      (error) => finish(null, error),
+    );
   };
 
   const handleLine = (line: string) => {
@@ -110,9 +138,7 @@ export function createCodexJsonRpc(
     }
     if (typeof frame.method === "string") {
       if (frame.id !== undefined && frame.id !== null) {
-        const reply = REQUEST_REPLIES[frame.method];
-        if (reply) replyResult(frame.id, reply());
-        else replyError(frame.id, `awefork does not handle ${frame.method}`);
+        handleServerRequest(frame.id, frame.method, frame.params ?? null);
       }
       notify(frame.method, frame.params ?? null);
       return;
@@ -169,6 +195,9 @@ export function createCodexJsonRpc(
     },
     setNotificationHandler(handler: (method: string, params: unknown) => void) {
       notify = handler;
+    },
+    setRequestHandler(handler?: CodexRequestHandler) {
+      handleRequest = handler;
     },
     dispose() {
       notifyDisconnect();

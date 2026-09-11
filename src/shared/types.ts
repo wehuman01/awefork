@@ -191,8 +191,6 @@ export type AgentEvent =
    */
   | { type: "server.reconnected" };
 
-| { type: "server.reconnected" };
-
 /**
  * A question the backend wants answered while a run is in flight; shipped in
  * an `AgentInteractionRequest` of kind `"user-input"`. `options` narrow the

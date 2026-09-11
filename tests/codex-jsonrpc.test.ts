@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createCodexJsonRpc, splitLines } from "../src/main/codex-jsonrpc";
 
 /**
@@ -132,7 +132,7 @@ describe("createCodexJsonRpc", () => {
     rpc.dispose();
   });
 
-  it("answers unknown server→client requests with an explicit error reply so codex never blocks", async () => {
+  it("answers unknown server→client requests with an explicit -32601 so codex never blocks", async () => {
     const { stdin, stdout, written } = fakeStreams();
     const rpc = createCodexJsonRpc(stdin, stdout, { onNotification: () => {} });
     stdout.emit(
@@ -140,19 +140,203 @@ describe("createCodexJsonRpc", () => {
       `${JSON.stringify({
         jsonrpc: "2.0",
         id: 7,
-        method: "item/tool/requestUserInput",
-        params: { questions: [] },
+        method: "currentTime/read",
+        params: {},
       })}\n`,
     );
-    const reply = JSON.parse(written[0] ?? "{}");
-    expect(reply).toMatchObject({
+    expect(JSON.parse(written[0] ?? "{}")).toEqual({
+      jsonrpc: "2.0",
       id: 7,
-      error: { code: -32601, message: "awefork does not handle item/tool/requestUserInput" },
+      error: { code: -32601, message: "awefork does not handle currentTime/read" },
     });
     rpc.dispose();
   });
 
-  it("declines new-API approval requests (turn/start turns) with a deny decision", async () => {
+  it("falls back to the safe reply for every supported request when no handler is installed", async () => {
+    const { stdin, stdout, written } = fakeStreams();
+    const rpc = createCodexJsonRpc(stdin, stdout, { onNotification: () => {} });
+    const requests: Array<[string, number]> = [
+      ["item/commandExecution/requestApproval", 1],
+      ["item/fileChange/requestApproval", 2],
+      ["item/permissions/requestApproval", 3],
+      ["mcpServer/elicitation/request", 4],
+      ["execCommandApproval", 5],
+      ["applyPatchApproval", 6],
+      ["item/tool/requestUserInput", 7],
+    ];
+    for (const [method, id] of requests) {
+      stdout.emit("data", `${JSON.stringify({ jsonrpc: "2.0", id, method, params: {} })}\n`);
+    }
+    const replies = written.map((chunk) => JSON.parse(chunk));
+    // Exact wire shapes verified against the codex 0.154 app-server schema.
+    // Denials keep the turn running (the agent reports the refusal); they are
+    // never default-approvals and never silent hangs.
+    expect(replies[0]).toEqual({ jsonrpc: "2.0", id: 1, result: { decision: "decline" } });
+    expect(replies[1]).toEqual({ jsonrpc: "2.0", id: 2, result: { decision: "decline" } });
+    expect(replies[2]).toEqual({
+      jsonrpc: "2.0",
+      id: 3,
+      result: { permissions: { fileSystem: null, network: null } },
+    });
+    expect(replies[3]).toEqual({ jsonrpc: "2.0", id: 4, result: { action: "decline" } });
+    expect(replies[4]).toEqual({
+      jsonrpc: "2.0",
+      id: 5,
+      result: { decision: { denied: { rejection: "用户拒绝了该操作" } } },
+    });
+    expect(replies[5]).toEqual({
+      jsonrpc: "2.0",
+      id: 6,
+      result: { decision: { denied: { rejection: "用户拒绝了该操作" } } },
+    });
+    // User input has no safe default value — an explicit error cancels it.
+    expect(replies[6]).toEqual({
+      jsonrpc: "2.0",
+      id: 7,
+      error: { code: -32000, message: "awefork 未获得用户输入，请求已取消" },
+    });
+    rpc.dispose();
+  });
+
+  it("delivers supported requests to the installed handler and replies with its value", async () => {
+    const { stdin, stdout, written } = fakeStreams();
+    const rpc = createCodexJsonRpc(stdin, stdout, { onNotification: () => {} });
+    const seen: Array<[string, unknown]> = [];
+    rpc.setRequestHandler((method, params) => {
+      seen.push([method, params]);
+      return method === "item/tool/requestUserInput"
+        ? { answers: { q1: "蓝色" } }
+        : { decision: "accept" };
+    });
+    stdout.emit(
+      "data",
+      `${JSON.stringify({
+        jsonrpc: "2.0",
+        id: 11,
+        method: "item/commandExecution/requestApproval",
+        params: { threadId: "t1", command: "npm test" },
+      })}\n`,
+    );
+    stdout.emit(
+      "data",
+      `${JSON.stringify({
+        jsonrpc: "2.0",
+        id: 12,
+        method: "item/tool/requestUserInput",
+        params: { questions: [{ id: "q1", question: "选哪个？" }] },
+      })}\n`,
+    );
+    // Handler replies land on a microtask; let both frames flush.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    const replies = written.map((chunk) => JSON.parse(chunk));
+    expect(replies[0]).toEqual({ jsonrpc: "2.0", id: 11, result: { decision: "accept" } });
+    expect(replies[1]).toEqual({ jsonrpc: "2.0", id: 12, result: { answers: { q1: "蓝色" } } });
+    expect(seen).toEqual([
+      ["item/commandExecution/requestApproval", { threadId: "t1", command: "npm test" }],
+      ["item/tool/requestUserInput", { questions: [{ id: "q1", question: "选哪个？" }] }],
+    ]);
+    rpc.dispose();
+  });
+
+  it("replies with an error when the handler rejects an unmappable request", async () => {
+    const { stdin, stdout, written } = fakeStreams();
+    const rpc = createCodexJsonRpc(stdin, stdout, { onNotification: () => {} });
+    rpc.setRequestHandler(() => Promise.reject(new Error("awefork 无法处理 codex 请求 x")));
+    stdout.emit(
+      "data",
+      `${JSON.stringify({
+        jsonrpc: "2.0",
+        id: 13,
+        method: "item/permissions/requestApproval",
+        params: {},
+      })}\n`,
+    );
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(JSON.parse(written[0] ?? "{}")).toEqual({
+      jsonrpc: "2.0",
+      id: 13,
+      error: { code: -32000, message: "awefork 无法处理 codex 请求 x" },
+    });
+    rpc.dispose();
+  });
+
+  it("safe-replies an approval once the 30s user-input deadline lapses", async () => {
+    vi.useFakeTimers();
+    const { stdin, stdout, written } = fakeStreams();
+    const rpc = createCodexJsonRpc(stdin, stdout, { onNotification: () => {} });
+    rpc.setRequestHandler(() => new Promise<unknown>(() => {}));
+    stdout.emit(
+      "data",
+      `${JSON.stringify({
+        jsonrpc: "2.0",
+        id: 31,
+        method: "item/commandExecution/requestApproval",
+        params: { command: "rm -rf /" },
+      })}\n`,
+    );
+    expect(written).toHaveLength(0);
+    vi.advanceTimersByTime(29_999);
+    expect(written).toHaveLength(0);
+    vi.advanceTimersByTime(1);
+    expect(JSON.parse(written[0] ?? "{}")).toEqual({
+      jsonrpc: "2.0",
+      id: 31,
+      result: { decision: "decline" },
+    });
+    rpc.dispose();
+    vi.useRealTimers();
+  });
+
+  it("cancels a user-input request that outlives the deadline instead of guessing an answer", async () => {
+    vi.useFakeTimers();
+    const { stdin, stdout, written } = fakeStreams();
+    const rpc = createCodexJsonRpc(stdin, stdout, { onNotification: () => {} });
+    rpc.setRequestHandler(() => new Promise<unknown>(() => {}));
+    stdout.emit(
+      "data",
+      `${JSON.stringify({
+        jsonrpc: "2.0",
+        id: 32,
+        method: "item/tool/requestUserInput",
+        params: { questions: [{ id: "q1", question: "？" }] },
+      })}\n`,
+    );
+    vi.advanceTimersByTime(30_000);
+    expect(JSON.parse(written[0] ?? "{}")).toEqual({
+      jsonrpc: "2.0",
+      id: 32,
+      error: { code: -32000, message: "awefork 未获得用户输入，请求已超时" },
+    });
+    rpc.dispose();
+    vi.useRealTimers();
+  });
+
+  it("keeps exactly one reply when the handler resolves after the deadline", async () => {
+    vi.useFakeTimers();
+    const { stdin, stdout, written } = fakeStreams();
+    const rpc = createCodexJsonRpc(stdin, stdout, { onNotification: () => {} });
+    let resolveHandler: (value: unknown) => void = () => {};
+    rpc.setRequestHandler(() => new Promise<unknown>((resolve) => (resolveHandler = resolve)));
+    stdout.emit(
+      "data",
+      `${JSON.stringify({
+        jsonrpc: "2.0",
+        id: 33,
+        method: "item/commandExecution/requestApproval",
+        params: {},
+      })}\n`,
+    );
+    vi.advanceTimersByTime(30_000);
+    resolveHandler({ decision: "accept" });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(written).toHaveLength(1);
+    expect(JSON.parse(written[0] ?? "{}").result).toEqual({ decision: "decline" });
+    rpc.dispose();
+    vi.useRealTimers();
+  });
+
+  it("answers new-API approval requests with the safe decline when nobody is subscribed yet", async () => {
     const { stdin, stdout, written } = fakeStreams();
     const seen: string[] = [];
     const rpc = createCodexJsonRpc(stdin, stdout, {
@@ -198,7 +382,7 @@ describe("createCodexJsonRpc", () => {
     rpc.dispose();
   });
 
-  it("declines legacy approval requests with the ReviewDecision deny shape", async () => {
+  it("answers legacy approval requests with the exact ReviewDecision deny shape", async () => {
     const { stdin, stdout, written } = fakeStreams();
     const rpc = createCodexJsonRpc(stdin, stdout, { onNotification: () => {} });
     stdout.emit(
@@ -220,10 +404,16 @@ describe("createCodexJsonRpc", () => {
       })}\n`,
     );
     const replies = written.map((chunk) => JSON.parse(chunk));
-    expect(replies[0]?.result?.decision?.denied?.rejection).toMatch(/denied/);
-    expect(replies[1]?.result?.decision?.denied?.rejection).toMatch(/denied/);
-    expect(replies[0]?.error).toBeUndefined();
-    expect(replies[1]?.error).toBeUndefined();
+    expect(replies[0]).toEqual({
+      jsonrpc: "2.0",
+      id: 21,
+      result: { decision: { denied: { rejection: "用户拒绝了该操作" } } },
+    });
+    expect(replies[1]).toEqual({
+      jsonrpc: "2.0",
+      id: 22,
+      result: { decision: { denied: { rejection: "用户拒绝了该操作" } } },
+    });
     rpc.dispose();
   });
 
