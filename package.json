@@ -19,6 +19,7 @@
     "lint": "biome check .",
     "format": "biome format --write .",
     "test": "vitest run",
+    "test:gui": "npm run build && node tests/gui-test.mjs",
     "verify": "tsc --noEmit -p tsconfig.node.json && vue-tsc --noEmit -p tsconfig.web.json && biome check . && vitest run"
   },
   "build": {

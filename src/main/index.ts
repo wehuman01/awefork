@@ -8,6 +8,12 @@ import { readBackendSelection } from "./settings-store.js";
 const registry = createBackendRegistry(app.getPath("userData"));
 registerIpc(registry);
 
+// GUI smoke mode (tests/gui-test.mjs): load the demo vite server instead of
+// the built renderer and skip the preload — the renderer then sees no
+// window.awefork and installs its in-memory mock adapter. Packaged builds
+// never honor this, so the demo surface can't leak into a real install.
+const demoMode = !app.isPackaged && process.env.AWEFORK_DEMO === "1";
+
 let mainWindow: BrowserWindow | null = null;
 
 async function createWindow(): Promise<void> {
@@ -18,7 +24,7 @@ async function createWindow(): Promise<void> {
     minHeight: 560,
     title: "awefork",
     webPreferences: {
-      preload: join(__dirname, "../preload/index.js"),
+      preload: demoMode ? undefined : join(__dirname, "../preload/index.js"),
       contextIsolation: true,
       nodeIntegration: false,
       // Load-bearing, not an oversight: the preload is built as ESM
@@ -35,7 +41,9 @@ async function createWindow(): Promise<void> {
     mainWindow = null;
   });
 
-  if (process.env.ELECTRON_RENDERER_URL) {
+  if (demoMode) {
+    await mainWindow.loadURL(process.env.AWEFORK_DEMO_URL ?? "http://127.0.0.1:5180");
+  } else if (process.env.ELECTRON_RENDERER_URL) {
     await mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
   } else {
     await mainWindow.loadFile(join(__dirname, "../renderer/index.html"));
@@ -65,11 +73,14 @@ app.whenReady().then(() => {
   }
   // Spawn only the persisted selection at launch; the other backend stays
   // cold until the user first switches to it (registry.get spawns lazily).
-  void readBackendSelection(join(app.getPath("userData"), "settings.json"))
-    .then((backend) => registry.get(backend))
-    .catch(() => {
-      // Startup failures surface through awefork:ready; nothing to do here.
-    });
+  // Demo mode never spawns a real sidecar — the mock adapter is the backend.
+  if (!demoMode) {
+    void readBackendSelection(join(app.getPath("userData"), "settings.json"))
+      .then((backend) => registry.get(backend))
+      .catch(() => {
+        // Startup failures surface through awefork:ready; nothing to do here.
+      });
+  }
   void createWindow();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) void createWindow();
