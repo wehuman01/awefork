@@ -6,7 +6,7 @@
   <p>
     <a href="./README.md">English</a> ·
     <strong>简体中文</strong> ·
-    <a href="https://www.webioinfo.top/">Webioinfo</a>
+    <a href="https://www.wehuman.top/">Wehuman</a>
   </p>
   <p>
     <a href="https://ko-fi.com/mugpeng"><img src="https://img.shields.io/badge/Ko--fi-Buy%20me%20a%20coffee-FF5E5B?style=flat-square&logo=ko-fi&logoColor=white" alt="Ko-fi"></a>
