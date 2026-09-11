@@ -10,6 +10,7 @@ import type {
   ArchiveKind,
   ArchiveState,
   ChatMessage,
+  InteractionResponse,
   ModelChoice,
   ModelOption,
   PromptAttachment,
@@ -60,6 +61,12 @@ const api: AweforkApi = {
     ipcRenderer.invoke("awefork:prompt", backend, sessionId, text, model, attachments),
   abort: (backend: BackendId, sessionId: string): Promise<void> =>
     ipcRenderer.invoke("awefork:abort", backend, sessionId),
+  respondInteraction: (
+    backend: BackendId,
+    requestId: string,
+    response: InteractionResponse,
+  ): Promise<void> =>
+    ipcRenderer.invoke("awefork:respondInteraction", backend, requestId, response),
   renameSession: (backend: BackendId, sessionId: string, title: string): Promise<void> =>
     ipcRenderer.invoke("awefork:renameSession", backend, sessionId, title),
   pins: (backend: BackendId): Promise<string[]> => ipcRenderer.invoke("awefork:pins", backend),

@@ -589,6 +589,11 @@ export function installMockAdapter(): void {
       timers.delete(sessionId);
       emit({ type: "session.idle", sessionId });
     },
+    respondInteraction: async () => {
+      // The in-memory demo never leaves an interaction pending, so there is
+      // nothing to reply to — the API surface demands the method, and the
+      // demo's no-op keeps the mock a byte-identical AweforkApi.
+    },
     renameSession: async (_backend, sessionId, title) => {
       const def = defs.get(sessionId);
       if (def) def.title = title;

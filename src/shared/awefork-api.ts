@@ -9,6 +9,7 @@ import type {
   ArchiveState,
   ChatMessage,
   ForkRecord,
+  InteractionResponse,
   ModelChoice,
   ModelOption,
   PromptAttachment,
@@ -59,6 +60,17 @@ export interface AweforkApi {
     attachments?: PromptAttachment[],
   ): Promise<void>;
   abort(backend: BackendId, sessionId: string): Promise<void>;
+  /**
+   * Reply to a pending interaction (approval/tool-user-input) the backend is
+   * waiting on. `requestId` is the backend's id for the pending request;
+   * `response` is the approved/denied decision. Backend-first like every
+   * adapter method, so a backend switch can't misroute a reply.
+   */
+  respondInteraction(
+    backend: BackendId,
+    requestId: string,
+    response: InteractionResponse,
+  ): Promise<void>;
   renameSession(backend: BackendId, sessionId: string, title: string): Promise<void>;
   pins(backend: BackendId): Promise<string[]>;
   togglePin(backend: BackendId, sessionId: string): Promise<string[]>;

@@ -170,9 +170,18 @@ export type AgentEvent =
     }
   | { type: "session.idle"; sessionId: string }
   /**
+   * The agent is waiting on the user: an approval, a requested input, or an
+   * MCP server elicitation arrived from the backend mid-run. The renderer
+   * answers through `AgentAdapter.respondInteraction` with the request's
+   * `requestId`. If nobody answers within the backend's safe window the
+   * backend settles the request itself (always a deny/cancel, never an allow)
+   * and emits no further event.
+   */
+  | { type: "interaction.requested"; request: AgentInteractionRequest }
+  /**
    * `sessionId` is set when the failure concerns one session (a failed prompt
    * request, a session.error frame) so the renderer can settle that session's
-   * run right away; connection-level failures carry none.
+   * run right away; background-level failures carry none.
    */
   | { type: "server.error"; message: string; sessionId?: string | null }
   /**
@@ -181,6 +190,95 @@ export type AgentEvent =
    * disconnected was missed.
    */
   | { type: "server.reconnected" };
+
+| { type: "server.reconnected" };
+
+/**
+ * A question the backend wants answered while a run is in flight; shipped in
+ * an `AgentInteractionRequest` of kind `"user-input"`. `options` narrow the
+ * answer to a pick, matching the codex `ToolRequestUserInputQuestion` shape.
+ */
+export interface AgentInteractionQuestion {
+  /** Stable per-request question id; the answer map keys on it. */
+  id: string;
+  /** Short heading the question renders under (e.g. "选一个文件"). */
+  header: string;
+  /** The actual question text the agent needs answered. */
+  question: string;
+  /** Selectable choices when the backend offers a closed set. */
+  options?: Array<{ label: string; description: string }>;
+  /** The reply is sensitive (a secret); renders masked instead of echoed. */
+  isSecret?: boolean;
+}
+
+/**
+ * A server-originated interaction the backend is blocked on. Modelled as a
+ * discriminated union so the renderer renders exactly the fields of the kind
+ * it got. `requestId` is backend-internal and opaque — the renderer echoes it
+ * back verbatim, never peels it apart.
+ */
+export type AgentInteractionRequest =
+  | {
+      requestId: string;
+      sessionId: string | null;
+      kind: "command-approval";
+      title: string;
+      /** The exact command line the agent wants to run. */
+      detail: string;
+      command: string;
+      /** Directory the command would run in, when the backend names one. */
+      cwd?: string;
+      reason?: string;
+    }
+  | {
+      requestId: string;
+      sessionId: string | null;
+      kind: "file-approval";
+      title: string;
+      detail: string;
+      /** Write root the agent asks to unlock for the remainder of the turn. */
+      grantRoot?: string;
+      reason?: string;
+    }
+  | {
+      requestId: string;
+      sessionId: string | null;
+      kind: "permission-approval";
+      title: string;
+      detail: string;
+      /** The scope codex is requesting, human-readable (e.g. "写入 /Users/x/repo"). */
+      requested: string[];
+      reason?: string;
+    }
+  | {
+      requestId: string;
+      sessionId: string | null;
+      kind: "user-input";
+      title: string;
+      detail: string;
+      questions: AgentInteractionQuestion[];
+    }
+  | {
+      requestId: string;
+      sessionId: string | null;
+      kind: "mcp-elicitation";
+      title: string;
+      detail: string;
+      /** The MCP server codex wants to connect to. */
+      serverName: string;
+    };
+
+/**
+ * How the user resolved an `interaction.requested`. The adapter translates
+ * each decision to the backend's wire shape: approvals/elicitations get
+ * allow/deny/cancel; `"answers"` carries the form values for a `"user-input"`
+ * request (question id → one answer or several).
+ */
+export type AgentInteractionResponse =
+  | { decision: "allow" }
+  | { decision: "deny" }
+  | { decision: "cancel" }
+  | { decision: "answers"; answers: Record<string, string | string[]> };
 
 /**
  * The protocol every agent backend implements.
@@ -221,6 +319,13 @@ export interface AgentAdapter {
     model?: ModelChoice | null,
     attachments?: PromptAttachment[],
   ): Promise<void>;
+  /**
+   * Answer a backend interaction surfaced as an `interaction.requested` event.
+   * Resolving an unknown or already-settled `requestId` is a no-op — the
+   * backend already answered with its safe default (deny/cancel), never an
+   * allow. Backends without server-originated interactions reject.
+   */
+  respondInteraction(requestId: string, response: AgentInteractionResponse): Promise<void>;
   abort(sessionId: string): Promise<void>;
   /** Subscribe to the normalized event feed. Returns an unsubscribe function. */
   subscribe(handler: (event: AgentEvent) => void): Promise<() => void>;

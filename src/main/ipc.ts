@@ -4,7 +4,12 @@ import { type BackendId, isBackendId } from "../shared/backend.js";
 import { readLineage } from "../shared/lineage-store.js";
 import { prunePin, readPins, togglePin } from "../shared/pins-store.js";
 import { addTrashEntry, readTrash, removeTrashEntry } from "../shared/trash-store.js";
-import type { ArchiveKind, ModelChoice, PromptAttachment } from "../shared/types.js";
+import type {
+  ArchiveKind,
+  InteractionResponse,
+  ModelChoice,
+  PromptAttachment,
+} from "../shared/types.js";
 import type { BackendRegistry } from "./backend-registry.js";
 import { convertDocumentToText } from "./document-convert.js";
 import { checkForUpdates, openRelease, skipUpdate } from "./update-check.js";
@@ -26,6 +31,8 @@ import { checkForUpdates, openRelease, skipUpdate } from "./update-check.js";
  *   deleteMessage(backend, session, message) -> void (native DELETE)
  *   prompt(backend, id, text, model, attachments?) -> void
  *   abort(backend, id)      -> void                 abort the running turn
+ *   respondInteraction(backend, requestId, response) -> void  reply to a pending
+ *                                                approval/interaction request
  *   renameSession(backend, id, title) -> void
  * Overlay-store channels (per-backend files, no adapter spawn):
  *   pins / togglePin / trash / trashAdd / trashRemove / archive / archiveAdd /
@@ -142,6 +149,24 @@ export function registerIpc(registry: BackendRegistry): void {
     async (_event: IpcMainInvokeEvent, backend: BackendId, sessionId: string) => {
       const adapter = await withAdapter(storeBackend(backend));
       await adapter.abort(sessionId);
+    },
+  );
+
+  // Reply to a pending backend interaction (approval/tool-user-input). The
+  // adapter resolves its pending request by `requestId`, so the renderer
+  // only ever sees the id the backend handed out. Throws when the request
+  // already timed out or the backend never knew it, which surfaces as an
+  // invoke rejection the renderer can settle as a failed reply.
+  ipcMain.handle(
+    "awefork:respondInteraction",
+    async (
+      _event: IpcMainInvokeEvent,
+      backend: BackendId,
+      requestId: string,
+      response: InteractionResponse,
+    ) => {
+      const adapter = await withAdapter(storeBackend(backend));
+      await adapter.respondInteraction(requestId, response);
     },
   );
 
