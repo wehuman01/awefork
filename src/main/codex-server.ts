@@ -46,7 +46,9 @@ interface ServerSlot {
   alive: boolean;
 }
 
-let server: ServerSlot | null = null;
+/** One app-server per codex home (default `~/.codex` + aweswitch accounts). */
+const servers = new Map<string, ServerSlot>();
+const DEFAULT_KEY = "__default__";
 
 /**
  * Spawn `codex app-server` as a child and drive it over stdio JSON-RPC.
@@ -55,20 +57,32 @@ let server: ServerSlot | null = null;
  * detached in its own process group and shutdown kills the whole group
  * (mirroring the `taskkill /T` note in opencode-server.ts for Windows).
  *
- * `onExit` fires once if the child later dies; the registry drops its cached
- * adapter so the next codex call lazily re-spawns a fresh one.
+ * `home` pins the server to one CODEX_HOME: sessions of aweswitch's
+ * per-account homes are invisible to a server on the default home, so each
+ * home gets its own child. `onExit` fires once if the child later dies; the
+ * caller drops its cached adapter so the next call lazily re-spawns.
  */
 export async function ensureCodexServer(
   onExit: () => void = () => {},
   spawnFn: typeof spawn = spawn,
+  home?: string,
 ): Promise<EnsureCodexServerResult> {
-  if (server?.alive) return server.result;
-  stopCodexServer();
+  const key = home ?? DEFAULT_KEY;
+  const existing = servers.get(key);
+  if (existing?.alive) return existing.result;
+  if (existing) stopCodexServer(key);
 
+  const spawnEnv = await resolveSpawnEnv(
+    process.env,
+    homedir(),
+    undefined,
+    process.platform,
+    "codex",
+  );
   const child = spawnFn("codex", ["app-server"], {
     stdio: ["pipe", "pipe", "ignore"],
     cwd: homedir(),
-    env: await resolveSpawnEnv(process.env, homedir(), undefined, process.platform, "codex"),
+    env: home ? { ...spawnEnv, CODEX_HOME: home } : spawnEnv,
     // Own process group on POSIX (see doc comment); the npm .cmd shim needs
     // cmd.exe on Windows, same as the opencode spawn.
     detached: process.platform !== "win32",
@@ -150,7 +164,7 @@ export async function ensureCodexServer(
           error instanceof Error ? error.message : String(error)
         }）`;
       }
-      server = slot;
+      servers.set(key, slot);
       slot.result = {
         client,
         version: parseCliVersion(init?.userAgent),
@@ -174,11 +188,19 @@ export async function ensureCodexServer(
   }
 }
 
-/** Stop the managed codex child (app quit). Safe to call cold. */
-export function stopCodexServer(): void {
-  const current = server;
-  server = null;
-  if (!current || current.child.exitCode !== null) return;
+/** Stop one managed codex child, or every one when no home is given. */
+export function stopCodexServer(home?: string): void {
+  const keys = home === undefined ? [...servers.keys()] : [home ?? DEFAULT_KEY];
+  for (const key of keys) {
+    const current = servers.get(key);
+    if (!current) continue;
+    servers.delete(key);
+    stopSlot(current);
+  }
+}
+
+function stopSlot(current: ServerSlot): void {
+  if (current.child.exitCode !== null) return;
   if (process.platform === "win32" && current.child.pid) {
     spawn("taskkill", ["/pid", String(current.child.pid), "/T", "/F"], {
       stdio: "ignore",

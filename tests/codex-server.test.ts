@@ -43,6 +43,35 @@ afterEach(() => {
   stopCodexServer();
 });
 
+describe("ensureCodexServer per-home slots", () => {
+  const baseScript = { initialize: { userAgent: "codex/0.154.0" } };
+
+  it("pins the child to one CODEX_HOME when a home is given", async () => {
+    const seen: Array<string | undefined> = [];
+    const child = fakeCodexChild(baseScript);
+    const spawnFn = ((_cmd: string, _args: string[], options: { env?: Record<string, string> }) => {
+      seen.push(options.env?.CODEX_HOME);
+      return child;
+    }) as unknown as typeof spawn;
+    await ensureCodexServer(() => {}, spawnFn, "/homes/cxo-heck");
+    await ensureCodexServer(() => {}, spawnFn); // default home: inherit env
+    expect(seen).toEqual(["/homes/cxo-heck", undefined]);
+  });
+
+  it("keeps one slot per home instead of reusing across homes", async () => {
+    let spawns = 0;
+    const child = fakeCodexChild(baseScript);
+    const spawnFn = (() => {
+      spawns += 1;
+      return child;
+    }) as unknown as typeof spawn;
+    await ensureCodexServer(() => {}, spawnFn, "/homes/a");
+    await ensureCodexServer(() => {}, spawnFn, "/homes/b");
+    await ensureCodexServer(() => {}, spawnFn, "/homes/a"); // cached per home
+    expect(spawns).toBe(2);
+  });
+});
+
 describe("ensureCodexServer auth probe", () => {
   const baseScript = { initialize: { userAgent: "codex/0.154.0" } };
 

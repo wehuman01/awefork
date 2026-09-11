@@ -12,10 +12,10 @@ import {
   backendCapabilities,
   resolveStorePath,
 } from "../shared/backend.js";
-import { createCodexAdapter } from "../shared/codex-adapter.js";
 import { createOpencodeAdapter } from "../shared/opencode-adapter.js";
 import type { AgentAdapter } from "../shared/types.js";
-import { ensureCodexServer, isCodexInstalled, stopCodexServer } from "./codex-server.js";
+import { createCodexMultiHomeAdapter } from "./codex-multihome.js";
+import { isCodexInstalled, stopCodexServer } from "./codex-server.js";
 import { ensureOpencodeServer, stopManagedServer } from "./opencode-server.js";
 import { readBackendSelection, writeBackendSelection } from "./settings-store.js";
 
@@ -55,8 +55,6 @@ export function createBackendRegistry(userDataDir: string): BackendRegistry {
   const adapters = new Map<BackendId, Promise<AgentAdapter>>();
   const unsubscribers: Array<() => void> = [];
   let forwardEvent: ((envelope: BackendEventEnvelope) => void) | null = null;
-  /** Set when the codex child died; the successful re-spawn reports it once. */
-  let codexCrashed = false;
 
   const storePaths = (backend: BackendId): StorePaths => {
     const cached = caches.get(backend);
@@ -94,33 +92,13 @@ export function createBackendRegistry(userDataDir: string): BackendRegistry {
             subscribeAdapter("opencode", adapter);
             return adapter;
           })
-        : ensureCodexServer(() => {
-            // Child died mid-run: tell the renderer, drop the cache, and let
-            // the next codex call spawn a fresh server lazily.
-            codexCrashed = true;
-            adapters.delete("codex");
-            forwardEvent?.({
-              backend: "codex",
-              event: {
-                type: "server.error",
-                message: "codex app-server 连接中断，将在下次操作时重启",
-              },
-            });
-          }).then(({ client, version, authMessage }) => {
-            const adapter = createCodexAdapter({
-              client,
+        : // The codex facade manages one app-server per home (default +
+          // aweswitch accounts) internally, including crash re-spawns.
+          Promise.resolve().then(() => {
+            const adapter = createCodexMultiHomeAdapter({
               lineagePath: storePaths("codex").lineage,
-              cliVersion: version,
-              authMessage,
             });
             subscribeAdapter("codex", adapter);
-            if (codexCrashed) {
-              codexCrashed = false;
-              forwardEvent?.({
-                backend: "codex",
-                event: { type: "server.reconnected" },
-              });
-            }
             return adapter;
           });
     // A failed spawn must not be cached as the permanent truth; drop it so
