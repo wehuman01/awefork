@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.2.2
+
+The composer stops losing work: unsent drafts now survive restarts and backend switches, and a switch between opencode and codex repaints instantly from a parked workspace. Codex learns to see every account home, and the opencode adapter reads its wire facts from a descriptor instead of code.
+
+### Highlights
+
+- **Unsent drafts persist** — a draft anchors to its backend and its session through a per-backend overlay store, so it comes back on restart and on every backend switch. The sidecar flushes the moment a draft is sent (a crash can no longer resurrect a sent prompt as unsent), a send that straddles a backend switch aborts instead of firing an invisible run, and restore drops model picks whose sessions no longer exist.
+- **Backend switches repaint instantly** — a backend you visited before repaints from its parked workspace the moment the switch lands: no handshake, no session refetch, no message reload, with a background refresh catching up what changed while it was away. The canvas's connect/offline/empty copy names the backend instead of hardcoding opencode.
+- **Every codex home** — the codex backend keeps one app-server per discovered `CODEX_HOME` (the default plus each aweswitch account), merges the session list across them, and routes every call to the owning home. Prompting or forking a foreign session copies its rollout into the default home first, so the turn runs under the default account's login; interaction request ids are re-minted per facade so two homes can never collide on a pending approval.
+- **The opencode adapter interprets a descriptor** — backend facts a version bump can rename (REST endpoints, SSE event names, field paths, part kinds, the fork cut, capabilities, the tested version range) now live in `src/shared/agents/opencode.json`. A closed-vocabulary validator rejects unknown keys at startup, so a descriptor typo fails loudly instead of degrading silently, and a CLI outside the compat range shows a ⚠ notice in the top bar.
+- **Paths in replies open** — absolute POSIX paths — both codex's `[file](/abs/path.md:1)` link idiom and bare paths in prose — are clickable, and `openPath` now strips trailing punctuation (CJK included) and `:line`/`:line:col` suffixes for POSIX and Windows drive paths alike.
+- **CI on the shared gate** — CI and release call the awecontrib `npm run verify` entry point, and checkout forces LF so biome passes on Windows.
+- **The draft footer wraps** — long hints wrap instead of overflowing, and the keyboard hint gets its own row.
+
+### Install
+
+This release ships notes only — no installers attached yet. Build them yourself with `npm run dist` (unsigned macOS arm64) or `npm run dist:win` (Windows x64); on first launch on macOS, right-click the app and choose Open (or clear the quarantine flag with `xattr -d com.apple.quarantine /Applications/awefork.app`).
+
 ## v0.2.1
 
 awefork grows a second backend: Codex joins opencode behind a top-bar switcher, and with it comes the whole approval dance — commands, file writes, permission escalations, and tool questions arrive as dialogs you answer before the turn may continue.
