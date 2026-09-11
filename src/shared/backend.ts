@@ -1,3 +1,4 @@
+import { opencodeDescriptor } from "./agent-descriptor.js";
 import type { AgentEvent } from "./types.js";
 
 /**
@@ -13,6 +14,10 @@ export interface BackendInfo {
   label: string;
   /** Probed via `--version` spawn; no server is started for the probe. */
   installed: boolean;
+  /** CLI version parsed from the probe output; null when absent or unparseable. */
+  version: string | null;
+  /** Set when the CLI version falls outside the descriptor's tested range. */
+  versionWarning: string | null;
 }
 
 /** What awefork:backends resolves to: the list plus the persisted selection. */
@@ -50,13 +55,14 @@ export function isBackendId(value: unknown): value is BackendId {
 }
 
 /**
- * Static capability table (v1): opencode does message deletes and file
- * attachments; codex does neither (its app-server does not round-trip sent
- * bytes and has no single-message delete).
+ * Per-backend feature surface. The renderer hides affordances the backend
+ * lacks (attach button, turn delete) instead of surfacing errors on click.
+ * opencode's flags live in its agent descriptor; codex's stay literal until
+ * its differences migrate to a descriptor too.
  */
 export function backendCapabilities(backend: BackendId): BackendCapabilities {
   if (backend === "codex") return { deleteMessage: false, attachments: false };
-  return { deleteMessage: true, attachments: true };
+  return opencodeDescriptor().capabilities;
 }
 
 /**

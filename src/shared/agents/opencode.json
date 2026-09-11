@@ -1,0 +1,80 @@
+{
+  "kind": "opencode",
+  "compat": { "min": "1.18.0", "max": "1.19.0" },
+  "capabilities": { "deleteMessage": true, "attachments": true },
+  "fork": { "cut": "next-user-exclusive" },
+  "endpoints": {
+    "sessions": "/session",
+    "session": "/session/{id}",
+    "sessionMessages": "/session/{id}/message",
+    "sessionMessage": "/session/{id}/message/{messageId}",
+    "sessionFork": "/session/{id}/fork",
+    "sessionAbort": "/session/{id}/abort",
+    "projects": "/project",
+    "providers": "/config/providers",
+    "events": "/event"
+  },
+  "sessions": {
+    "fields": {
+      "id": ["id"],
+      "title": ["title"],
+      "directory": ["directory"],
+      "parentSessionId": ["parentID"],
+      "createdAt": ["time.created"],
+      "updatedAt": ["time.updated"]
+    }
+  },
+  "messages": {
+    "fields": {
+      "id": ["info.id"],
+      "role": ["info.role"],
+      "modelId": ["info.modelID", "info.model.modelID"],
+      "providerId": ["info.providerID", "info.model.providerID"],
+      "variant": ["info.variant", "info.model.variant"],
+      "createdAt": ["info.time.created"],
+      "completedAt": ["info.time.completed"],
+      "finish": ["info.finish"],
+      "outputTokens": ["info.tokens.output"],
+      "error": ["info.error.data.message", "info.error.name"]
+    },
+    "parts": {
+      "text": { "type": "text", "field": "text", "join": "\n" },
+      "thinking": { "type": "reasoning", "field": "text", "join": "\n\n" },
+      "tool": { "type": "tool", "nameField": "tool", "fallbackName": "tool" },
+      "file": {
+        "type": "file",
+        "nameField": "filename",
+        "fallbackName": "附件",
+        "urlField": "url",
+        "mimeField": "mime"
+      }
+    }
+  },
+  "events": {
+    "refresh": ["session.updated", "session.created", "session.deleted"],
+    "ignore": ["message.updated"],
+    "idle": ["session.idle"],
+    "error": { "name": "session.error", "detailPaths": ["error.message", "error.data.message"] },
+    "status": {
+      "name": "session.status",
+      "valuePath": "status.type",
+      "busyValue": "busy",
+      "idleValue": "idle"
+    },
+    "partSnapshot": {
+      "name": "message.part.updated",
+      "partField": "part",
+      "deltaField": "delta",
+      "kinds": { "text": "text", "reasoning": "thinking" }
+    },
+    "partDelta": {
+      "name": "message.part.delta",
+      "field": "field",
+      "textFieldValue": "text",
+      "partIdField": "partID",
+      "deltaField": "delta"
+    },
+    "sessionIdPaths": ["sessionID", "session.sessionID", "session.id", "part.sessionID"],
+    "messageIdPaths": ["messageID", "part.messageID"]
+  }
+}

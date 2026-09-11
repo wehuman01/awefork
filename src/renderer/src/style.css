@@ -178,6 +178,17 @@ textarea {
   cursor: not-allowed;
 }
 
+/* compat-range notice: sits inside the switch pill after the active backend;
+   the badge is the signal, the hover title carries the full explanation */
+.backend-warn {
+  padding: 0 6px 0 4px;
+  font-size: 12px;
+  line-height: 1;
+  color: #b45309;
+  cursor: help;
+  user-select: none;
+}
+
 .project-wrap {
   position: absolute;
   left: 50%;

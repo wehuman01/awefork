@@ -688,7 +688,9 @@ export async function init(): Promise<void> {
     // the backend this app has always shipped with.
     backend = backends.some((b) => b.id === selected && b.installed) ? selected : "opencode";
   } catch {
-    state.backendList = [{ id: "opencode", label: "opencode", installed: true }];
+    state.backendList = [
+      { id: "opencode", label: "opencode", installed: true, version: null, versionWarning: null },
+    ];
   }
   state.activeBackend = backend;
   try {

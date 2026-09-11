@@ -4,6 +4,7 @@ import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { opencodeDescriptor, parseOpenCodeDescriptor } from "../src/shared/agent-descriptor";
 import { readLineage } from "../src/shared/lineage-store";
 import { createOpencodeAdapter, sleep } from "../src/shared/opencode-adapter";
 import type { AgentEvent } from "../src/shared/types";
@@ -186,6 +187,23 @@ function startFakeServer(state: FakeState): Promise<{ server: Server; baseUrl: s
         return;
       }
 
+      // Drift-test scaffold: a hypothetical newer opencode that renamed the
+      // message endpoint — it tags one extra row so a test can tell which
+      // route actually answered.
+      const driftMatch = url.pathname.match(/^\/session\/([^/]+)\/messages\/v2$/);
+      if (method === "GET" && driftMatch) {
+        const id = driftMatch[1] ?? "";
+        const rows = [
+          ...(state.messages[id] ?? []),
+          {
+            info: { id: "v2-marker", sessionID: id, role: "assistant", time: { created: 1 } },
+            parts: [],
+          },
+        ];
+        res.end(JSON.stringify(rows));
+        return;
+      }
+
       const messageMatch = url.pathname.match(/^\/session\/([^/]+)\/message$/);
       if (method === "GET" && messageMatch) {
         res.end(JSON.stringify(state.messages[messageMatch[1] ?? ""] ?? []));
@@ -327,14 +345,14 @@ function msg(id: string, role: "user" | "assistant", text: string): FakeMessage 
   };
 }
 
-async function newAdapter(state: FakeState) {
+async function newAdapter(state: FakeState, descriptor = opencodeDescriptor()) {
   const { server, baseUrl } = await startFakeServer(state);
   const lineagePath = join(await mkdtemp(join(tmpdir(), "awefork-adapter-")), "lineage.json");
   cleanup.push(async () => {
     adapter.dispose();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   });
-  const adapter = createOpencodeAdapter({ baseUrl, lineagePath });
+  const adapter = createOpencodeAdapter({ baseUrl, lineagePath, descriptor });
   return { adapter, lineagePath, baseUrl };
 }
 
@@ -994,6 +1012,37 @@ describe("opencode adapter", () => {
     const { adapter } = await newAdapter(state);
     const sessions = await adapter.listSessions();
     expect(sessions.filter((s) => s.id === "s1")).toHaveLength(1);
+  });
+
+  // The whole point of the descriptor: when opencode renames things, the fix
+  // is a data edit. This test simulates that rename and proves the adapter
+  // follows the file, not its old habits.
+  it("follows a drifted descriptor — renamed endpoint, field path, and event", async () => {
+    const state = baseState();
+    (state.messages.s1?.[1]?.info as Record<string, unknown>).chosenModel = "drift/model";
+    state.eventFrames = [{ type: "session.done", properties: { sessionID: "s1" } }];
+
+    const root = JSON.parse(JSON.stringify(opencodeDescriptor())) as Record<string, unknown>;
+    (root.endpoints as Record<string, unknown>).sessionMessages = "/session/{id}/messages/v2";
+    (root.events as Record<string, unknown>).idle = ["session.done"];
+    ((root.messages as Record<string, unknown>).fields as Record<string, unknown>).modelId = [
+      "info.chosenModel",
+    ];
+    const drifted = parseOpenCodeDescriptor(root);
+
+    const { adapter } = await newAdapter(state, drifted);
+
+    // The v2 route answered (its marker row came back) and the model id came
+    // from the renamed slot, not the old top-level modelID.
+    const messages = await adapter.messages("s1");
+    expect(messages.map((m) => m.id)).toContain("v2-marker");
+    expect(messages[1]?.modelId).toBe("drift/model");
+
+    const events: AgentEvent[] = [];
+    const unsubscribe = await adapter.subscribe((event) => events.push(event));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    unsubscribe();
+    expect(events).toContainEqual({ type: "session.idle", sessionId: "s1" });
   });
 });
 

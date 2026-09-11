@@ -1,9 +1,16 @@
 /**
  * Thin typed client for opencode's local HTTP API (opencode serve).
- * Only the endpoints awefork needs; only the fields awefork reads.
+ * Only the fields awefork needs; only the fields awefork reads.
  * Talked to over fetch so it works in the Electron main process with no
- * SDK dependency and can be tested against a fake server.
+ * SDK dependency and can be tested against a fake server. Endpoint paths
+ * come from the agent descriptor so a renamed route is a data fix, not a
+ * code fix.
  */
+import {
+  type AgentEndpoints,
+  type OpenCodeDescriptor,
+  opencodeDescriptor,
+} from "./agent-descriptor.js";
 import type { ModelChoice, ModelOption, PromptAttachment } from "./types.js";
 
 export interface OcSession {
@@ -52,7 +59,7 @@ interface OcMessageInfo {
   time: { created: number; completed?: number };
 }
 
-interface OcPart {
+export interface OcPart {
   type: string;
   text?: string;
   state?: string;
@@ -140,9 +147,18 @@ export interface OpencodeClient {
 
 export function createOpencodeClient(
   baseUrl: string,
-  config: { timeoutMs?: number } = {},
+  config: { timeoutMs?: number; descriptor?: OpenCodeDescriptor } = {},
 ): OpencodeClient {
+  const descriptor = config.descriptor ?? opencodeDescriptor();
   const url = (path: string) => `${baseUrl.replace(/\/$/, "")}${path}`;
+  /** Descriptor endpoint with `{id}` / `{messageId}` filled in. */
+  const endpoint = (key: keyof AgentEndpoints, params: Record<string, string> = {}): string => {
+    let path = descriptor.endpoints[key];
+    for (const [name, value] of Object.entries(params)) {
+      path = path.replaceAll(`{${name}}`, value);
+    }
+    return path;
+  };
 
   async function request<T>(
     path: string,
@@ -183,13 +199,13 @@ export function createOpencodeClient(
     listSessions: (directory?: string) => {
       const query = new URLSearchParams({ limit: "1000" });
       if (directory) query.set("directory", directory);
-      return request<OcSession[]>(`/session?${query.toString()}`);
+      return request<OcSession[]>(`${endpoint("sessions")}?${query.toString()}`);
     },
-    listProjects: () => request<OcProject[]>("/project"),
-    messages: (id) => request<OcMessage[]>(`/session/${id}/message`),
+    listProjects: () => request<OcProject[]>(endpoint("projects")),
+    messages: (id) => request<OcMessage[]>(endpoint("sessionMessages", { id })),
     listModels: async () => {
       // Read only ids and names — the response also carries provider secrets.
-      const list = await request<OcProviderList>("/config/providers");
+      const list = await request<OcProviderList>(endpoint("providers"));
       const options: ModelOption[] = [];
       for (const provider of list.providers ?? []) {
         for (const [key, model] of Object.entries(provider.models ?? {})) {
@@ -207,7 +223,7 @@ export function createOpencodeClient(
       return options.filter((o) => o.modelId);
     },
     fork: (id, cutMessageId) =>
-      request<OcSession>(`/session/${id}/fork`, {
+      request<OcSession>(endpoint("sessionFork", { id }), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(cutMessageId ? { messageID: cutMessageId } : {}),
@@ -215,27 +231,27 @@ export function createOpencodeClient(
     createSession: (directory) => {
       const query = new URLSearchParams();
       if (directory) query.set("directory", directory);
-      return request<OcSession>(`/session?${query.toString()}`, {
+      return request<OcSession>(`${endpoint("sessions")}?${query.toString()}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: "{}",
       });
     },
     deleteSession: async (id) => {
-      await request(`/session/${id}`, { method: "DELETE" });
+      await request(endpoint("session", { id }), { method: "DELETE" });
     },
     deleteMessage: async (id, messageId) => {
-      await request(`/session/${id}/message/${messageId}`, { method: "DELETE" });
+      await request(endpoint("sessionMessage", { id, messageId }), { method: "DELETE" });
     },
     renameSession: (id, title) =>
-      request<OcSession>(`/session/${id}`, {
+      request<OcSession>(endpoint("session", { id }), {
         method: "PATCH",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ title }),
       }),
     prompt: async (id, text, model, attachments) => {
       await request(
-        `/session/${id}/message`,
+        endpoint("sessionMessages", { id }),
         {
           method: "POST",
           headers: { "content-type": "application/json" },
@@ -257,6 +273,6 @@ export function createOpencodeClient(
         0,
       );
     },
-    abort: (id) => request(`/session/${id}/abort`, { method: "POST" }),
+    abort: (id) => request(endpoint("sessionAbort", { id }), { method: "POST" }),
   };
 }

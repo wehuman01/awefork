@@ -100,11 +100,13 @@ Lineage is stored by awefork because opencode's fork API copies messages without
 
 ## Compatibility
 
-awefork is developed and tested against **opencode 1.18.x**. It talks to opencode's local HTTP API, and the SSE event shapes there have shifted between opencode versions — the adapter handles the variants it knows, but a much older or newer opencode can degrade silently (runs that never settle, streams that stay empty). If runs misbehave, check `opencode --version` against the version above. A port held by a server that does not behave like `opencode serve` is refused at startup instead of being adopted.
+Per-backend facts live in data, not code: `src/shared/agents/opencode.json` declares the endpoints, SSE event names, field paths, fork cut translation, capability flags, and the tested version range. The adapter is a generic interpreter over that file, and the vocabulary is closed — the validator (`src/shared/agent-descriptor.ts`) rejects unknown keys at every level, so a typo in a descriptor fails loudly at startup instead of degrading silently at runtime.
+
+awefork is developed and tested against **opencode 1.18.x** (the range is the descriptor's `compat` section). When opencode shifts event shapes, the fix is a descriptor edit rather than an adapter rewrite. The install probe reads `opencode --version`; a version outside the tested range shows a ⚠ notice in the top bar instead of failing silently (runs that never settle, streams that stay empty). A port held by a server that does not behave like `opencode serve` is refused at startup instead of being adopted.
 
 ## Multi-Agent Roadmap
 
-The core is the `AgentAdapter` protocol (`src/shared/types.ts`): listSessions / messages / fork / prompt / abort / subscribe. opencode is the first implementation. Planned next: pi (JSONL with `parentId`), Claude Code (JSONL with `parentUuid` + `--resume`), Codex.
+The core is the `AgentAdapter` protocol (`src/shared/types.ts`): listSessions / messages / fork / prompt / abort / subscribe. opencode and codex are implemented; each backend's drift-prone facts live in `src/shared/agents/*.json`. Planned next: pi (JSONL with `parentId`), Claude Code (JSONL with `parentUuid` + `--resume`).
 
 ## Support
 

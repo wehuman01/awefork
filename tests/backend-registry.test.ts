@@ -34,9 +34,33 @@ vi.mock("../src/main/opencode-server", () => ({
 
 // probeInstalled() execs `opencode --version` through the real execFile; the
 // mock decides whether it is "installed" so listBackends/select stay deterministic.
+// The real execFile carries a util.promisify.custom that resolves to
+// {stdout, stderr}; a bare vi.fn() lacks it, and plain promisify would resolve
+// to the first callback argument (the stdout string) — so the custom symbol is
+// replicated here to keep the promisified contract faithful.
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
-  return { ...actual, execFile: mocks.execFile };
+  const execFileWithPromisify = Object.assign(mocks.execFile, {
+    [Symbol.for("nodejs.util.promisify.custom")](
+      file: string,
+      args: readonly string[],
+      callback: (error: Error | null, stdout: string, stderr: string) => void,
+    ) {
+      return new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
+        mocks.execFile(
+          file,
+          args,
+          undefined,
+          (error: Error | null, stdout: string, stderr: string) => {
+            if (error) reject(error);
+            else resolve({ stdout, stderr });
+          },
+        );
+        void callback;
+      });
+    },
+  });
+  return { ...actual, execFile: execFileWithPromisify };
 });
 
 /** A codex client whose every request fails — enough for the prompt-failure path. */
@@ -56,10 +80,16 @@ beforeEach(async () => {
   vi.clearAllMocks();
   userDataDir = await mkdtemp(join(tmpdir(), "awefork-registry-"));
   registry = createBackendRegistry(userDataDir);
-  // By default the opencode CLI "is on PATH".
+  // By default the opencode CLI "is on PATH" with a version inside the
+  // descriptor's tested range, so no compat warning fires.
   mocks.execFile.mockImplementation(
-    (_file: string, _args: string[], _opts: unknown, callback: (error: Error | null) => void) => {
-      callback(null);
+    (
+      _file: string,
+      _args: string[],
+      _opts: unknown,
+      callback: (error: Error | null, stdout: string, stderr: string) => void,
+    ) => {
+      callback(null, "1.18.30\n", "");
     },
   );
 });
@@ -166,10 +196,49 @@ describe("switcher data and selection", () => {
     await expect(registry.listBackends()).resolves.toEqual({
       selected: "codex",
       backends: [
-        { id: "opencode", label: "opencode", installed: true },
-        { id: "codex", label: "codex", installed: false },
+        {
+          id: "opencode",
+          label: "opencode",
+          installed: true,
+          version: "1.18.30",
+          versionWarning: null,
+        },
+        { id: "codex", label: "codex", installed: false, version: null, versionWarning: null },
       ],
     });
+  });
+
+  it("warns — loudly, not blocking — when the CLI is outside the tested range", async () => {
+    mocks.execFile.mockImplementation(
+      (
+        _file: string,
+        _args: string[],
+        _opts: unknown,
+        callback: (error: Error | null, stdout: string, stderr: string) => void,
+      ) => {
+        callback(null, "1.19.2\n", "");
+      },
+    );
+    const { backends } = await registry.listBackends();
+    expect(backends[0]).toMatchObject({ installed: true, version: "1.19.2" });
+    expect(backends[0]?.versionWarning).toMatch(/1\.19\.2.*已测试的版本区间/);
+    // Out of range is a warning, not a refusal: selecting still succeeds.
+    await expect(registry.select("opencode")).resolves.toEqual({ ok: true });
+  });
+
+  it("reports no warning when the probe cannot read a version", async () => {
+    mocks.execFile.mockImplementation(
+      (
+        _file: string,
+        _args: string[],
+        _opts: unknown,
+        callback: (error: Error | null, stdout: string, stderr: string) => void,
+      ) => {
+        callback(null, "", "");
+      },
+    );
+    const { backends } = await registry.listBackends();
+    expect(backends[0]).toMatchObject({ installed: true, version: null, versionWarning: null });
   });
 
   it("select probes before persisting; a missing CLI keeps the old selection", async () => {
@@ -206,7 +275,7 @@ describe("switcher data and selection", () => {
 });
 
 describe("capabilities and store paths", () => {
-  it("mirrors the static capability table", () => {
+  it("serves opencode capabilities from its agent descriptor", () => {
     expect(registry.capabilities("codex")).toEqual({
       deleteMessage: false,
       attachments: false,

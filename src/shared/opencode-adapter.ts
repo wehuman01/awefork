@@ -1,5 +1,16 @@
+import {
+  firstNumber,
+  firstString,
+  type OpenCodeDescriptor,
+  opencodeDescriptor,
+} from "./agent-descriptor.js";
 import { recordFork, removeFork } from "./lineage-store.js";
-import { createOpencodeClient, type OpencodeClient } from "./opencode-client.js";
+import {
+  createOpencodeClient,
+  type OcMessage,
+  type OcPart,
+  type OpencodeClient,
+} from "./opencode-client.js";
 import { createSseParser } from "./sse.js";
 import type {
   AgentAdapter,
@@ -13,10 +24,15 @@ export interface OpenCodeAdapterOptions {
   baseUrl: string;
   /** Path to the lineage sidecar file. */
   lineagePath: string;
+  /** Descriptor override for tests; defaults to the bundled agents/opencode.json. */
+  descriptor?: OpenCodeDescriptor;
 }
 
 /**
- * opencode implementation of AgentAdapter.
+ * opencode implementation of AgentAdapter — the interpreter over
+ * agents/opencode.json. Names, paths, and shapes come from the descriptor;
+ * what stays here is behavior: the reconnect loop, the part-kind state
+ * machine, and the fork cut translation.
  *
  * Fork translation: the protocol promises the new branch KEEPS the turn that
  * starts at user message `atMessageId`. opencode's fork API takes an
@@ -24,86 +40,78 @@ export interface OpenCodeAdapterOptions {
  * NEXT user message as the cut. At the last turn we omit the cut entirely.
  */
 export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAdapter {
-  const client: OpencodeClient = createOpencodeClient(options.baseUrl);
+  const descriptor = options.descriptor ?? opencodeDescriptor();
+  const client: OpencodeClient = createOpencodeClient(options.baseUrl, { descriptor });
 
   let abortController: AbortController | null = null;
   /** Set by subscribe; lets detached prompts report request-level failures. */
   let emitEvent: ((event: AgentEvent) => void) | null = null;
 
-  const mapSession = (s: {
-    id: string;
-    title: string;
-    directory: string;
-    parentID?: string;
-    time: { created: number; updated: number };
-  }): SessionSummary => ({
-    id: s.id,
-    title: s.title,
-    directory: s.directory,
-    parentSessionId: s.parentID ?? null,
-    origin: s.parentID ? "subagent" : "root",
-    createdAt: s.time.created,
-    updatedAt: s.time.updated,
-  });
+  const mapSession = (raw: unknown): SessionSummary => {
+    const parentSessionId = firstString(raw, descriptor.sessions.fields.parentSessionId);
+    return {
+      id: firstString(raw, descriptor.sessions.fields.id) ?? "",
+      title: firstString(raw, descriptor.sessions.fields.title) ?? "",
+      directory: firstString(raw, descriptor.sessions.fields.directory) ?? "",
+      parentSessionId,
+      origin: parentSessionId ? "subagent" : "root",
+      createdAt: firstNumber(raw, descriptor.sessions.fields.createdAt) ?? 0,
+      updatedAt: firstNumber(raw, descriptor.sessions.fields.updatedAt) ?? 0,
+    };
+  };
 
-  const mapMessages = (raw: Awaited<ReturnType<OpencodeClient["messages"]>>): ChatMessage[] =>
+  /** Concatenate one text-bearing part kind per the descriptor; rows join on its separator. */
+  const joinParts = (
+    parts: OcPart[],
+    config: { type: string; field: string; join: string },
+  ): string =>
+    parts
+      .filter((p) => p.type === config.type && typeof partField(p, config.field) === "string")
+      .map((p) => partField(p, config.field) as string)
+      .join(config.join)
+      .trim();
+
+  const mapMessages = (raw: OcMessage[]): ChatMessage[] =>
     raw.map((m) => {
-      // Assistant rows report the model top-level; the user row that opened
-      // the run carries it nested under `model`. Reading both keeps the model
-      // visible even when a run dies before its assistant row reports back.
-      // The reasoning variant rides the same two slots.
-      const nested = m.info.model;
-      const modelId =
-        m.info.modelID ?? (typeof nested?.modelID === "string" ? nested.modelID : null);
-      const providerId =
-        m.info.providerID ?? (typeof nested?.providerID === "string" ? nested.providerID : null);
-      const variant =
-        typeof m.info.variant === "string"
-          ? m.info.variant
-          : typeof nested?.variant === "string"
-            ? nested.variant
-            : null;
+      // modelId/providerId/variant read assistant rows top-level and the user
+      // row that opened the run nested under `model` — the descriptor lists
+      // both candidates so the model stays visible even when a run dies
+      // before its assistant row reports back.
+      const { fields, parts } = descriptor.messages;
       return {
-        id: m.info.id,
-        role: m.info.role,
-        text: m.parts
-          .filter((p) => p.type === "text" && typeof p.text === "string")
-          .map((p) => p.text as string)
-          .join("\n")
-          .trim(),
-        // One blank line between reasoning parts: a multi-step run stores one
+        id: firstString(m, fields.id) ?? "",
+        role: (firstString(m, fields.role) ?? "assistant") as ChatMessage["role"],
+        text: joinParts(m.parts, parts.text),
+        // Reasoning rows join with a blank line: a multi-step run stores one
         // part per step, and joining them bare glues the last line of one
-        // step's thinking onto the first line of the next.
-        thinking: m.parts
-          .filter((p) => p.type === "reasoning" && typeof p.text === "string")
-          .map((p) => p.text as string)
-          .join("\n\n")
-          .trim(),
+        // step's thinking onto the first of the next.
+        thinking: joinParts(m.parts, parts.thinking),
         toolNames: [
           ...new Set(
             m.parts
-              .filter((p) => p.type === "tool")
-              .map((p) => (typeof p.tool === "string" ? p.tool : "tool"))
-              .filter(Boolean),
+              .filter((p) => p.type === parts.tool.type)
+              .map((p) => firstString(p, [parts.tool.nameField]) ?? parts.tool.fallbackName),
           ),
         ],
-        modelId,
-        providerId,
-        variant,
+        modelId: firstString(m, fields.modelId),
+        providerId: firstString(m, fields.providerId),
+        variant: firstString(m, fields.variant),
         attachmentNames: m.parts
-          .filter((p) => p.type === "file")
-          .map((p) => (typeof p.filename === "string" && p.filename ? p.filename : "附件")),
-        createdAt: m.info.time.created,
-        completedAt: typeof m.info.time.completed === "number" ? m.info.time.completed : null,
-        finish: typeof m.info.finish === "string" ? m.info.finish : null,
-        outputTokens: typeof m.info.tokens?.output === "number" ? m.info.tokens.output : null,
-        error: m.info.error?.data?.message ?? m.info.error?.name ?? null,
+          .filter((p) => p.type === parts.file.type)
+          .map((p) => firstString(p, [parts.file.nameField]) ?? parts.file.fallbackName),
+        createdAt: firstNumber(m, fields.createdAt) ?? 0,
+        completedAt: firstNumber(m, fields.completedAt),
+        finish: firstString(m, fields.finish),
+        outputTokens: firstNumber(m, fields.outputTokens),
+        error: firstString(m, fields.error),
       };
     });
 
   async function findCutMessageId(sessionId: string, atMessageId: string): Promise<string | null> {
     const messages = await client.messages(sessionId);
-    const index = messages.findIndex((m) => m.info.id === atMessageId);
+    const index = messages.findIndex(
+      (m) => firstString(m, descriptor.messages.fields.id) === atMessageId,
+    );
     if (index === -1) {
       throw new Error(
         `Message ${atMessageId} not found in session ${sessionId}. Refresh the session and try again.`,
@@ -111,8 +119,8 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
     }
     const cut = messages
       .slice(index + 1)
-      .find((m) => m.info.role === "user" && m.info.id !== atMessageId);
-    return cut?.info.id ?? null;
+      .find((m) => firstString(m, descriptor.messages.fields.role) === "user");
+    return cut ? (firstString(cut, descriptor.messages.fields.id) ?? null) : null;
   }
 
   return {
@@ -140,17 +148,23 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
 
     async messageAttachments(sessionId, messageId) {
       const raw = await client.messages(sessionId);
-      const target = raw.find((m) => m.info.id === messageId);
+      const target = raw.find((m) => firstString(m, descriptor.messages.fields.id) === messageId);
       if (!target) return [];
+      const file = descriptor.messages.parts.file;
       // The stored file part keeps the url it was sent with (a data URL here),
       // so the parts round-trip as attachments again; parts that lost their
       // url are dropped rather than resent as empty files.
       return target.parts
-        .filter((p) => p.type === "file" && typeof p.url === "string" && p.url)
+        .filter(
+          (p) =>
+            p.type === file.type &&
+            typeof partField(p, file.urlField) === "string" &&
+            partField(p, file.urlField),
+        )
         .map((p) => ({
-          mime: typeof p.mime === "string" ? p.mime : "application/octet-stream",
-          filename: typeof p.filename === "string" && p.filename ? p.filename : "附件",
-          dataUrl: p.url as string,
+          mime: firstString(p, [file.mimeField]) ?? "application/octet-stream",
+          filename: firstString(p, [file.nameField]) ?? file.fallbackName,
+          dataUrl: partField(p, file.urlField) as string,
         }));
     },
 
@@ -175,7 +189,7 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
 
     async prompt(sessionId, text, model, attachments) {
       // Detached on purpose: /message only resolves when the whole run
-      // finishes, while progress reaches this adapter through the /event
+      // finishes, while progress reaches this adapter through the event
       // stream. Request-level failures (server gone, unknown session) have no
       // event, so they surface here as server.error — with the session id, so
       // the renderer can settle that run instead of waiting out the watchdog.
@@ -231,7 +245,8 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
         let outageNotified = false;
         while (!stopped && !signal.aborted) {
           try {
-            const response = await fetch(`${options.baseUrl.replace(/\/$/, "")}/event`, {
+            const base = options.baseUrl.replace(/\/$/, "");
+            const response = await fetch(`${base}${descriptor.endpoints.events}`, {
               signal,
             });
             if (!response.ok || !response.body) {
@@ -251,7 +266,7 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
               const { done, value } = await reader.read();
               if (done) break;
               for (const event of parse(decoder.decode(value, { stream: true }))) {
-                emitToAgentEvent(event, emit, partKinds);
+                emitToAgentEvent(event, emit, partKinds, descriptor);
               }
             }
           } catch (error) {
@@ -282,131 +297,151 @@ export function createOpencodeAdapter(options: OpenCodeAdapterOptions): AgentAda
   };
 }
 
+/** One named field of a part row; the key comes from the descriptor. */
+function partField(part: OcPart, field: string): unknown {
+  return (part as unknown as Record<string, unknown>)[field];
+}
+
+/** A part as it rides inside an SSE frame — the REST part shape plus timing. */
+interface EventPart {
+  id?: unknown;
+  type?: unknown;
+  text?: unknown;
+  time?: { start?: unknown; end?: unknown };
+}
+
+/**
+ * Frame-to-AgentEvent translation. The names and shapes come from the
+ * descriptor; the part-kind bookkeeping around them is state the data cannot
+ * express: a delta is only trustworthy once the part's first snapshot
+ * announced its kind, so unknown-part deltas are dropped rather than guessed
+ * at (rendering reasoning as reply text is the worse failure).
+ */
 function emitToAgentEvent(
   event: { type: string; properties: Record<string, unknown> },
   emit: (event: AgentEvent) => void,
   partKinds: Map<string, "text" | "thinking">,
+  descriptor: OpenCodeDescriptor,
 ): void {
   const props = event.properties;
-  switch (event.type) {
-    case "session.updated":
-    case "session.created":
-    case "session.deleted": {
-      const nested = props.session as { sessionID?: unknown; id?: unknown } | undefined;
-      const sessionId = sessionIdOf(props.sessionID ?? nested?.sessionID ?? nested?.id);
-      if (sessionId) emit({ type: "session.updated", sessionId });
-      break;
-    }
-    case "message.updated": {
-      // Fork creation replays message.updated for every copied message, so
-      // this event can NOT mean "a run started" — running state is driven by
-      // session.status instead. Nothing else needs it: idle refreshes messages.
-      break;
-    }
-    case "message.part.updated": {
-      const part = props.part as
-        | {
-            id?: unknown;
-            type?: unknown;
-            text?: unknown;
-            time?: { start?: unknown; end?: unknown };
-            sessionID?: unknown;
-            messageID?: unknown;
-          }
-        | undefined;
-      const partId = typeof part?.id === "string" ? part.id : null;
-      // Register the part's kind from its snapshot BEFORE any delta handling —
-      // older opencode builds put the text delta in this same frame.
-      if (partId && part?.type === "reasoning") partKinds.set(partId, "thinking");
-      else if (partId && part?.type === "text") partKinds.set(partId, "text");
+  const { events } = descriptor;
+  const sessionId = () => firstString(props, events.sessionIdPaths);
 
-      const sessionId = sessionIdOf(props.sessionID ?? part?.sessionID);
-      const messageId = messageIdOf(props.messageID ?? part?.messageID);
-      // Forward the whole snapshot for text/reasoning parts: the renderer
-      // reconciles its live buffer with it (self-heal after a dropped delta)
-      // and reads time.end as the reasoning-finished signal.
-      if (
-        partId &&
-        sessionId &&
-        messageId &&
-        (part?.type === "reasoning" || part?.type === "text")
-      ) {
-        emit({
-          type: "message.part",
-          sessionId,
-          messageId,
-          partId,
-          kind: part.type === "reasoning" ? "thinking" : "text",
-          text: typeof part.text === "string" ? part.text : "",
-          startedAt: typeof part.time?.start === "number" ? part.time.start : null,
-          endedAt: typeof part.time?.end === "number" ? part.time.end : null,
-        });
-      }
+  if (events.refresh.includes(event.type)) {
+    const id = sessionId();
+    if (id) emit({ type: "session.updated", sessionId: id });
+    return;
+  }
+  // Fork creation replays message.updated for every copied message, so this
+  // frame can NOT mean "a run started" — running state is driven by the
+  // status/idle frames. Nothing else needs it: idle refreshes messages.
+  if (events.ignore.includes(event.type)) return;
 
-      // Snapshot frames carry no delta on opencode 1.18; older builds put the
-      // text delta here. A delta whose part kind is unknown is dropped rather
-      // than guessed at — rendering reasoning as reply text is the worse failure.
-      if (typeof props.delta !== "string" || props.delta === "") break;
-      const kind = partId ? partKinds.get(partId) : undefined;
-      if (!sessionId || !messageId || !partId || !kind) break;
-      emit({ type: "message.delta", sessionId, messageId, partId, kind, delta: props.delta });
-      break;
+  if (events.idle.includes(event.type)) {
+    const id = sessionId();
+    if (id) emit({ type: "session.idle", sessionId: id });
+    return;
+  }
+
+  if (event.type === events.error.name) {
+    const detail = firstString(props, events.error.detailPaths);
+    const message = detail ?? JSON.stringify(props.error ?? "unknown error");
+    const id = sessionId();
+    emit({
+      type: "server.error",
+      sessionId: id,
+      message: id ? `${id}: ${message}` : message,
+    });
+    return;
+  }
+
+  if (event.type === events.status.name) {
+    const id = sessionId();
+    if (!id) return;
+    const value = firstString(props, [events.status.valuePath]);
+    if (value === events.status.busyValue) {
+      emit({ type: "message.started", sessionId: id, messageId: "" });
+    } else if (value === events.status.idleValue) {
+      // The twin of the idle frame: handling both means a dropped frame of
+      // either kind still finishes the run in UI.
+      emit({ type: "session.idle", sessionId: id });
     }
-    case "message.part.delta": {
-      // opencode 1.18 streams text growth through this dedicated event.
-      if (props.field !== "text") break;
-      if (typeof props.delta !== "string" || props.delta === "") break;
-      const sessionId = sessionIdOf(props.sessionID);
-      const messageId = messageIdOf(props.messageID);
-      // Unknown partID → drop and wait for the part.updated snapshot: a delta
-      // that arrives before the app saw the part's first frame is guesswork,
-      // and the snapshot that follows carries the full content anyway.
-      const partId = typeof props.partID === "string" ? props.partID : null;
-      const kind = partId ? partKinds.get(partId) : undefined;
-      if (!sessionId || !messageId || !partId || !kind) break;
-      emit({ type: "message.delta", sessionId, messageId, partId, kind, delta: props.delta });
-      break;
-    }
-    case "session.status": {
-      const sessionId = sessionIdOf(props.sessionID);
-      if (!sessionId) break;
-      const status = props.status as { type?: unknown } | undefined;
-      if (status?.type === "busy") {
-        emit({ type: "message.started", sessionId, messageId: "" });
-      } else if (status?.type === "idle") {
-        // The twin of session.idle, emitted just before it. Handling both
-        // means a dropped frame of either kind still finishes the run in UI.
-        emit({ type: "session.idle", sessionId });
-      }
-      break;
-    }
-    case "session.error": {
-      const sessionId = sessionIdOf(props.sessionID);
-      const error = props.error as { message?: unknown; data?: { message?: unknown } } | undefined;
-      const detail = error?.message ?? error?.data?.message;
-      const message =
-        typeof detail === "string" ? detail : JSON.stringify(props.error ?? "unknown error");
+    return;
+  }
+
+  if (event.type === events.partSnapshot.name) {
+    const part = props[events.partSnapshot.partField] as EventPart | undefined;
+    const partId = typeof part?.id === "string" ? part.id : null;
+    // Register the part's kind from its snapshot BEFORE any delta handling —
+    // older opencode builds put the text delta in this same frame.
+    const kind = typeof part?.type === "string" ? events.partSnapshot.kinds[part.type] : undefined;
+    if (partId && kind) partKinds.set(partId, kind);
+
+    const id = sessionId();
+    const messageId = firstString(props, events.messageIdPaths);
+    // Forward the whole snapshot for text/reasoning parts: the renderer
+    // reconciles its live buffer with it (self-heal after a dropped delta)
+    // and reads the part's end time as the reasoning-finished signal.
+    if (partId && id && messageId && kind) {
       emit({
-        type: "server.error",
-        sessionId,
-        message: sessionId ? `${sessionId}: ${message}` : message,
+        type: "message.part",
+        sessionId: id,
+        messageId,
+        partId,
+        kind,
+        text: typeof part?.text === "string" ? part.text : "",
+        startedAt: typeof part?.time?.start === "number" ? part.time.start : null,
+        endedAt: typeof part?.time?.end === "number" ? part.time.end : null,
       });
-      break;
     }
-    case "session.idle": {
-      const sessionId = sessionIdOf(props.sessionID);
-      if (sessionId) emit({ type: "session.idle", sessionId });
-      break;
-    }
+
+    // Snapshot frames carry no delta on current builds; older ones put the
+    // text delta here. A delta whose part kind is unknown is dropped.
+    emitPartDelta(emit, partKinds, {
+      delta: props[events.partSnapshot.deltaField],
+      partId,
+      sessionId: id,
+      messageId,
+    });
+    return;
+  }
+
+  if (event.type === events.partDelta.name) {
+    if (props[events.partDelta.field] !== events.partDelta.textFieldValue) return;
+    emitPartDelta(emit, partKinds, {
+      delta: props[events.partDelta.deltaField],
+      partId: firstString(props, [events.partDelta.partIdField]),
+      sessionId: sessionId(),
+      messageId: firstString(props, events.messageIdPaths),
+    });
   }
 }
 
-function sessionIdOf(value: unknown): string | null {
-  return typeof value === "string" && value ? value : null;
-}
-
-function messageIdOf(value: unknown): string | null {
-  return typeof value === "string" && value ? value : null;
+/** Shared tail of both delta-bearing frames: forward only what can be routed. */
+function emitPartDelta(
+  emit: (event: AgentEvent) => void,
+  partKinds: Map<string, "text" | "thinking">,
+  frame: {
+    delta: unknown;
+    partId: string | null;
+    sessionId: string | null;
+    messageId: string | null;
+  },
+): void {
+  if (typeof frame.delta !== "string" || frame.delta === "") return;
+  // Unknown part → drop and wait for the snapshot: a delta that arrives
+  // before the app saw the part's first frame is guesswork, and the snapshot
+  // that follows carries the full content anyway.
+  const kind = frame.partId ? partKinds.get(frame.partId) : undefined;
+  if (!frame.sessionId || !frame.messageId || !frame.partId || !kind) return;
+  emit({
+    type: "message.delta",
+    sessionId: frame.sessionId,
+    messageId: frame.messageId,
+    partId: frame.partId,
+    kind,
+    delta: frame.delta,
+  });
 }
 
 /** Timed sleep, abortable; exported for tests. */

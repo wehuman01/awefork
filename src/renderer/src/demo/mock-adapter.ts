@@ -648,7 +648,9 @@ export function installMockAdapter(): void {
     // and its capability surface is the full one.
     backends: async () => ({
       selected: "opencode",
-      backends: [{ id: "opencode", label: "opencode", installed: true }],
+      backends: [
+        { id: "opencode", label: "opencode", installed: true, version: null, versionWarning: null },
+      ],
     }),
     selectBackend: async () => ({ ok: true }),
     capabilities: async () => ({ deleteMessage: true, attachments: true }),

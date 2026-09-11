@@ -20,6 +20,16 @@
       >
         {{ entry.label }}
       </button>
+      <!-- The install probe's compat check: a CLI version outside the tested
+           range still runs, but never silently — the full text sits in the
+           title so one hover explains a misbehaving run. -->
+      <span
+        v-if="activeVersionWarning"
+        class="backend-warn"
+        :title="activeVersionWarning"
+        role="status"
+        >⚠</span
+      >
     </div>
     <div v-if="directories.length > 0" class="project-wrap">
       <button type="button" class="project-pill" @click.stop="toggleOpen">
@@ -77,6 +87,9 @@ const currentDirectory = computed(() => store.selectedDirectory ?? "");
 const connectionError = computed(() => store.connectionError);
 const backendList = computed(() => store.backendList);
 const activeBackend = computed(() => store.activeBackend);
+const activeVersionWarning = computed(
+  () => backendList.value.find((entry) => entry.id === activeBackend.value)?.versionWarning ?? null,
+);
 const activeLabel = computed(
   () =>
     backendList.value.find((entry) => entry.id === activeBackend.value)?.label ??

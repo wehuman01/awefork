@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
+import { opencodeDescriptor, parseVersion, versionInRange } from "../shared/agent-descriptor.js";
 import {
   BACKEND_LABELS,
   type BackendCapabilities,
@@ -133,16 +134,28 @@ export function createBackendRegistry(userDataDir: string): BackendRegistry {
     get: ensureBackend,
 
     async listBackends() {
-      const [selected, opencodeInstalled, codexInstalled] = await Promise.all([
+      const [selected, opencode, codexInstalled] = await Promise.all([
         readBackendSelection(settingsPath),
-        probeInstalled("opencode"),
+        probeOpencode(),
         isCodexInstalled(),
       ]);
       return {
         selected,
         backends: [
-          { id: "opencode", label: BACKEND_LABELS.opencode, installed: opencodeInstalled },
-          { id: "codex", label: BACKEND_LABELS.codex, installed: codexInstalled },
+          {
+            id: "opencode",
+            label: BACKEND_LABELS.opencode,
+            installed: opencode.installed,
+            version: opencode.version,
+            versionWarning: versionWarning(opencode),
+          },
+          {
+            id: "codex",
+            label: BACKEND_LABELS.codex,
+            installed: codexInstalled,
+            version: null,
+            versionWarning: null,
+          },
         ],
       };
     },
@@ -152,7 +165,7 @@ export function createBackendRegistry(userDataDir: string): BackendRegistry {
         return { ok: false, error: `未知后端：${String(backend)}` };
       }
       const installed =
-        backend === "codex" ? await isCodexInstalled() : await probeInstalled("opencode");
+        backend === "codex" ? await isCodexInstalled() : (await probeOpencode()).installed;
       if (!installed) {
         const hint =
           backend === "codex"
@@ -190,11 +203,29 @@ export function createBackendRegistry(userDataDir: string): BackendRegistry {
   };
 }
 
-async function probeInstalled(binary: "opencode"): Promise<boolean> {
+interface OpencodeProbe {
+  installed: boolean;
+  version: string | null;
+}
+
+async function probeOpencode(): Promise<OpencodeProbe> {
   try {
-    await execFileAsync(binary, ["--version"], { timeout: 5000 });
-    return true;
+    const { stdout } = await execFileAsync("opencode", ["--version"], { timeout: 5000 });
+    return { installed: true, version: parseVersion(stdout) };
   } catch {
-    return false;
+    return { installed: false, version: null };
   }
+}
+
+/**
+ * The README's old failure mode was silent degradation: an opencode whose
+ * event shapes drifted away made runs hang forever with nothing saying why.
+ * A version outside the descriptor's tested range now carries an explicit
+ * warning instead — visible, but not a block (it may well still work).
+ */
+function versionWarning(probe: OpencodeProbe): string | null {
+  if (!probe.installed || probe.version === null) return null;
+  const { compat } = opencodeDescriptor();
+  if (versionInRange(probe.version, compat)) return null;
+  return `opencode ${probe.version} 不在 awefork 已测试的版本区间（≥${compat.min}，<${compat.max}）；若运行不结束或回复为空，请切换到已测试版本`;
 }
