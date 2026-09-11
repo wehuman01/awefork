@@ -64,7 +64,11 @@ interface CodexItem {
   type: string;
   id: string;
   text?: string;
-  content?: { text?: string }[];
+  /**
+   * Reasoning/userMessage content. Codex 0.154 sends reasoning content as
+   * plain string[]; some builds wrap it as {text}[] — both are accepted.
+   */
+  content?: (string | { text?: string })[];
   summary?: string[];
   command?: string;
   server?: string;
@@ -147,12 +151,6 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
     return turns.find((t) => t.id === turnId) ?? null;
   }
 
-  function reasoningText(item: CodexItem): string {
-    return [...(item.content ?? []).map((part) => part.text ?? ""), ...(item.summary ?? [])]
-      .join("\n\n")
-      .trim();
-  }
-
   function mapTurn(turn: CodexTurn, thread: CodexThread | null): ChatMessage[] {
     const items = turn.items ?? [];
     const startedAt = secToMs(turn.startedAt) ?? Date.now();
@@ -166,8 +164,8 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
         id: userItem.id,
         role: "user",
         text: (userItem.content ?? [])
-          .filter((c) => typeof c.text === "string")
-          .map((c) => c.text)
+          .map((part) => (typeof part === "string" ? part : part.text))
+          .filter((text): text is string => typeof text === "string")
           .join("\n")
           .trim(),
         thinking: "",
@@ -191,7 +189,7 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
       .trim();
     const thinking = items
       .filter((i) => i.type === "reasoning")
-      .map(reasoningText)
+      .map(reasoningTextOf)
       .join("\n\n")
       .trim();
     const toolNames = [
@@ -374,24 +372,28 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
     },
 
     async prompt(sessionId, text, model) {
+      const params: Record<string, unknown> = {
+        threadId: sessionId,
+        input: [{ type: "text", text }],
+      };
+      if (model?.modelId) params.model = model.modelId;
+      if (model?.variant) params.effort = model.variant;
       try {
-        const params: Record<string, unknown> = {
-          threadId: sessionId,
-          input: [{ type: "text", text }],
-        };
-        if (model?.modelId) params.model = model.modelId;
-        if (model?.variant) params.effort = model.variant;
         const response = await client.request<{ turn?: { id?: string } }>("turn/start", params);
         if (response?.turn?.id) activeTurns.set(sessionId, response.turn.id);
       } catch (error) {
         // Request-level failures (auth, unknown thread) have no notification;
-        // surface them with the session id so the renderer settles the run.
+        // surface them with the session id so the renderer settles the run —
+        // then rethrow: the renderer arms its completion watchdog only after
+        // prompt() resolves, so a swallowed error would leave a phantom run
+        // polling for a turn that never started.
         const detail = error instanceof Error ? error.message : String(error);
         emit({
           type: "server.error",
           sessionId,
           message: `codex prompt failed: ${detail}`,
         });
+        throw error instanceof Error ? error : new Error(detail);
       }
     },
 
@@ -568,8 +570,13 @@ function emitCodexNotification(
   }
 }
 
+/**
+ * Reasoning text of one item. Codex 0.154's `content` is string[] (older
+ * builds sent {text}[] — both accepted); summaries are always string[].
+ */
 function reasoningTextOf(item: CodexItem): string {
-  return [...(item.content ?? []).map((part) => part.text ?? ""), ...(item.summary ?? [])]
-    .join("\n\n")
-    .trim();
+  const content = (item.content ?? []).map((part) =>
+    typeof part === "string" ? part : (part.text ?? ""),
+  );
+  return [...content, ...(item.summary ?? [])].join("\n\n").trim();
 }

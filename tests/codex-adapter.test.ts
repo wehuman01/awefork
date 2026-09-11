@@ -117,6 +117,35 @@ describe("createCodexAdapter messages()", () => {
     });
   });
 
+  it("reads reasoning history content sent as string[] (codex 0.154 format)", async () => {
+    // Regression: 0.154's ReasoningThreadItem.content is string[]; reading it
+    // as {text}[] dropped the whole thinking trail on history reload.
+    const { client } = fakeClient({
+      "thread/resume": () => ({ thread: THREAD_FIXTURE }),
+      "thread/turns/list": () =>
+        turnPageFixture([
+          {
+            ...TURN_FIXTURE,
+            id: "turn-154",
+            items: [
+              ...TURN_FIXTURE.items.filter((i) => i.type !== "reasoning"),
+              {
+                type: "reasoning",
+                id: "r154",
+                content: ["第一段思考", "第二段思考"],
+                summary: ["摘要"],
+              },
+            ],
+          },
+        ]),
+    });
+    const adapter = createCodexAdapter({ client, lineagePath: await tempLineagePath() });
+
+    const rows = await adapter.messages("s1");
+    const assistant = rows.find((r) => r.role === "assistant");
+    expect(assistant?.thinking).toBe("第一段思考\n\n第二段思考\n\n摘要");
+  });
+
   it("lists turns ascending and full-view, following pagination cursors", async () => {
     const { client, callsOf } = fakeClient({
       "thread/resume": () => ({ thread: THREAD_FIXTURE }),
@@ -349,7 +378,7 @@ describe("createCodexAdapter prompt/abort", () => {
     await expect(adapter.abort("s1")).rejects.toThrow("该会话当前没有正在运行的回合");
   });
 
-  it("emits server.error with the session id when turn/start fails", async () => {
+  it("emits server.error, rejects, and leaves no active turn when turn/start fails", async () => {
     const { client } = fakeClient({
       "turn/start": () => {
         throw new Error("Usage limit reached");
@@ -359,7 +388,10 @@ describe("createCodexAdapter prompt/abort", () => {
     const events: AgentEvent[] = [];
     adapter.subscribe((event) => events.push(event));
 
-    await adapter.prompt("s1", "hi");
+    // The renderer arms its completion watchdog only after prompt() resolves;
+    // a swallowed error would leave a phantom run polling for a turn that
+    // never started — so the failure must reject, not just emit.
+    await expect(adapter.prompt("s1", "hi")).rejects.toThrow("Usage limit reached");
     expect(events).toEqual([
       {
         type: "server.error",
@@ -367,6 +399,8 @@ describe("createCodexAdapter prompt/abort", () => {
         message: "codex prompt failed: Usage limit reached",
       },
     ]);
+    // No turn id was recorded, so abort cannot interrupt a ghost turn.
+    await expect(adapter.abort("s1")).rejects.toThrow("该会话当前没有正在运行的回合");
   });
 });
 
@@ -484,6 +518,44 @@ describe("createCodexAdapter notification mapping", () => {
         partId: "a1",
         kind: "text",
         text: "完整回复",
+        startedAt: null,
+        endedAt: 1726000009876,
+      },
+    ]);
+  });
+
+  it("maps reasoning item snapshots with string[] content (codex 0.154 format)", async () => {
+    const { notify, events } = await subscribedAdapter({});
+    notify("item/started", {
+      threadId: "s1",
+      turnId: "turn-5",
+      startedAtMs: 1726000000123,
+      item: { type: "reasoning", id: "r1", content: ["实时思考"] },
+    });
+    notify("item/completed", {
+      threadId: "s1",
+      turnId: "turn-5",
+      completedAtMs: 1726000009876,
+      item: { type: "reasoning", id: "r1", content: ["实时思考"], summary: ["完成"] },
+    });
+    expect(events).toEqual([
+      {
+        type: "message.part",
+        sessionId: "s1",
+        messageId: "turn-5",
+        partId: "r1",
+        kind: "thinking",
+        text: "实时思考",
+        startedAt: 1726000000123,
+        endedAt: null,
+      },
+      {
+        type: "message.part",
+        sessionId: "s1",
+        messageId: "turn-5",
+        partId: "r1",
+        kind: "thinking",
+        text: "实时思考\n\n完成",
         startedAt: null,
         endedAt: 1726000009876,
       },

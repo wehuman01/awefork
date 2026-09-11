@@ -116,7 +116,9 @@ describe("event envelopes", () => {
     registry.forward((envelope) => envelopes.push(envelope));
 
     const adapter = await registry.get("codex");
-    await adapter.prompt("s1", "hello"); // request fails → server.error via subscribe
+    // The failed prompt emits its server.error envelope AND rejects — the
+    // renderer arms its completion watchdog only after prompt() resolves.
+    await expect(adapter.prompt("s1", "hello")).rejects.toThrow("offline");
     expect(envelopes).toHaveLength(1);
     expect(envelopes[0]?.backend).toBe("codex");
     expect(envelopes[0]?.event).toMatchObject({

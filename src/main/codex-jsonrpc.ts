@@ -5,9 +5,11 @@
  * read chunks at any byte, so the reader buffers a partial line until the
  * next chunk. Responses may omit the `jsonrpc` field — correlation keys on
  * `id` alone. The server also pushes notifications and server-originated
- * requests (approvals, tool user input); we never handle those in v1, but a
- * request with an `id` MUST get some reply or the server blocks on it, so
- * unhandled requests are answered with a method-not-found error.
+ * requests (approvals, tool user input); a request with an `id` MUST get
+ * some reply or the server blocks on it. Approval requests get an explicit
+ * deny decision (see `REQUEST_REPLIES`); anything we do not know is answered
+ * with a method-not-found error so codex fails the request visibly instead
+ * of hanging — never silence, never a default-allow.
  */
 
 interface PendingEntry {
@@ -38,6 +40,29 @@ interface RpcFrame {
   error?: { code?: number; message?: string; data?: unknown };
 }
 
+/** Reason sent with every deny decision so codex logs why it was refused. */
+const APPROVAL_DENIED_REASON = "awefork has no approval UI; request denied";
+
+/**
+ * Server→client requests answered without a user in the loop. v1 has no
+ * approval UI, so every approval is explicitly denied: a well-formed denial
+ * (rather than an error reply) lets the agent finish the turn and report the
+ * refusal. Method names and decision shapes verified against the codex
+ * 0.154 app-server schema.
+ */
+const REQUEST_REPLIES: Record<string, () => unknown> = {
+  // New approval API (turns started via turn/start) — decision enum.
+  "item/commandExecution/requestApproval": () => ({ decision: "decline" }),
+  "item/fileChange/requestApproval": () => ({ decision: "decline" }),
+  // Legacy approval methods (deprecated send APIs) — ReviewDecision shape.
+  execCommandApproval: () => ({
+    decision: { denied: { rejection: APPROVAL_DENIED_REASON } },
+  }),
+  applyPatchApproval: () => ({
+    decision: { denied: { rejection: APPROVAL_DENIED_REASON } },
+  }),
+};
+
 export function createCodexJsonRpc(
   stdin: { write(chunk: string | Uint8Array): boolean },
   stdout: NodeJS.ReadableStream,
@@ -63,9 +88,14 @@ export function createCodexJsonRpc(
     options.onDisconnect?.();
   };
 
+  const replyResult = (id: number | string, result: unknown) => {
+    stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, result })}\n`);
+  };
+
   const replyError = (id: number | string, message: string) => {
     // A server→client request left unanswered would hang the agent (it waits
-    // on approval replies); answering with an error lets it fall back.
+    // on approval replies); answering with an error lets it fail the request
+    // and end the turn visibly.
     stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, error: { code: -32601, message } })}\n`);
   };
 
@@ -80,7 +110,9 @@ export function createCodexJsonRpc(
     }
     if (typeof frame.method === "string") {
       if (frame.id !== undefined && frame.id !== null) {
-        replyError(frame.id, `awefork does not handle ${frame.method}`);
+        const reply = REQUEST_REPLIES[frame.method];
+        if (reply) replyResult(frame.id, reply());
+        else replyError(frame.id, `awefork does not handle ${frame.method}`);
       }
       notify(frame.method, frame.params ?? null);
       return;

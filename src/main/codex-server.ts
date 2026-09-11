@@ -6,14 +6,16 @@ import { resolveSpawnEnv } from "./opencode-server.js";
 
 const execFileAsync = promisify(execFile);
 
+const NOT_LOGGED_IN_MESSAGE = "codex 未登录或无可用账号：请先在终端运行 codex login";
+
 export interface EnsureCodexServerResult {
   client: CodexJsonRpc;
   /** CLI version parsed from the initialize response, when it exposes one. */
   version: string | null;
   /**
-   * Set when the CLI is installed but not logged in (account/read failed) —
-   * surfaced once so the UI can say "run codex login" before the first
-   * prompt instead of after.
+   * Set when the CLI is installed but not logged in (account/read failed or
+   * reported no usable account) — surfaced once so the UI can say "run codex
+   * login" before the first prompt instead of after.
    */
   authMessage: string | null;
 }
@@ -123,11 +125,21 @@ export async function ensureCodexServer(
       );
       // Auth probe: a codex that never ran `codex login` fails every
       // turn/start with an auth error — better to know before the prompt.
+      // A successful reply can still report no usable account (fresh
+      // install, logged out) via a null account or requiresOpenaiAuth —
+      // those count as "not logged in" too.
       let authMessage: string | null = null;
       try {
-        await client.request("account/read", {}, 10_000);
+        const account = await client.request<{ account?: unknown; requiresOpenaiAuth?: boolean }>(
+          "account/read",
+          {},
+          10_000,
+        );
+        if (!account?.account || account.requiresOpenaiAuth === true) {
+          authMessage = NOT_LOGGED_IN_MESSAGE;
+        }
       } catch (error) {
-        authMessage = `codex 未登录或无可用账号：请先在终端运行 codex login（${
+        authMessage = `${NOT_LOGGED_IN_MESSAGE}（${
           error instanceof Error ? error.message : String(error)
         }）`;
       }

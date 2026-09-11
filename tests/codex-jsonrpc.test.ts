@@ -132,7 +132,7 @@ describe("createCodexJsonRpc", () => {
     rpc.dispose();
   });
 
-  it("answers server→client requests with an error reply so codex never blocks", async () => {
+  it("answers unknown server→client requests with an explicit error reply so codex never blocks", async () => {
     const { stdin, stdout, written } = fakeStreams();
     const rpc = createCodexJsonRpc(stdin, stdout, { onNotification: () => {} });
     stdout.emit(
@@ -140,12 +140,90 @@ describe("createCodexJsonRpc", () => {
       `${JSON.stringify({
         jsonrpc: "2.0",
         id: 7,
-        method: "session/approval",
-        params: { reason: "run command?" },
+        method: "item/tool/requestUserInput",
+        params: { questions: [] },
       })}\n`,
     );
     const reply = JSON.parse(written[0] ?? "{}");
-    expect(reply).toMatchObject({ id: 7, error: { code: -32601 } });
+    expect(reply).toMatchObject({
+      id: 7,
+      error: { code: -32601, message: "awefork does not handle item/tool/requestUserInput" },
+    });
+    rpc.dispose();
+  });
+
+  it("declines new-API approval requests (turn/start turns) with a deny decision", async () => {
+    const { stdin, stdout, written } = fakeStreams();
+    const seen: string[] = [];
+    const rpc = createCodexJsonRpc(stdin, stdout, {
+      onNotification: (method) => seen.push(method),
+    });
+    stdout.emit(
+      "data",
+      `${JSON.stringify({
+        jsonrpc: "2.0",
+        id: 11,
+        method: "item/commandExecution/requestApproval",
+        params: { threadId: "t1", turnId: "turn-1", itemId: "c1", command: "rm -rf /" },
+      })}\n`,
+    );
+    stdout.emit(
+      "data",
+      `${JSON.stringify({
+        jsonrpc: "2.0",
+        id: 12,
+        method: "item/fileChange/requestApproval",
+        params: { threadId: "t1", turnId: "turn-1", itemId: "f1" },
+      })}\n`,
+    );
+    const replies = written.map((chunk) => JSON.parse(chunk));
+    // Decision shapes verified against the codex 0.154 app-server schema:
+    // decline keeps the turn running so the agent can report the refusal —
+    // never a silent hang and never a default-allow.
+    expect(replies[0]).toEqual({
+      jsonrpc: "2.0",
+      id: 11,
+      result: { decision: "decline" },
+    });
+    expect(replies[1]).toEqual({
+      jsonrpc: "2.0",
+      id: 12,
+      result: { decision: "decline" },
+    });
+    // Approval requests also fan out to the notification handler.
+    expect(seen).toEqual([
+      "item/commandExecution/requestApproval",
+      "item/fileChange/requestApproval",
+    ]);
+    rpc.dispose();
+  });
+
+  it("declines legacy approval requests with the ReviewDecision deny shape", async () => {
+    const { stdin, stdout, written } = fakeStreams();
+    const rpc = createCodexJsonRpc(stdin, stdout, { onNotification: () => {} });
+    stdout.emit(
+      "data",
+      `${JSON.stringify({
+        jsonrpc: "2.0",
+        id: 21,
+        method: "execCommandApproval",
+        params: { conversationId: "c", eventId: "e" },
+      })}\n`,
+    );
+    stdout.emit(
+      "data",
+      `${JSON.stringify({
+        jsonrpc: "2.0",
+        id: 22,
+        method: "applyPatchApproval",
+        params: { conversationId: "c", eventId: "e" },
+      })}\n`,
+    );
+    const replies = written.map((chunk) => JSON.parse(chunk));
+    expect(replies[0]?.result?.decision?.denied?.rejection).toMatch(/denied/);
+    expect(replies[1]?.result?.decision?.denied?.rejection).toMatch(/denied/);
+    expect(replies[0]?.error).toBeUndefined();
+    expect(replies[1]?.error).toBeUndefined();
     rpc.dispose();
   });
 
