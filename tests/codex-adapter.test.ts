@@ -6,6 +6,7 @@ import {
   CODEX_NOT_LOGGED_IN_MESSAGE,
   type CodexRpc,
   createCodexAdapter,
+  OWNED_ELSEWHERE_MESSAGE,
 } from "../src/shared/codex-adapter";
 import type { AgentEvent, AgentInteractionRequest } from "../src/shared/types";
 
@@ -100,7 +101,7 @@ function turnPageFixture(turns: unknown[]) {
 describe("createCodexAdapter messages()", () => {
   it("maps a Turn into user and assistant rows, seconds → milliseconds", async () => {
     const { client } = fakeClient({
-      "thread/resume": () => ({ thread: THREAD_FIXTURE }),
+      "thread/read": () => ({ thread: THREAD_FIXTURE }),
       "thread/turns/list": () => turnPageFixture([TURN_FIXTURE]),
     });
     const adapter = createCodexAdapter({ client, lineagePath: await tempLineagePath() });
@@ -134,7 +135,7 @@ describe("createCodexAdapter messages()", () => {
     // Regression: 0.154's ReasoningThreadItem.content is string[]; reading it
     // as {text}[] dropped the whole thinking trail on history reload.
     const { client } = fakeClient({
-      "thread/resume": () => ({ thread: THREAD_FIXTURE }),
+      "thread/read": () => ({ thread: THREAD_FIXTURE }),
       "thread/turns/list": () =>
         turnPageFixture([
           {
@@ -161,7 +162,7 @@ describe("createCodexAdapter messages()", () => {
 
   it("lists turns ascending and full-view, following pagination cursors", async () => {
     const { client, callsOf } = fakeClient({
-      "thread/resume": () => ({ thread: THREAD_FIXTURE }),
+      "thread/read": () => ({ thread: THREAD_FIXTURE }),
       "thread/turns/list": (params) =>
         params.cursor === null
           ? { data: [TURN_FIXTURE], nextCursor: "page-2" }
@@ -186,7 +187,7 @@ describe("createCodexAdapter messages()", () => {
 
   it("drops the assistant row when a turn produced nothing visible", async () => {
     const { client } = fakeClient({
-      "thread/resume": () => ({ thread: THREAD_FIXTURE }),
+      "thread/read": () => ({ thread: THREAD_FIXTURE }),
       "thread/turns/list": () =>
         turnPageFixture([
           {
@@ -200,6 +201,83 @@ describe("createCodexAdapter messages()", () => {
     });
     const adapter = createCodexAdapter({ client, lineagePath: await tempLineagePath() });
     expect(await adapter.messages("s1")).toHaveLength(1);
+  });
+
+  it("never calls thread/resume: browsing must not take the thread writer", async () => {
+    // Regression: codex 0.154 gives each thread one exclusive writer, and
+    // thread/resume takes it. Opening a session that a live codex session
+    // already owns (aweswitch's per-account terminals) failed with
+    // "thread ... already has an active writer", so those sessions looked
+    // undiscoverable. Read-only browsing goes through thread/read.
+    const { client, callsOf } = fakeClient({
+      "thread/read": () => ({ thread: THREAD_FIXTURE }),
+      "thread/turns/list": () => turnPageFixture([TURN_FIXTURE]),
+    });
+    const adapter = createCodexAdapter({
+      client,
+      lineagePath: await tempLineagePath(),
+      cliVersion: "0.154.0",
+    });
+
+    await adapter.messages("s1");
+    expect(callsOf("thread/read")).toHaveLength(1);
+    expect(callsOf("thread/resume")).toHaveLength(0);
+  });
+
+  it("falls back to thread/resume on CLIs without thread/read", async () => {
+    // Pre-0.154 has no thread/read — and no writer lock to collide with, so
+    // resume is the right (and only) way to load the thread there.
+    const { client, callsOf } = fakeClient({
+      "thread/resume": () => ({ thread: THREAD_FIXTURE }),
+      "thread/turns/list": () => turnPageFixture([TURN_FIXTURE]),
+    });
+    const adapter = createCodexAdapter({
+      client,
+      lineagePath: await tempLineagePath(),
+      cliVersion: "0.153.1",
+    });
+
+    const rows = await adapter.messages("s1");
+    expect(callsOf("thread/resume")).toHaveLength(1);
+    expect(callsOf("thread/read")).toHaveLength(0);
+    expect(rows[0]).toMatchObject({ modelId: "gpt-5-codex" });
+  });
+});
+
+describe("createCodexAdapter prompt()", () => {
+  it("resumes the thread before turn/start, which only sees loaded threads", async () => {
+    // Reads deliberately no longer load a thread (no writer), so turn/start
+    // would answer "thread not found" unless prompt resumes first.
+    const { client, callsOf } = fakeClient({
+      "thread/resume": () => ({ thread: THREAD_FIXTURE }),
+      "turn/start": () => ({ turn: { id: "turn-9" } }),
+      "account/read": () => ({ account: { type: "chatgpt" } }),
+    });
+    const adapter = createCodexAdapter({ client, lineagePath: await tempLineagePath() });
+
+    await adapter.prompt("s1", "继续", null);
+
+    const methods = callsOf("thread/resume").length;
+    expect(methods).toBe(1);
+    expect(callsOf("turn/start")).toHaveLength(1);
+  });
+
+  it("explains a refused writer instead of echoing codex's lock wording", async () => {
+    const { client } = fakeClient({
+      "thread/resume": () => {
+        throw new Error("thread s1 already has an active writer");
+      },
+      "turn/start": () => ({ turn: { id: "turn-9" } }),
+      "account/read": () => ({ account: { type: "chatgpt" } }),
+    });
+    const adapter = createCodexAdapter({ client, lineagePath: await tempLineagePath() });
+
+    const events: AgentEvent[] = [];
+    await adapter.subscribe((event) => events.push(event));
+    await expect(adapter.prompt("s1", "继续", null)).rejects.toThrow(/active writer/);
+
+    const error = events.find((e) => e.type === "server.error");
+    expect(error).toMatchObject({ sessionId: "s1", message: OWNED_ELSEWHERE_MESSAGE });
   });
 });
 
@@ -365,6 +443,7 @@ describe("createCodexAdapter fork()", () => {
 describe("createCodexAdapter prompt/abort", () => {
   it("starts a turn with model + effort and aborts via the active turn pair", async () => {
     const { client, callsOf } = fakeClient({
+      "thread/resume": () => ({ thread: THREAD_FIXTURE }),
       "turn/start": () => ({ turn: { id: "turn-9" } }),
       "turn/interrupt": () => ({}),
     });
@@ -393,6 +472,7 @@ describe("createCodexAdapter prompt/abort", () => {
 
   it("emits server.error, rejects, and leaves no active turn when turn/start fails", async () => {
     const { client } = fakeClient({
+      "thread/resume": () => ({ thread: THREAD_FIXTURE }),
       "turn/start": () => {
         throw new Error("Usage limit reached");
       },
@@ -641,6 +721,7 @@ describe("createCodexAdapter unsupported surfaces", () => {
 describe("createCodexAdapter auth recovery", () => {
   it("says to run codex login when a failed turn/start coincides with no account", async () => {
     const { client, callsOf } = fakeClient({
+      "thread/resume": () => ({ thread: THREAD_FIXTURE }),
       "turn/start": () => {
         throw new Error("stream disconnected before headers");
       },
@@ -665,6 +746,7 @@ describe("createCodexAdapter auth recovery", () => {
 
   it("keeps the raw failure message when an account is present", async () => {
     const { client } = fakeClient({
+      "thread/resume": () => ({ thread: THREAD_FIXTURE }),
       "turn/start": () => {
         throw new Error("thread not found");
       },
@@ -682,6 +764,7 @@ describe("createCodexAdapter auth recovery", () => {
 
   it("wraps the login hint with the probe error when account/read itself fails", async () => {
     const { client } = fakeClient({
+      "thread/resume": () => ({ thread: THREAD_FIXTURE }),
       "turn/start": () => {
         throw new Error("boom");
       },

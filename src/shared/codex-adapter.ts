@@ -104,6 +104,10 @@ interface PendingInteraction {
  */
 export const CODEX_NOT_LOGGED_IN_MESSAGE = "codex 未登录或无可用账号：请先在终端运行 codex login";
 
+/** Shown when another codex process owns the thread's writer. */
+export const OWNED_ELSEWHERE_MESSAGE =
+  "该会话正被另一个 codex 实例写入（例如 aweswitch 里的会话），暂时无法继续；关闭那边后再试";
+
 const PAGE_LIMIT = 100;
 
 export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
@@ -286,11 +290,46 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
     }
   }
 
-  async function loadThread(threadId: string): Promise<CodexThread | null> {
+  /**
+   * Read a thread's metadata WITHOUT taking its writer.
+   *
+   * codex 0.154 gives each thread one exclusive writer, guarded by a lock
+   * file under `$CODEX_HOME/thread-writer-locks/`. `thread/resume` takes
+   * that lock, so opening a session that a live codex session already owns
+   * (an aweswitch per-account terminal, say) fails with "thread ... already
+   * has an active writer". Browsing history must never write, so reads go
+   * through `thread/read`, which returns the same thread object while
+   * another writer holds the thread.
+   */
+  async function readThread(threadId: string): Promise<CodexThread | null> {
+    if (!supportsThreadRead(options.cliVersion)) return resumeThread(threadId);
+    try {
+      const read = await client.request<{ thread?: CodexThread }>("thread/read", { threadId });
+      return read?.thread ?? null;
+    } catch {
+      // An older-than-advertised CLI, or a thread/read that failed for a
+      // reason resume would report better: either way resume is the shape
+      // awefork used before, and it raises a real error if the thread is gone.
+      return resumeThread(threadId);
+    }
+  }
+
+  /** Take the thread's writer. Only for calls that append to the rollout. */
+  async function resumeThread(threadId: string): Promise<CodexThread | null> {
     // Threads from thread/list come back status:notLoaded; resume loads the
     // rollout. On an already-loaded thread it is an idempotent state read.
     const resumed = await client.request<{ thread?: CodexThread }>("thread/resume", { threadId });
     return resumed?.thread ?? null;
+  }
+
+  /**
+   * A refused writer is a real, actionable state: another codex process
+   * (typically an aweswitch session) owns the thread. Say so rather than
+   * echoing codex's wording about writers and locks.
+   */
+  function isWriterConflict(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+    return message.includes("already has an active writer");
   }
 
   return {
@@ -311,7 +350,7 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
     },
 
     async messages(sessionId) {
-      const thread = await loadThread(sessionId);
+      const thread = await readThread(sessionId);
       const turns = await listTurns(sessionId);
       return turns.flatMap((turn) => mapTurn(turn, thread));
     },
@@ -422,6 +461,11 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
       if (model?.modelId) params.model = model.modelId;
       if (model?.variant) params.effort = model.variant;
       try {
+        // turn/start only sees threads this server has loaded, and reading a
+        // thread no longer loads it (readThread deliberately avoids the
+        // writer). Taking the writer here is correct: a turn appends to the
+        // rollout. Idempotent when the thread is already loaded.
+        await resumeThread(sessionId);
         const response = await client.request<{ turn?: { id?: string } }>("turn/start", params);
         if (response?.turn?.id) activeTurns.set(sessionId, response.turn.id);
       } catch (error) {
@@ -435,7 +479,9 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
         emit({
           type: "server.error",
           sessionId,
-          message: authDetail ?? `codex prompt failed: ${detail}`,
+          message: isWriterConflict(error)
+            ? OWNED_ELSEWHERE_MESSAGE
+            : (authDetail ?? `codex prompt failed: ${detail}`),
         });
         throw error instanceof Error ? error : new Error(detail);
       }
@@ -500,14 +546,33 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
   };
 }
 
-/** lastTurnId landed in codex 0.154; older CLIs take the rollback fallback. */
-function supportsLastTurnFork(version: string | null | undefined): boolean {
+/**
+ * CLI version gate. Anything unparseable or unknown assumes the newest
+ * behavior: awefork would rather try the modern call and fail loudly than
+ * silently take a degraded path.
+ */
+function atLeastCodex(version: string | null | undefined, minor: number, patch: number): boolean {
   if (!version) return true;
-  const [major = 0, minor = 0, patch = 0] = version
+  const [major = 0, minorPart = 0, patchPart = 0] = version
     .split(".")
     .map((part) => Number.parseInt(part, 10));
-  if ([major, minor, patch].some((part) => Number.isNaN(part))) return true;
-  return major > 0 || minor > 154 || (minor === 154 && patch >= 0);
+  if ([major, minorPart, patchPart].some((part) => Number.isNaN(part))) return true;
+  if (major !== 0) return true;
+  return minorPart > minor || (minorPart === minor && patchPart >= patch);
+}
+
+/** lastTurnId landed in codex 0.154; older CLIs take the rollback fallback. */
+function supportsLastTurnFork(version: string | null | undefined): boolean {
+  return atLeastCodex(version, 154, 0);
+}
+
+/**
+ * `thread/read` landed in codex 0.154 — the same release that introduced the
+ * per-thread writer lock, so a CLI without thread/read is a CLI whose resume
+ * cannot collide.
+ */
+function supportsThreadRead(version: string | null | undefined): boolean {
+  return atLeastCodex(version, 154, 0);
 }
 
 function emitCodexNotification(
