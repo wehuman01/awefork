@@ -1377,6 +1377,17 @@ export async function deleteSession(sessionId: string): Promise<void> {
   if (state.trash.includes(sessionId)) return;
   const session = state.sessions.find((s) => s.id === sessionId);
   if (!session) return;
+  // One explicit confirm before the sweep: a card's 🗑 removes the WHOLE
+  // session — a fork's copied prefix turns share it, so without this the
+  // neighbouring card reads as "collateral damage". Turn deletes confirm at
+  // the call site; this is the only gate session deletes get, so it must
+  // also carry the undo promise.
+  const ok = window.confirm(
+    `删除会话「${session.title}」？\n` +
+      `将删除这条会话的全部回合（不只是这张卡片），分出去的子分支保留。\n` +
+      `删除后在提示消失前可点「撤销」或按 Ctrl+Z 恢复。`,
+  );
+  if (!ok) return;
   state.actionError = null;
   // Deleting is itself a new operation: older pending deletes become final.
   await flushPendingDeletes();
