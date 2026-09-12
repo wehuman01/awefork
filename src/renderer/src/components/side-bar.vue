@@ -282,18 +282,21 @@ function tagCount(tag: string): number {
 }
 
 /**
- * Row display caps: at most `max` colored chips per row, the rest folded into
- * one gray +N chip (full names in its tooltip) so long titles keep their room.
+ * Row display caps: a row may hold `max` chip ELEMENTS — colored chips plus,
+ * when tags overflow, one gray +N (full names in its tooltip). Overflow always
+ * reserves one slot, so even a heavily-tagged session keeps one color chip
+ * and room for the title.
  */
 function rowTags(
   sessionId: string,
   max: number,
 ): { tags: string[]; more: number; hidden: string[] } {
   const tags = tagsOf(sessionId);
+  const cap = tags.length > max ? Math.max(1, max - 1) : max;
   return {
-    tags: tags.slice(0, max),
-    more: Math.max(0, tags.length - max),
-    hidden: tags.slice(max),
+    tags: tags.slice(0, cap),
+    more: Math.max(0, tags.length - cap),
+    hidden: tags.slice(cap),
   };
 }
 
@@ -371,7 +374,7 @@ function openInTerminal(): void {
   void openSessionTerminal(active.sessionId);
 }
 
-/** Same soft delete as the canvas 🗑 chip: instant, the undo toast rules. */
+/** Same soft delete as the canvas 🗑 chip; deleteSession owns the confirm. */
 function beginDelete(): void {
   const active = menu.value;
   if (!active) return;

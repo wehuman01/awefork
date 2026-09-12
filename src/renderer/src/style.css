@@ -1032,20 +1032,24 @@ textarea {
     opacity 0.15s;
 }
 
-/* story identity band: the selected session's first tag paints a rounded
-   ribbon on every card of the tree (--story-tag, set on .world; transparent
-   when the story is untagged). A pseudo-element so border/box-shadow states
-   (selected/running/hit) never repaint it. */
-.world .turn::after {
-  content: "";
+/* story identity bands: one narrow stripe per tag of the selected story,
+   stacked left-to-right on every card's left edge (rendered as real elements
+   in session-canvas so each band keeps its own rounded ends). Outside the
+   card's border-radius/overflow states, so selected/running/hit repaints
+   never touch them. */
+.story-bands {
   position: absolute;
   left: -1.5px;
   top: 12px;
   bottom: 12px;
+  display: flex;
+  gap: 1.5px;
+  pointer-events: none;
+}
+
+.story-band {
   width: 3px;
   border-radius: 3px;
-  background: var(--story-tag, transparent);
-  pointer-events: none;
 }
 
 .turn.dimmed {

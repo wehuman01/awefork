@@ -58,6 +58,14 @@
         @mousedown.stop
         @click="selectNode(node)"
       >
+        <div v-if="storyTagColors.length > 0" class="story-bands" aria-hidden="true">
+          <span
+            v-for="(color, i) in storyTagColors"
+            :key="i"
+            class="story-band"
+            :style="{ background: color }"
+          ></span>
+        </div>
         <button
           type="button"
           class="del-chip"
@@ -318,16 +326,16 @@ const backendLabel = computed(() => BACKEND_LABELS[store.activeBackend]);
 
 const worldStyle = computed(() => ({
   transform: `translate(${tx.value}px, ${ty.value}px) scale(${scale.value})`,
-  // The story's identity band: the selected session's first tag paints a
-  // left-edge stripe on every card of the tree (see .turn in style.css).
-  "--story-tag": storyTagColor.value ?? "transparent",
 }));
 
-/** First tag color of the selected session; null when the story is untagged. */
-const storyTagColor = computed(() => {
+/**
+ * The selected story's tag colors — every card carries one stacked band per
+ * tag on its left edge, so a multi-labeled story reads as a small stripe
+ * group instead of an arbitrary "first tag" pick.
+ */
+const storyTagColors = computed(() => {
   const id = store.selectedId;
-  const first = id ? tagsOf(id)[0] : undefined;
-  return first ? tagColor(first) : null;
+  return id ? tagsOf(id).map((tag) => tagColor(tag)) : [];
 });
 
 const svgSize = computed(() => {
