@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseInline, parseMarkdown } from "../src/renderer/src/markdown";
+import { renderTex } from "../src/renderer/src/math";
 
 describe("parseMarkdown blocks", () => {
   it("parses a fenced code block with its language", () => {
@@ -316,5 +317,84 @@ describe("absolute POSIX paths", () => {
     expect(parseInline("km/h 和 and/or 不是路径，./x 和 ~/notes 也打不开")).toEqual([
       { kind: "text", text: "km/h 和 and/or 不是路径，./x 和 ~/notes 也打不开" },
     ]);
+  });
+});
+
+describe("math", () => {
+  it("parses a \\[…\\] block with all backslashes intact", () => {
+    const blocks = parseMarkdown(
+      "前文\n\n\\[\n\\mathbf y_g\\mid\\boldsymbol\\mu_g\n\\sim N(H_g\\mu_g)\n\\]",
+    );
+    expect(blocks[1]).toEqual({
+      kind: "mathBlock",
+      tex: "\\mathbf y_g\\mid\\boldsymbol\\mu_g\n\\sim N(H_g\\mu_g)",
+    });
+  });
+
+  it("starts a math block even with no blank line before it", () => {
+    const blocks = parseMarkdown("如观测模型\n\\[\ny \\sim N(\\mu, \\Sigma)\n\\]");
+    expect(blocks).toHaveLength(2);
+    expect(blocks[0]).toEqual({
+      kind: "paragraph",
+      inline: [{ kind: "text", text: "如观测模型" }],
+    });
+    expect(blocks[1]).toEqual({ kind: "mathBlock", tex: "y \\sim N(\\mu, \\Sigma)" });
+  });
+
+  it("parses $$ blocks, single-line and multi-line", () => {
+    expect(parseMarkdown("$$ x^2 + y^2 $$")[0]).toEqual({ kind: "mathBlock", tex: "x^2 + y^2" });
+    expect(parseMarkdown("$$\na + b\n$$")[0]).toEqual({ kind: "mathBlock", tex: "a + b" });
+  });
+
+  it("treats an unterminated $$ as math to end of input (mid-stream)", () => {
+    expect(parseMarkdown("$$\n\\frac{a}{b}")).toEqual([{ kind: "mathBlock", tex: "\\frac{a}{b}" }]);
+  });
+
+  it("keeps emphasis marks inside math literal", () => {
+    const tex = "x_i * y_j ** z";
+    const blocks = parseMarkdown(`$$\n${tex}\n$$`);
+    expect(blocks[0]).toEqual({ kind: "mathBlock", tex });
+  });
+
+  it("parses inline $…$ and \\(…\\) and $$…$$ spans in prose", () => {
+    expect(parseInline("当 $x_i > 0$ 时")).toEqual([
+      { kind: "text", text: "当 " },
+      { kind: "math", tex: "x_i > 0", display: false },
+      { kind: "text", text: " 时" },
+    ]);
+    expect(parseInline("设 \\(\\alpha\\) 为角")).toEqual([
+      { kind: "text", text: "设 " },
+      { kind: "math", tex: "\\alpha", display: false },
+      { kind: "text", text: " 为角" },
+    ]);
+    expect(parseInline("满足 $$x = 1$$ 即可")).toEqual([
+      { kind: "text", text: "满足 " },
+      { kind: "math", tex: "x = 1", display: true },
+      { kind: "text", text: " 即可" },
+    ]);
+  });
+
+  it("keeps currency and lone dollars literal", () => {
+    expect(parseInline("花了 $5, 总价 $10")).toEqual([{ kind: "text", text: "花了 $5, 总价 $10" }]);
+    expect(parseInline("一个 $ 符号")).toEqual([{ kind: "text", text: "一个 $ 符号" }]);
+  });
+
+  it("leaves $$…text…$$ on one line to paragraph parsing", () => {
+    const blocks = parseMarkdown("$$x$$ and $$y$$");
+    expect(blocks[0]?.kind).toBe("paragraph");
+    if (blocks[0]?.kind === "paragraph") {
+      expect(blocks[0].inline).toEqual([
+        { kind: "math", tex: "x", display: true },
+        { kind: "text", text: " and " },
+        { kind: "math", tex: "y", display: true },
+      ]);
+    }
+  });
+
+  it("renders tex through katex and degrades bad tex without throwing", () => {
+    const ok = renderTex("\\mathbf y_g\\mid\\mu_g", true);
+    expect(ok).toContain("katex");
+    expect(ok).toContain("katex-display");
+    expect(renderTex("\\notacommand{", false)).toContain("katex-error");
   });
 });

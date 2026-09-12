@@ -1,9 +1,11 @@
 /**
  * Renders markdown.ts's block tree as vnodes. Text only ever becomes text
- * nodes here, so reply content cannot smuggle in HTML; links route through
- * the openExternal IPC (shell.openExternal) instead of navigating the app
- * window. Single newlines inside a paragraph render as <br> — the chat-pane
- * reading of a hard-wrapped model reply.
+ * nodes here, so reply content cannot smuggle in HTML — the sole exception
+ * is math: math.ts renders TeX through KaTeX (trust disabled, errors shown
+ * as red source) and that output is injected as innerHTML. Links route
+ * through the openExternal IPC (shell.openExternal) instead of navigating
+ * the app window. Single newlines inside a paragraph render as <br> — the
+ * chat-pane reading of a hard-wrapped model reply.
  */
 
 import { defineComponent, h, type VNode, type VNodeChild } from "vue";
@@ -15,6 +17,7 @@ import {
   type MdListItem,
   parseMarkdown,
 } from "../markdown";
+import { renderTex } from "../math";
 import { reportActionError } from "../state";
 import CodeBlock from "./code-block.vue";
 
@@ -46,6 +49,14 @@ function renderInline(nodes: readonly MdInline[]): VNodeChild[] {
         break;
       case "code":
         out.push(h("code", { class: "md-code" }, node.text));
+        break;
+      case "math":
+        out.push(
+          h("span", {
+            class: node.display ? "md-math md-math-display" : "md-math",
+            innerHTML: renderTex(node.tex, node.display),
+          }),
+        );
         break;
       case "strong":
         out.push(h("strong", renderInline(node.children)));
@@ -96,6 +107,8 @@ function renderBlock(block: MdBlock): VNode {
       return h(`h${Math.min(block.level, 6)}`, { class: "md-h" }, renderInline(block.inline));
     case "code":
       return h(CodeBlock, { lang: block.lang, code: block.code });
+    case "mathBlock":
+      return h("div", { class: "md-math md-math-display", innerHTML: renderTex(block.tex, true) });
     case "hr":
       return h("hr", { class: "md-hr" });
     case "quote":

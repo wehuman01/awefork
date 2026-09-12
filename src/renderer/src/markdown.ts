@@ -2,9 +2,11 @@
  * Markdown parser for agent replies in the branch-context pane.
  *
  * Covers the subset models actually emit — fenced code, ATX headings, nested
- * lists, blockquotes, GFM tables, and the usual inline marks. It outputs a
+ * lists, blockquotes, GFM tables, math spans ($$…$$, \[…\], $…$, \(…\)), and
+ * the usual inline marks. It outputs a
  * plain block/inline tree (no HTML strings anywhere); markdown-view maps that
- * tree onto vnodes, so untrusted reply text can never inject markup. Input
+ * tree onto vnodes, so untrusted reply text can never inject markup. Math
+ * nodes carry the raw TeX and are rendered by KaTeX downstream. Input
  * that matches no rule simply stays literal text, the same way it renders
  * today; an unclosed ``` fence swallows the rest of the input as code, which
  * is exactly right while a reply is still streaming in.
@@ -15,6 +17,7 @@ import { DRIVE_PATH, isLocalPath, openablePath, POSIX_PATH } from "../../shared/
 export type MdInline =
   | { kind: "text"; text: string }
   | { kind: "code"; text: string }
+  | { kind: "math"; tex: string; display: boolean }
   | { kind: "strong"; children: MdInline[] }
   | { kind: "em"; children: MdInline[] }
   | { kind: "del"; children: MdInline[] }
@@ -34,6 +37,7 @@ export interface MdListItem {
 
 export type MdBlock =
   | { kind: "code"; lang: string; code: string }
+  | { kind: "mathBlock"; tex: string }
   | { kind: "heading"; level: number; inline: MdInline[] }
   | { kind: "paragraph"; inline: MdInline[] }
   | MdListBlock
@@ -62,8 +66,50 @@ export function parseInline(text: string): MdInline[] {
   while (i < text.length) {
     const ch = text[i] ?? "";
 
+    // Math spans must be recognized before the escape and emphasis rules:
+    // the escape rule would strip the \[ and \( delimiters, and emphasis
+    // would eat the _ inside subscripts like \mu_g.
+    if (ch === "$") {
+      if (text[i + 1] === "$") {
+        const close = text.indexOf("$$", i + 2);
+        if (close >= 0 && text.slice(i + 2, close).trim() !== "") {
+          flush();
+          out.push({ kind: "math", tex: text.slice(i + 2, close), display: true });
+          i = close + 2;
+        } else {
+          buf += "$$";
+          i += 2;
+        }
+        continue;
+      }
+      // Single-$ span rules keep prose literal: no space right after the
+      // opener, none before the closer, and no digit right after the closer
+      // — so "$5, $10" stays currency while "$x_i + 1$" becomes math.
+      const next = text[i + 1] ?? "";
+      const close = next !== "" && !/\s/.test(next) ? text.indexOf("$", i + 1) : -1;
+      const tex = close > i ? text.slice(i + 1, close) : "";
+      if (close > i && !/^\s|\s$/.test(tex) && !/\d/.test(text[close + 1] ?? "")) {
+        flush();
+        out.push({ kind: "math", tex, display: false });
+        i = close + 1;
+      } else {
+        buf += "$";
+        i += 1;
+      }
+      continue;
+    }
+
     if (ch === "\\") {
       const next = text[i + 1] ?? "";
+      if (next === "(" || next === "[") {
+        const close = text.indexOf(next === "(" ? "\\)" : "\\]", i + 2);
+        if (close >= 0 && text.slice(i + 2, close).trim() !== "") {
+          flush();
+          out.push({ kind: "math", tex: text.slice(i + 2, close), display: next === "[" });
+          i = close + 2;
+          continue;
+        }
+      }
       if (next !== "" && "\\`*_~[]()#!>|+-".includes(next)) {
         buf += next;
         i += 2;
@@ -231,6 +277,62 @@ const HEADING = /^ {0,3}(#{1,6})(?:\s+(.*))?$/;
 const HR = /^ {0,3}((?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/;
 const QUOTE = /^ {0,3}>/;
 const ITEM = /^(\s*)([-*+]|(\d+)[.)])(?:\s+(.*))?$/;
+/** A display-math block starts where a line opens with $$ or \[. */
+const MATH_OPEN = /^ {0,3}(\$\$|\\\[)(.*)$/;
+
+/**
+ * The math block this line opens, or null. A line like "$$x$$ and $$y$$" —
+ * a closer with more text after it — is inline math in prose, so it is NOT a
+ * block start; callers (block dispatch and the paragraph gatherer) must agree
+ * on that or the line would be rejected by one and re-read forever by the other.
+ */
+function mathOpener(line: string): { rest: string; closer: string } | null {
+  const match = line.match(MATH_OPEN);
+  if (!match) return null;
+  const opener = match[1] ?? "$$";
+  const closer = opener === "$$" ? "$$" : "\\]";
+  const rest = match[2] ?? "";
+  const at = rest.indexOf(closer);
+  if (at >= 0 && rest.slice(at + closer.length).trim() !== "") return null;
+  return { rest, closer };
+}
+
+/**
+ * Index of a closing "$$" (or "\]" for brackets) that ends the line — the
+ * same check mathOpener uses for the opener line, here for gather lines.
+ */
+function mathCloseAt(line: string, closer: string): number {
+  const idx = line.indexOf(closer);
+  if (idx === -1) return -1;
+  return line.slice(idx + closer.length).trim() === "" ? idx : -1;
+}
+
+function mathBlockAt(
+  lines: string[],
+  rest: string,
+  closer: string,
+  start: number,
+): { tex: string; next: number } {
+  const body: string[] = [];
+  const closeAt = mathCloseAt(rest, closer);
+  if (closeAt >= 0) {
+    return { tex: rest.slice(0, closeAt).trim(), next: start + 1 };
+  }
+  if (rest.trim() !== "") body.push(rest);
+  let i = start + 1;
+  while (i < lines.length) {
+    const cur = lines[i] ?? "";
+    const at = mathCloseAt(cur, closer);
+    if (at >= 0) {
+      if (cur.slice(0, at).trim() !== "") body.push(cur.slice(0, at));
+      return { tex: body.join("\n").trim(), next: i + 1 };
+    }
+    body.push(cur);
+    i += 1;
+  }
+  // Unterminated opener swallows the rest of the input — correct mid-stream.
+  return { tex: body.join("\n").trim(), next: i };
+}
 
 export function parseMarkdown(source: string): MdBlock[] {
   const lines = source.replace(/\r\n?/g, "\n").split("\n");
@@ -264,6 +366,14 @@ export function parseMarkdown(source: string): MdBlock[] {
         i += 1;
       }
       blocks.push({ kind: "code", lang, code: body.join("\n") });
+      continue;
+    }
+
+    const opener = mathOpener(line);
+    if (opener) {
+      const parsed = mathBlockAt(lines, opener.rest, opener.closer, i);
+      blocks.push({ kind: "mathBlock", tex: parsed.tex });
+      i = parsed.next;
       continue;
     }
 
@@ -316,6 +426,7 @@ export function parseMarkdown(source: string): MdBlock[] {
       if (
         cur.trim() === "" ||
         FENCE.test(cur) ||
+        mathOpener(cur) !== null ||
         HEADING.test(cur) ||
         HR.test(cur) ||
         QUOTE.test(cur) ||

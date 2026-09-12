@@ -175,6 +175,13 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
    * empty first walk covers both browsing (messages) and fork's item lookup;
    * a refused resume (a live writer elsewhere) keeps the empty result, which
    * is what a genuinely empty new thread looks like anyway.
+   *
+   * A harder case stays open here: a never-loaded thread forked in the TUI
+   * lists its forked-from PREFIX — reconstructed from the parent's rollout —
+   * while its own post-fork turns stay invisible until the rollout loads.
+   * That walk is non-empty, so the resume above never fires; turnOfItem
+   * closes the gap for fork. Plain browsing keeps the truncated view rather
+   * than taking the writer just to read.
    */
   async function listTurns(threadId: string): Promise<CodexTurn[]> {
     const walk = async (): Promise<CodexTurn[]> => {
@@ -216,12 +223,33 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
     turnIndex.set(threadId, index);
   }
 
-  /** The turn a user-message item id belongs to, fetching turns when cold. */
+  /**
+   * The turn a user-message item id belongs to, fetching turns when cold.
+   *
+   * A miss is not final: on a never-loaded forked thread, turns/list serves
+   * only the forked-from prefix (see listTurns), so the anchor turn is among
+   * the thread's own invisible turns. Loading the rollout once via
+   * thread/resume brings them up — legitimate here because every caller is a
+   * write-intending operation (fork), not a browse. A refused resume keeps
+   * the miss, except a writer conflict, which explains itself instead of
+   * masquerading as "message not found".
+   */
   async function turnOfItem(threadId: string, itemId: string): Promise<CodexTurn | null> {
-    const turns = await listTurns(threadId);
-    const turnId = turnIndex.get(threadId)?.get(itemId);
-    if (!turnId) return null;
-    return turns.find((t) => t.id === turnId) ?? null;
+    const lookup = async (): Promise<CodexTurn | null> => {
+      const turns = await listTurns(threadId);
+      const turnId = turnIndex.get(threadId)?.get(itemId);
+      if (!turnId) return null;
+      return turns.find((t) => t.id === turnId) ?? null;
+    };
+    const direct = await lookup();
+    if (direct) return direct;
+    try {
+      await resumeThread(threadId);
+    } catch (error) {
+      if (isWriterConflict(error)) throw new Error(OWNED_ELSEWHERE_MESSAGE);
+      return null;
+    }
+    return lookup();
   }
 
   function mapTurn(turn: CodexTurn, thread: CodexThread | null): ChatMessage[] {

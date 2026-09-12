@@ -1952,6 +1952,15 @@ code.md-code {
   word-break: break-word;
 }
 
+/* math spans carry KaTeX markup (see math.ts); display blocks scroll wide
+   equations horizontally instead of clipping the pane */
+.md-math-display {
+  display: block;
+  margin: 8px 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
 .md-link {
   color: var(--primary-deep);
   text-decoration: underline;

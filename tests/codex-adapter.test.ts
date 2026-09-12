@@ -98,6 +98,27 @@ function turnPageFixture(turns: unknown[]) {
   return { data: turns, nextCursor: null };
 }
 
+/**
+ * A TUI-forked thread's first turns/list answer serves only the forked-from
+ * prefix (the parent's turns, reconstructed from its rollout); the thread's
+ * own post-fork turns appear only after thread/resume loads the rollout.
+ */
+const PREFIX_TURN = {
+  id: "turn-prefix",
+  status: "completed",
+  startedAt: 1726000000,
+  completedAt: 1726000010,
+  items: [{ type: "userMessage", id: "u0", content: ["fork 前的问题"] }],
+};
+
+const OWN_TURN = {
+  id: "turn-own",
+  status: "completed",
+  startedAt: 1726000020,
+  completedAt: 1726000030,
+  items: [{ type: "userMessage", id: "u1", content: ["fork 后的新问题"] }],
+};
+
 describe("createCodexAdapter messages()", () => {
   it("maps a Turn into user and assistant rows, seconds → milliseconds", async () => {
     const { client } = fakeClient({
@@ -436,6 +457,74 @@ describe("createCodexAdapter fork()", () => {
     });
     const saved = JSON.parse(await readFile(lineagePath, "utf8"));
     expect(saved["fork-1"]).toMatchObject({ parentId: "s1", atMessageId: "u1" });
+  });
+
+  it("loads the thread's own turns when turns/list first serves only the forked-from prefix", async () => {
+    // Regression: a thread forked in the TUI lists its parent prefix without
+    // ever being loaded, so the walk is non-empty and listTurns' empty-walk
+    // resume never fires — fork at the thread's own turn used to throw
+    // "Message not found" even though the rollout held it.
+    let listCalls = 0;
+    const { client, callsOf } = fakeClient({
+      "thread/turns/list": () =>
+        turnPageFixture(++listCalls === 1 ? [PREFIX_TURN] : [PREFIX_TURN, OWN_TURN]),
+      "thread/resume": () => ({ thread: THREAD_FIXTURE }),
+      "thread/fork": () => ({
+        thread: { id: "fork-1", forkedFromId: "s1", cwd: "/demo", createdAt: 1, updatedAt: 1 },
+      }),
+    });
+    const adapter = createCodexAdapter({
+      client,
+      lineagePath: await tempLineagePath(),
+      cliVersion: "0.154.0",
+    });
+
+    const forked = await adapter.fork("s1", "u1");
+    expect(forked).toMatchObject({ id: "fork-1", parentSessionId: "s1" });
+    expect(callsOf("thread/resume")).toHaveLength(1);
+    expect(callsOf("thread/fork")[0]?.params).toMatchObject({
+      threadId: "s1",
+      lastTurnId: "turn-own",
+    });
+  });
+
+  it("explains a refused writer when the load-on-miss cannot run", async () => {
+    const { client } = fakeClient({
+      "thread/turns/list": () => turnPageFixture([PREFIX_TURN]),
+      "thread/resume": () => {
+        throw new Error("thread s1 already has an active writer");
+      },
+      "thread/fork": () => ({
+        thread: { id: "fork-1", forkedFromId: "s1", cwd: "/demo", createdAt: 1, updatedAt: 1 },
+      }),
+    });
+    const adapter = createCodexAdapter({
+      client,
+      lineagePath: await tempLineagePath(),
+      cliVersion: "0.154.0",
+    });
+
+    await expect(adapter.fork("s1", "u1")).rejects.toThrow(OWNED_ELSEWHERE_MESSAGE);
+  });
+
+  it("keeps reporting not-found when the item is missing after the load", async () => {
+    const { client, callsOf } = fakeClient({
+      "thread/turns/list": () => turnPageFixture([PREFIX_TURN, OWN_TURN]),
+      "thread/resume": () => ({ thread: THREAD_FIXTURE }),
+      "thread/fork": () => ({
+        thread: { id: "fork-1", forkedFromId: "s1", cwd: "/demo", createdAt: 1, updatedAt: 1 },
+      }),
+    });
+    const adapter = createCodexAdapter({
+      client,
+      lineagePath: await tempLineagePath(),
+      cliVersion: "0.154.0",
+    });
+
+    await expect(adapter.fork("s1", "missing")).rejects.toThrow(/not found in session/);
+    expect(callsOf("thread/resume")).toHaveLength(1);
+    expect(callsOf("thread/turns/list")).toHaveLength(2);
+    expect(callsOf("thread/fork")).toHaveLength(0);
   });
 
   it("forks without a cut point when atMessageId is null", async () => {

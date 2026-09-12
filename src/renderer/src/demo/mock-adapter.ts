@@ -132,6 +132,14 @@ const SESSION_DEFS: SessionDef[] = [
         tokens: 1500,
         minutesAgo: 780,
       },
+      {
+        id: "r8",
+        prompt: "估算 argon2 参数下单机登录吞吐的理论上限",
+        reply:
+          "单机吞吐受 CPU 约束。设核数为 $n$，单核每秒能跑的 argon2 次数为 $c$，登录到达率为 $\\lambda$：\n\n\\[\nQ_{\\max} = n \\cdot c = \\frac{n}{t_{\\text{hash}}}, \\quad t_{\\text{hash}} \\approx 2^{m/2} \\cdot t_{\\text{ref}}\n\\]\n\n当 $\\lambda > Q_{\\max}$ 时排队开始堆积，P95 延迟近似为：\n\n$$\nW_q \\approx \\frac{\\rho}{1 - \\rho} \\cdot \\frac{1}{Q_{\\max}}, \\quad \\rho = \\frac{\\lambda}{Q_{\\max}}\n$$\n\n按 m = 64 MiB 实测单核 $t_{\\text{hash}} \\approx 90\\text{ms}$，16 核即 $Q_{\\max} \\approx 178/s$，压测到 2400 QPS 的结论一致。",
+        tokens: 1200,
+        minutesAgo: 720,
+      },
     ],
   },
   {

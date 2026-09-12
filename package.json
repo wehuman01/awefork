@@ -74,6 +74,7 @@
     "vue-tsc": "^3.3.11"
   },
   "dependencies": {
+    "katex": "^0.18.7",
     "mammoth": "^1.12.2",
     "word-extractor": "^1.0.4"
   }
