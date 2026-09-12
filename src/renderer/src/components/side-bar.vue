@@ -231,7 +231,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import type { SessionGroup, SessionTreeNode } from "../../../shared/session-tree";
 import type { SessionSummary } from "../../../shared/types";
 import { shortPath } from "../format";
@@ -275,6 +275,14 @@ function toggleTagFilter(tag: string): void {
     ? activeTagFilters.value.filter((t) => t !== tag)
     : [...activeTagFilters.value, tag];
 }
+
+// A filter whose tag died — edited off its last session, or left behind on a
+// backend switch — must not keep hiding the list with no chip left to click.
+watch(allTags, (live) => {
+  const liveSet = new Set(live);
+  const kept = activeTagFilters.value.filter((t) => liveSet.has(t));
+  if (kept.length !== activeTagFilters.value.length) activeTagFilters.value = kept;
+});
 
 /** How many visible sessions carry this tag — the tag menu's count hint. */
 function tagCount(tag: string): number {
