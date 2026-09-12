@@ -2,7 +2,12 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { DEFAULT_HOME_ID, defaultCodexHome, discoverCodexHomes } from "../src/main/codex-homes.js";
+import {
+  codexRolloutProviderFallback,
+  DEFAULT_HOME_ID,
+  defaultCodexHome,
+  discoverCodexHomes,
+} from "../src/main/codex-homes.js";
 
 const roots: string[] = [];
 
@@ -52,5 +57,62 @@ describe("discoverCodexHomes", () => {
     expect(homes[0]).toMatchObject({ id: DEFAULT_HOME_ID, path: "/custom" });
     expect(homes.slice(1).map((home) => home.id)).toEqual(["cxo-heck", "cxo-peng"]);
     expect(homes[1].path).toBe(join(accounts, "cxo-heck"));
+  });
+});
+
+describe("codexRolloutProviderFallback", () => {
+  const sessionId = "01a09310-de4f-7200-a76b-30c824db7cf5";
+
+  /** A codex home with a rollout whose thread settings name the given provider. */
+  function makeHome(config: string, providers: string[]): string {
+    const home = join(makeRoot(), ".codex");
+    const day = join(home, "sessions", "2026", "09", "12");
+    mkdirSync(day, { recursive: true });
+    writeFileSync(join(home, "config.toml"), config);
+    const settings = (provider: string, model: string) =>
+      `{"type":"event_msg","payload":{"type":"thread_settings_applied","thread_id":"${sessionId}","thread_settings":{"model":"${model}","model_provider_id":"${provider}"}}}`;
+    const lines = [
+      settings("openai", "gpt-6-astra"),
+      ...providers.map((p) => settings(p, "glm-5.3")),
+    ];
+    writeFileSync(
+      join(day, `rollout-2026-09-12T08-42-31-${sessionId}.jsonl`),
+      `${lines.join("\n")}\n`,
+    );
+    return home;
+  }
+
+  it("returns the config default when the recorded provider is gone", () => {
+    const home = makeHome('model = "glm-5.3"\n', ["custom"]);
+    expect(codexRolloutProviderFallback(home, sessionId)).toBe("openai");
+  });
+
+  it("falls back to openai when the config default itself is unresolvable", () => {
+    const home = makeHome('model_provider = "custom"\n', ["other"]);
+    expect(codexRolloutProviderFallback(home, sessionId)).toBe("openai");
+  });
+
+  it("returns the configured default provider, not just openai", () => {
+    const home = makeHome(
+      'model_provider = "aweswitch"\n\n[model_providers.aweswitch]\nname = "x"\n',
+      ["custom"],
+    );
+    expect(codexRolloutProviderFallback(home, sessionId)).toBe("aweswitch");
+  });
+
+  it("yields null while the recorded provider is still defined", () => {
+    const home = makeHome('[model_providers.custom]\nname = "x"\n', ["custom"]);
+    expect(codexRolloutProviderFallback(home, sessionId)).toBeNull();
+  });
+
+  it("yields null when the recorded provider is the config default", () => {
+    const home = makeHome('model_provider = "custom"\n', ["custom"]);
+    expect(codexRolloutProviderFallback(home, sessionId)).toBeNull();
+  });
+
+  it("yields null without a rollout or recorded settings", () => {
+    const home = makeHome('model = "glm-5.3"\n', []);
+    expect(codexRolloutProviderFallback(home, sessionId)).toBeNull();
+    expect(codexRolloutProviderFallback(join(makeRoot(), ".codex"), sessionId)).toBeNull();
   });
 });

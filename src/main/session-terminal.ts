@@ -29,6 +29,13 @@ export interface SessionTerminalRequest {
    * home cannot see those rollouts. Null for opencode and default-home codex.
    */
   codexHome: string | null;
+  /**
+   * Provider to force with `-c model_provider=…` when the rollout's last
+   * recorded provider no longer exists in the home's config.toml (config
+   * switchers rewrite it); resume would crash at bootstrap otherwise. Null
+   * when the recorded provider is still resolvable.
+   */
+  codexProviderOverride?: string | null;
 }
 
 export type SessionTerminalResult = { ok: true } | { ok: false; error: string };
@@ -53,6 +60,18 @@ export interface SessionTerminalDeps {
 /** Session ids are opaque CLI tokens; anything beyond these chars never reaches a script unquoted. */
 const SAFE_SESSION_ID = /^[A-Za-z0-9._-]+$/;
 
+/**
+ * Provider ids are embedded raw (the batch body has no quoting); values from
+ * a hand-edited config that fall outside this set are dropped, not written.
+ */
+const SAFE_PROVIDER_ID = /^[A-Za-z0-9_-]+$/;
+
+/** The `-c model_provider=…` suffix a codex resume needs, or "" when none. */
+function providerOverrideArg(request: SessionTerminalRequest): string {
+  const id = request.codexProviderOverride ?? null;
+  return id !== null && SAFE_PROVIDER_ID.test(id) ? ` -c model_provider=${id}` : "";
+}
+
 /** POSIX single-quote: the only characters a '…'-wrapped string cannot hold are quotes themselves. */
 export function shellQuote(value: string): string {
   return `'${value.replaceAll("'", `'\\''`)}'`;
@@ -71,7 +90,7 @@ export function sessionScriptBody(request: SessionTerminalRequest): string {
   }
   lines.push(
     request.backend === "codex"
-      ? `exec codex resume ${shellQuote(request.sessionId)}`
+      ? `exec codex resume ${shellQuote(request.sessionId)}${providerOverrideArg(request)}`
       : `exec opencode -s ${shellQuote(request.sessionId)}`,
   );
   return `${lines.join("\n")}\n`;
@@ -89,7 +108,7 @@ export function sessionBatchBody(request: SessionTerminalRequest): string {
   }
   lines.push(
     request.backend === "codex"
-      ? `codex resume ${request.sessionId}`
+      ? `codex resume ${request.sessionId}${providerOverrideArg(request)}`
       : `opencode -s ${request.sessionId}`,
   );
   return `${lines.join("\r\n")}\r\n`;

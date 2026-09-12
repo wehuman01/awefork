@@ -91,6 +91,18 @@ describe("sessionScriptBody", () => {
     const local = sessionScriptBody({ ...CODEX_FOREIGN, codexHome: null });
     expect(local).not.toContain("CODEX_HOME");
   });
+
+  it("forces the fallback provider after the session id", () => {
+    const body = sessionScriptBody({ ...CODEX_FOREIGN, codexProviderOverride: "openai" });
+    expect(body).toContain(
+      "exec codex resume '6f0e9b28-1111-2222-3333-444455556666' -c model_provider=openai",
+    );
+  });
+
+  it("drops a provider override that could smuggle script characters", () => {
+    const body = sessionScriptBody({ ...CODEX_FOREIGN, codexProviderOverride: "x; rm -rf /" });
+    expect(body).toContain("exec codex resume '6f0e9b28-1111-2222-3333-444455556666'\n");
+  });
 });
 
 describe("sessionBatchBody", () => {
@@ -112,6 +124,12 @@ describe("sessionBatchBody", () => {
     );
     expect(sessionBatchBody(CODEX_FOREIGN)).toContain(
       "codex resume 6f0e9b28-1111-2222-3333-444455556666",
+    );
+  });
+
+  it("forces the fallback provider after the session id", () => {
+    expect(sessionBatchBody({ ...CODEX_FOREIGN, codexProviderOverride: "openai" })).toContain(
+      "codex resume 6f0e9b28-1111-2222-3333-444455556666 -c model_provider=openai",
     );
   });
 });

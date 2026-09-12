@@ -23,7 +23,11 @@ import type {
   PromptAttachment,
 } from "../shared/types.js";
 import type { BackendRegistry } from "./backend-registry.js";
-import { codexHomeForSession, DEFAULT_HOME_ID } from "./codex-homes.js";
+import {
+  codexHomeForSession,
+  codexRolloutProviderFallback,
+  terminalDefaultCodexHome,
+} from "./codex-homes.js";
 import { convertDocumentToText } from "./document-convert.js";
 import { openSessionInTerminal } from "./session-terminal.js";
 import { checkForUpdates, openRelease, skipUpdate } from "./update-check.js";
@@ -217,6 +221,8 @@ export function registerIpc(registry: BackendRegistry): void {
   // The session is re-resolved through the adapter rather than trusting the
   // renderer for the working directory; codex sessions in aweswitch account
   // homes additionally carry that home's CODEX_HOME so the TUI can see them.
+  // A rollout recorded under a provider the home's config no longer defines
+  // gets the current default forced on, or the resume crashes at bootstrap.
   ipcMain.handle(
     "awefork:openSessionTerminal",
     async (_event: IpcMainInvokeEvent, backend: BackendId, sessionId: string) => {
@@ -226,15 +232,22 @@ export function registerIpc(registry: BackendRegistry): void {
       const session = sessions.find((entry) => entry.id === sessionId);
       if (!session) return { ok: false, error: `会话 ${sessionId} 不存在，可能已被删除` };
       let codexHome: string | null = null;
+      let codexProviderOverride: string | null = null;
       if (id === "codex") {
         const home = codexHomeForSession(sessionId);
-        codexHome = home !== null && home.id !== DEFAULT_HOME_ID ? home.path : null;
+        // Compare against ~/.codex, not the home id: a session under an
+        // inherited CODEX_HOME lives in the "default" home yet still needs
+        // the export, or the terminal codex looks in ~/.codex.
+        codexHome = home !== null && home.path !== terminalDefaultCodexHome() ? home.path : null;
+        codexProviderOverride =
+          home !== null ? codexRolloutProviderFallback(home.path, sessionId) : null;
       }
       return openSessionInTerminal({
         backend: id,
         sessionId,
         directory: session.directory,
         codexHome,
+        codexProviderOverride,
       });
     },
   );

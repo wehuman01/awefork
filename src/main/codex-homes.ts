@@ -1,4 +1,4 @@
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 
@@ -116,4 +116,99 @@ export function codexHomeForSession(
     if (findRolloutRelPath(home.path, sessionId)) return home;
   }
   return null;
+}
+
+/**
+ * The home a terminal `codex` uses when the script exports no CODEX_HOME:
+ * plain `~/.codex`. A session living anywhere else — an aweswitch account
+ * home, or a home the app inherited via CODEX_HOME — must carry the export.
+ */
+export function terminalDefaultCodexHome(userHome: string = homedir()): string {
+  return join(userHome, ".codex");
+}
+
+/**
+ * The provider a terminal `codex resume` must be forced onto with
+ * `-c model_provider=…`, or null when no override is needed.
+ *
+ * Resume restores the rollout's last thread settings, provider included. When
+ * that provider has since disappeared from the home's config.toml — profile
+ * switchers like aweswitch/cc-switch rewrite the whole file — the TUI dies at
+ * bootstrap with "Model provider `x` not found". Forcing the config's current
+ * default provider keeps the session resumable; sessions whose recorded
+ * provider still exists resume untouched.
+ */
+export function codexRolloutProviderFallback(homePath: string, sessionId: string): string | null {
+  const rel = findRolloutRelPath(homePath, sessionId);
+  if (rel === null) return null;
+  const recorded = lastRecordedRolloutProvider(join(homePath, "sessions", rel));
+  if (recorded === null) return null;
+  const config = readCodexProviderConfig(join(homePath, "config.toml"));
+  if (recorded === "openai" || recorded === config.default || config.defined.has(recorded)) {
+    return null;
+  }
+  // A default the config itself cannot resolve is no fallback at all.
+  const fallback =
+    config.default === "openai" || config.defined.has(config.default) ? config.default : "openai";
+  return /^[A-Za-z0-9_-]+$/.test(fallback) ? fallback : null;
+}
+
+/** The last provider the rollout's thread settings recorded, if any. */
+function lastRecordedRolloutProvider(rolloutPath: string): string | null {
+  let rollout: string;
+  try {
+    rollout = readFileSync(rolloutPath, "utf8");
+  } catch {
+    return null;
+  }
+  let provider: string | null = null;
+  for (const line of rollout.split("\n")) {
+    if (!line.includes('"thread_settings_applied"')) continue;
+    try {
+      const parsed = JSON.parse(line) as {
+        payload?: { thread_settings?: { model_provider_id?: unknown } };
+      };
+      const value = parsed.payload?.thread_settings?.model_provider_id;
+      if (typeof value === "string" && value !== "") provider = value;
+    } catch {
+      // A torn final line still leaves the earlier settings usable.
+    }
+  }
+  return provider;
+}
+
+/**
+ * The root `model_provider` and the `[model_providers.<id>]` table ids of a
+ * codex config. "openai" is codex's built-in default, so it stands even when
+ * the file is missing or names nothing.
+ */
+function readCodexProviderConfig(path: string): { default: string; defined: Set<string> } {
+  let config = "openai";
+  const defined = new Set<string>();
+  let configText: string;
+  try {
+    configText = readFileSync(path, "utf8");
+  } catch {
+    return { default: config, defined };
+  }
+  let inRootTable = true;
+  for (const line of configText.split("\n")) {
+    const section = line.match(/^\s*\[([^\]]*)\]/);
+    if (section) {
+      inRootTable = false;
+      const table = section[1] ?? "";
+      if (table.startsWith("model_providers.")) {
+        const id = table
+          .slice("model_providers.".length)
+          .trim()
+          .replace(/^"+|"+$/g, "");
+        if (id !== "") defined.add(id);
+      }
+      continue;
+    }
+    if (!inRootTable) continue;
+    const match = line.match(/^\s*model_provider\s*=\s*"?([^"\s#]+)"?/);
+    if (match?.[1]) config = match[1];
+  }
+  return { default: config, defined };
 }
