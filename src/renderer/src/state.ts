@@ -93,6 +93,12 @@ interface AppState {
   /** Session ids the user starred (persisted in pins.json). */
   pins: string[];
   /**
+   * The user's session labels, e.g. 执行 / 实验设计 / 咨询 (persisted in
+   * tags.json as sessionId → ordered tag names). Pure awefork overlay like
+   * pins: the sessions themselves keep living in the agent backend.
+   */
+  tags: Record<string, string[]>;
+  /**
    * Sessions and directories tucked away (persisted in archive.json).
    * Pure awefork overlay: the data keeps living in the agent backend.
    */
@@ -181,6 +187,7 @@ const state = reactive<AppState>({
   deletedToast: null,
   lineage: {},
   pins: [],
+  tags: {},
   archive: { sessions: [], directories: [] },
   selectedDirectory: null,
   selectedId: null,
@@ -713,6 +720,11 @@ async function bootBackend(backend: BackendId): Promise<void> {
     state.pins = await window.awefork.pins(backend);
   } catch {
     state.pins = [];
+  }
+  try {
+    state.tags = await window.awefork.tags(backend);
+  } catch {
+    state.tags = {};
   }
   try {
     state.archive = await window.awefork.archive(backend);
@@ -1303,6 +1315,51 @@ export async function togglePin(sessionId: string): Promise<void> {
   }
 }
 
+// ── session tags (执行 / 实验设计 / 咨询 …) ────────────────────────────
+
+/** One session's tags, in the order they were set; empty when untagged. */
+export function tagsOf(sessionId: string): string[] {
+  return state.tags[sessionId] ?? [];
+}
+
+/** Every tag in use, most-used first (ties alphabetical) — the filter shelf. */
+export const allTags = computed<string[]>(() => {
+  const counts = new Map<string, number>();
+  for (const tags of Object.values(state.tags)) {
+    for (const tag of tags) counts.set(tag, (counts.get(tag) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([t]) => t);
+});
+
+/** Deterministic hue for a tag name — same label, same color, every view. */
+function tagHue(tag: string): number {
+  let hash = 0;
+  for (let i = 0; i < tag.length; i += 1) hash = (hash * 31 + tag.charCodeAt(i)) >>> 0;
+  return hash % 360;
+}
+
+/** Solid chip text color for a tag. */
+export function tagColor(tag: string): string {
+  return `hsl(${tagHue(tag)} 55% 42%)`;
+}
+
+/** Matching 12%-alpha chip background for a tag. */
+export function tagBg(tag: string): string {
+  return `hsl(${tagHue(tag)} 65% 50% / 0.13)`;
+}
+
+/** Replace one session's tags; trims, drops empties and duplicates. */
+export async function setSessionTags(sessionId: string, tags: string[]): Promise<void> {
+  const next = [...new Set(tags.map((t) => t.trim()).filter(Boolean))];
+  try {
+    state.tags = await window.awefork.setSessionTags(state.activeBackend, sessionId, next);
+  } catch (error) {
+    state.actionError = error instanceof Error ? error.message : String(error);
+  }
+}
+
 /**
  * Soft-delete a session: it vanishes from every view at once and stays
  * undoable (the toast's 撤销 button or Ctrl+Z) until the user starts a new
@@ -1653,6 +1710,13 @@ async function hardDeleteSession(backend: BackendId, sessionId: string): Promise
   setStreamTail(backend, sessionId, null);
   setRunning(backend, sessionId, false);
   clearRecent(backend, sessionId);
+  // Main prunes the tags sidecar with the delete; mirror it locally so the
+  // filter shelf and right-click menu don't offer a dead session's labels.
+  if (sessionId in state.tags) {
+    const { [sessionId]: goneTags, ...keptTags } = state.tags;
+    void goneTags;
+    state.tags = keptTags;
+  }
   const { [sessionId]: goneMessages, ...keptMessages } = state.messagesBySession;
   void goneMessages;
   state.messagesBySession = keptMessages;
@@ -2329,6 +2393,7 @@ interface WorkspaceSnapshot {
   sessions: SessionSummary[];
   lineage: Record<string, ForkRecord>;
   pins: string[];
+  tags: Record<string, string[]>;
   trash: string[];
   archive: ArchiveState;
   selectedDirectory: string | null;
@@ -2348,6 +2413,7 @@ function parkWorkspace(backend: BackendId): void {
     sessions: [...state.sessions],
     lineage: { ...state.lineage },
     pins: [...state.pins],
+    tags: { ...state.tags },
     trash: [...state.trash],
     archive: {
       sessions: [...state.archive.sessions],
@@ -2376,6 +2442,7 @@ function restoreWorkspace(snapshot: WorkspaceSnapshot): void {
   state.sessions = snapshot.sessions;
   state.lineage = snapshot.lineage;
   state.pins = snapshot.pins;
+  state.tags = snapshot.tags;
   state.trash = snapshot.trash;
   state.archive = snapshot.archive;
   state.selectedDirectory = snapshot.selectedDirectory;
@@ -2431,6 +2498,7 @@ function resetWorkspace(): void {
   state.sessions = [];
   state.lineage = {};
   state.pins = [];
+  state.tags = {};
   state.trash = [];
   state.deletedToast = null;
   state.archive = { sessions: [], directories: [] };

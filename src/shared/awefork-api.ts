@@ -86,6 +86,14 @@ export interface AweforkApi {
   ): Promise<{ ok: boolean; error?: string }>;
   pins(backend: BackendId): Promise<string[]>;
   togglePin(backend: BackendId, sessionId: string): Promise<string[]>;
+  /** Session tags (tags.json sidecar): sessionId → ordered tag names. */
+  tags(backend: BackendId): Promise<Record<string, string[]>>;
+  /** Replace one session's tags (empty clears it); returns the whole map. */
+  setSessionTags(
+    backend: BackendId,
+    sessionId: string,
+    tags: string[],
+  ): Promise<Record<string, string[]>>;
   trash(backend: BackendId): Promise<TrashEntry[]>;
   trashAdd(backend: BackendId, sessionId: string, title: string): Promise<TrashEntry[]>;
   trashRemove(backend: BackendId, sessionId: string): Promise<TrashEntry[]>;

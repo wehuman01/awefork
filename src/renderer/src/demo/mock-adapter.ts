@@ -54,6 +54,8 @@ interface SessionDef {
   minutesAgo: number;
   /** Project directory; defaults to DIRECTORY so old defs stay one-liners. */
   directory?: string;
+  /** Preset session tags (执行 / 实验设计 / 咨询 …) for the demo's tag shelf. */
+  tags?: string[];
 }
 
 const DIRECTORY = "/demo/shop-api";
@@ -68,6 +70,7 @@ const SESSION_DEFS: SessionDef[] = [
     parent: null,
     atMessageId: null,
     minutesAgo: 1560,
+    tags: ["执行"],
     turns: [
       {
         id: "r1",
@@ -149,6 +152,7 @@ const SESSION_DEFS: SessionDef[] = [
     parent: "s-root",
     atMessageId: "r3",
     minutesAgo: 1400,
+    tags: ["执行", "实验设计"],
     turns: [
       {
         id: "j1",
@@ -185,6 +189,7 @@ const SESSION_DEFS: SessionDef[] = [
     parent: "s-jwt",
     atMessageId: "j2",
     minutesAgo: 1300,
+    tags: ["咨询"],
     turns: [
       {
         id: "o1",
@@ -212,6 +217,7 @@ const SESSION_DEFS: SessionDef[] = [
     parent: "s-root",
     atMessageId: "r3",
     minutesAgo: 1430,
+    tags: ["实验设计"],
     turns: [
       {
         id: "c1",
@@ -239,6 +245,7 @@ const SESSION_DEFS: SessionDef[] = [
     parent: "s-root",
     atMessageId: "r5",
     minutesAgo: 880,
+    tags: ["执行"],
     turns: [],
   },
   {
@@ -249,6 +256,7 @@ const SESSION_DEFS: SessionDef[] = [
     atMessageId: null,
     directory: DIRECTORY_2,
     minutesAgo: 500,
+    tags: ["咨询"],
     turns: [
       {
         id: "w1",
@@ -276,6 +284,7 @@ const SESSION_DEFS: SessionDef[] = [
     atMessageId: "w1",
     directory: DIRECTORY_2,
     minutesAgo: 470,
+    tags: ["文案"],
     turns: [
       {
         id: "wc1",
@@ -416,6 +425,13 @@ export function installMockAdapter(): void {
   let pins: string[] = [];
   let trash: TrashEntry[] = [];
   let archive: ArchiveState = { sessions: [], directories: [] };
+  // Session tags, seeded from the defs and mutated through setSessionTags —
+  // the demo's stand-in for the real tags.json sidecar.
+  let tagMap: Record<string, string[]> = Object.fromEntries(
+    [...defs.values()].flatMap((def) => (def.tags ? [[def.id, [...def.tags]]] : [])),
+  );
+  const cloneTags = (): Record<string, string[]> =>
+    Object.fromEntries(Object.entries(tagMap).map(([id, tags]) => [id, [...tags]]));
   const handlers = new Set<(envelope: BackendEventEnvelope) => void>();
   const emit = (event: AgentEvent): void => {
     for (const handler of handlers) handler({ backend: "opencode", event });
@@ -478,6 +494,9 @@ export function installMockAdapter(): void {
       messages.delete(sessionId);
       delete lineage[sessionId];
       pins = pins.filter((id) => id !== sessionId);
+      const { [sessionId]: _goneTags, ...keptTags } = tagMap;
+      void _goneTags;
+      tagMap = keptTags;
       return pins;
     },
     deleteMessage: async (_backend, sessionId, messageId) => {
@@ -612,6 +631,18 @@ export function installMockAdapter(): void {
         ? pins.filter((id) => id !== sessionId)
         : [...pins, sessionId];
       return pins;
+    },
+    tags: async () => cloneTags(),
+    setSessionTags: async (_backend, sessionId, tags) => {
+      const next = [...new Set(tags.map((t) => t.trim()).filter(Boolean))];
+      if (next.length === 0) {
+        const { [sessionId]: _gone, ...kept } = tagMap;
+        void _gone;
+        tagMap = kept;
+      } else {
+        tagMap = { ...tagMap, [sessionId]: next };
+      }
+      return cloneTags();
     },
     trash: async () => trash,
     trashAdd: async (_backend, sessionId, title) => {

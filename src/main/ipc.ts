@@ -14,6 +14,7 @@ import {
 import { readLineage } from "../shared/lineage-store.js";
 import { isLocalPath } from "../shared/local-path.js";
 import { prunePin, readPins, togglePin } from "../shared/pins-store.js";
+import { pruneTags, readTags, setSessionTags } from "../shared/tags-store.js";
 import { addTrashEntry, readTrash, removeTrashEntry } from "../shared/trash-store.js";
 import type {
   AgentInteractionResponse,
@@ -54,9 +55,10 @@ import { checkForUpdates, openRelease, skipUpdate } from "./update-check.js";
  *   renameSession(backend, id, title) -> void
  *   openSessionTerminal(backend, id) -> {ok, error?}  TUI in a system terminal
  * Overlay-store channels (per-backend files, no adapter spawn):
- *   pins / togglePin / trash / trashAdd / trashRemove / archive / archiveAdd /
- *   archiveRemove / composer / saveComposer — same shapes as before,
- *   backend-routed (composer holds the unsent draft + pane model picks).
+ *   pins / togglePin / tags / setSessionTags / trash / trashAdd / trashRemove /
+ *   archive / archiveAdd / archiveRemove / composer / saveComposer — same
+ *   shapes as before, backend-routed (composer holds the unsent draft + pane
+ *   model picks; tags maps sessionId → tag names).
  * Backend switcher:
  *   backends      -> { selected, backends: BackendInfo[] } (probe, no spawn)
  *   selectBackend -> { ok, error? }                persists; probe failure bounces back
@@ -151,6 +153,8 @@ export function registerIpc(registry: BackendRegistry): void {
       void clearSessionChanges(sessionChangesDir(registry.fileChangesDir(id), sessionId)).catch(
         () => {},
       );
+      // Tags outlive nothing: the session is gone, prune the label too.
+      void pruneTags(registry.storePaths(id).tags, sessionId).catch(() => {});
       return prunePin(registry.storePaths(id).pins, sessionId);
     },
   );
@@ -262,6 +266,16 @@ export function registerIpc(registry: BackendRegistry): void {
     "awefork:togglePin",
     (_event: IpcMainInvokeEvent, backend: BackendId, sessionId: string) =>
       togglePin(registry.storePaths(storeBackend(backend)).pins, sessionId),
+  );
+
+  ipcMain.handle("awefork:tags", async (_event: IpcMainInvokeEvent, backend: BackendId) =>
+    readTags(registry.storePaths(storeBackend(backend)).tags),
+  );
+
+  ipcMain.handle(
+    "awefork:setSessionTags",
+    (_event: IpcMainInvokeEvent, backend: BackendId, sessionId: string, tags: string[]) =>
+      setSessionTags(registry.storePaths(storeBackend(backend)).tags, sessionId, tags),
   );
 
   ipcMain.handle("awefork:trash", async (_event: IpcMainInvokeEvent, backend: BackendId) =>

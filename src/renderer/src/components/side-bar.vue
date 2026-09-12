@@ -11,6 +11,18 @@
       <span>⌕</span>
       <input v-model="query" type="text" placeholder="搜索会话" />
     </div>
+    <div v-if="allTags.length > 0" class="tag-shelf">
+      <button
+        v-for="tag in allTags"
+        :key="tag"
+        type="button"
+        class="tag-filter"
+        :class="{ on: activeTagFilters.includes(tag) }"
+        :style="{ '--tag-c': tagColor(tag) }"
+        :title="activeTagFilters.includes(tag) ? '点击取消这个筛选' : '只看带这个标签的会话'"
+        @click="toggleTagFilter(tag)"
+      >{{ activeTagFilters.includes(tag) ? "✓ " : "" }}{{ tag }}</button>
+    </div>
     <div v-if="favoriteSessions.length > 0 && !searching" class="fav-zone">
       <button type="button" class="fav-head" @click="favOpen = !favOpen">
         <span class="archive-caret">{{ favOpen ? "▾" : "▸" }}</span>
@@ -29,6 +41,17 @@
         >
           <span class="fav-dot"></span>
           <span class="fav-name">{{ sess.title || "(untitled)" }}</span>
+          <span
+            v-for="tag in rowTags(sess.id, 1).tags"
+            :key="tag"
+            class="tag-chip"
+            :style="{ color: tagColor(tag), background: tagBg(tag) }"
+          >{{ tag }}</span>
+          <span
+            v-if="rowTags(sess.id, 1).more > 0"
+            class="tag-chip tag-more"
+            :title="rowTags(sess.id, 1).hidden.join('、')"
+          >+{{ rowTags(sess.id, 1).more }}</span>
           <span class="fav-dir">{{ shortPath(sess.directory) }}</span>
         </button>
       </div>
@@ -95,6 +118,17 @@
               <span class="dot"></span>
               <span v-if="row.session.origin === 'fork'" class="fork-glyph">⎇</span>
               <span class="sess-name">{{ row.session.title || "(untitled)" }}</span>
+              <span
+                v-for="tag in rowTags(row.session.id, 2).tags"
+                :key="tag"
+                class="tag-chip"
+                :style="{ color: tagColor(tag), background: tagBg(tag) }"
+              >{{ tag }}</span>
+              <span
+                v-if="rowTags(row.session.id, 2).more > 0"
+                class="tag-chip tag-more"
+                :title="rowTags(row.session.id, 2).hidden.join('、')"
+              >+{{ rowTags(row.session.id, 2).more }}</span>
             </button>
             <button
               type="button"
@@ -146,6 +180,7 @@
       @mousedown.stop
     >
       <button type="button" class="ctx-menu-item" @click="beginRename">✏️ 重命名</button>
+      <button type="button" class="ctx-menu-item" @click="openTagMenu">🏷 设置标签…</button>
       <button type="button" class="ctx-menu-item" @click="copySessionId">📋 复制会话 ID</button>
       <button type="button" class="ctx-menu-item" @click="openInTerminal">↗ 在终端中打开</button>
       <button type="button" class="ctx-menu-item" @click="beginArchive">📦 归档会话</button>
@@ -164,6 +199,34 @@
         📦 归档这个目录…
       </button>
     </div>
+
+    <div
+      v-if="tagMenu"
+      class="ctx-menu tag-menu"
+      :style="{ left: `${tagMenu.x}px`, top: `${tagMenu.y}px` }"
+      @mousedown.stop
+    >
+      <div class="tag-menu-head">这个会话的标签</div>
+      <label v-for="tag in allTags" :key="tag" class="tag-opt">
+        <input
+          type="checkbox"
+          :checked="tagsOf(tagMenu.sessionId).includes(tag)"
+          @change="toggleSessionTag(tagMenu.sessionId, tag)"
+        />
+        <span class="tag-chip" :style="{ color: tagColor(tag), background: tagBg(tag) }">{{
+          tag
+        }}</span>
+        <span class="tag-count">{{ tagCount(tag) }}</span>
+      </label>
+      <form class="tag-new" @submit.prevent="addNewTag">
+        <input
+          v-model="newTagText"
+          type="text"
+          placeholder="＋ 新建标签，回车添加"
+          @keydown.esc.stop="closeTagMenu"
+        />
+      </form>
+    </div>
   </aside>
 </template>
 
@@ -173,6 +236,7 @@ import type { SessionGroup, SessionTreeNode } from "../../../shared/session-tree
 import type { SessionSummary } from "../../../shared/types";
 import { shortPath } from "../format";
 import {
+  allTags,
   archiveDirectory,
   archivedDirectoryViews,
   archivedSessionViews,
@@ -188,14 +252,53 @@ import {
   restoreSession,
   selectSession,
   sessionGroups,
+  setSessionTags,
   store,
   switchDirectory,
+  tagBg,
+  tagColor,
+  tagsOf,
   togglePin,
 } from "../state";
 
 const query = ref("");
 /** Per-directory expansion overrides; a directory defaults open when selected. */
 const expandedOverride = ref<Record<string, boolean>>({});
+
+// ── tag filter shelf ────────────────────────────────────────────────
+
+/** Selected filter tags; a session must carry ALL of them to stay listed. */
+const activeTagFilters = ref<string[]>([]);
+
+function toggleTagFilter(tag: string): void {
+  activeTagFilters.value = activeTagFilters.value.includes(tag)
+    ? activeTagFilters.value.filter((t) => t !== tag)
+    : [...activeTagFilters.value, tag];
+}
+
+/** How many visible sessions carry this tag — the tag menu's count hint. */
+function tagCount(tag: string): number {
+  return Object.values(store.tags).filter((tags) => tags.includes(tag)).length;
+}
+
+/**
+ * Row display caps: a row may hold `max` chip ELEMENTS — colored chips plus,
+ * when tags overflow, one gray +N (full names in its tooltip). Overflow always
+ * reserves one slot, so even a heavily-tagged session keeps one color chip
+ * and room for the title.
+ */
+function rowTags(
+  sessionId: string,
+  max: number,
+): { tags: string[]; more: number; hidden: string[] } {
+  const tags = tagsOf(sessionId);
+  const cap = tags.length > max ? Math.max(1, max - 1) : max;
+  return {
+    tags: tags.slice(0, cap),
+    more: Math.max(0, tags.length - cap),
+    hidden: tags.slice(cap),
+  };
+}
 
 // ── context menu + inline rename ────────────────────────────────────
 
@@ -212,6 +315,7 @@ function openMenu(session: SessionSummary, event: MouseEvent): void {
 function closeMenu(): void {
   menu.value = null;
   dirMenu.value = null;
+  tagMenu.value = null;
 }
 
 function openDirMenu(directory: string, event: MouseEvent): void {
@@ -270,12 +374,47 @@ function openInTerminal(): void {
   void openSessionTerminal(active.sessionId);
 }
 
-/** Same soft delete as the canvas 🗑 chip: instant, the undo toast rules. */
+/** Same soft delete as the canvas 🗑 chip; deleteSession owns the confirm. */
 function beginDelete(): void {
   const active = menu.value;
   if (!active) return;
   closeMenu();
   void deleteSession(active.sessionId);
+}
+
+// ── tag editor (右键 → 设置标签) ─────────────────────────────────────
+
+const tagMenu = ref<{ sessionId: string; x: number; y: number } | null>(null);
+const newTagText = ref("");
+
+/** Anchor near the context menu that opened it; stays until click-out/Esc. */
+function openTagMenu(): void {
+  const active = menu.value;
+  if (!active) return;
+  tagMenu.value = { sessionId: active.sessionId, x: active.x, y: active.y + 36 };
+  newTagText.value = "";
+  menu.value = null;
+}
+
+function closeTagMenu(): void {
+  tagMenu.value = null;
+  newTagText.value = "";
+}
+
+function toggleSessionTag(sessionId: string, tag: string): void {
+  const current = tagsOf(sessionId);
+  void setSessionTags(
+    sessionId,
+    current.includes(tag) ? current.filter((t) => t !== tag) : [...current, tag],
+  );
+}
+
+function addNewTag(): void {
+  const active = tagMenu.value;
+  const tag = newTagText.value.trim();
+  if (!active || !tag) return;
+  void setSessionTags(active.sessionId, [...tagsOf(active.sessionId), tag]);
+  newTagText.value = "";
 }
 
 /** Archive is fully reversible — no confirm, the archive section undoes it. */
@@ -359,13 +498,23 @@ function pinToggle(sessionId: string): void {
 
 const visibleGroups = computed<SessionGroup[]>(() => {
   const needle = query.value.trim().toLowerCase();
+  const filters = activeTagFilters.value;
   return sessionGroups.value
     .map((group) => {
-      if (!needle) return group;
+      if (!needle && filters.length === 0) return group;
       const keep = (node: SessionTreeNode): SessionTreeNode | null => {
         const children = node.children.map(keep).filter((n): n is SessionTreeNode => n !== null);
-        const hit = node.session.title.toLowerCase().includes(needle);
-        return hit || children.length > 0 ? { ...node, children } : null;
+        const tags = tagsOf(node.session.id);
+        const textHit =
+          !needle ||
+          node.session.title.toLowerCase().includes(needle) ||
+          tags.some((t) => t.toLowerCase().includes(needle));
+        const filterHit = filters.every((f) => tags.includes(f));
+        return textHit && filterHit
+          ? { ...node, children }
+          : children.length > 0
+            ? { ...node, children }
+            : null;
       };
       const roots = group.roots.map(keep).filter((n): n is SessionTreeNode => n !== null);
       return { directory: group.directory, roots };

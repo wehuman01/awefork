@@ -58,6 +58,14 @@
         @mousedown.stop
         @click="selectNode(node)"
       >
+        <div v-if="storyTagColors.length > 0" class="story-bands" aria-hidden="true">
+          <span
+            v-for="(color, i) in storyTagColors"
+            :key="i"
+            class="story-band"
+            :style="{ background: color }"
+          ></span>
+        </div>
         <button
           type="button"
           class="del-chip"
@@ -294,6 +302,8 @@ import {
   setDraftVariant,
   store,
   storySearchHits,
+  tagColor,
+  tagsOf,
   turnGraph,
 } from "../state";
 import BranchDigest from "./branch-digest.vue";
@@ -317,6 +327,16 @@ const backendLabel = computed(() => BACKEND_LABELS[store.activeBackend]);
 const worldStyle = computed(() => ({
   transform: `translate(${tx.value}px, ${ty.value}px) scale(${scale.value})`,
 }));
+
+/**
+ * The selected story's tag colors — every card carries one stacked band per
+ * tag on its left edge, so a multi-labeled story reads as a small stripe
+ * group instead of an arbitrary "first tag" pick.
+ */
+const storyTagColors = computed(() => {
+  const id = store.selectedId;
+  return id ? tagsOf(id).map((tag) => tagColor(tag)) : [];
+});
 
 const svgSize = computed(() => {
   const maxX = Math.max(0, ...graph.value.nodes.map((n) => n.x + NODE_WIDTH + 100));

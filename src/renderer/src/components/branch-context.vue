@@ -7,6 +7,14 @@
         <div class="ctx-sub" :title="selectedSession?.title ?? ''">
           <template v-if="turnMeta">{{ turnMeta }} · </template>{{ selectedSession?.title || "在画布上选一个节点" }}
         </div>
+        <div v-if="selectedTags.length > 0" class="ctx-tags">
+          <span
+            v-for="tag in selectedTags"
+            :key="tag"
+            class="tag-chip"
+            :style="{ color: tagColor(tag), background: tagBg(tag) }"
+          >{{ tag }}</span>
+        </div>
       </div>
       <div class="ctx-nav">
         <button
@@ -127,12 +135,18 @@ import {
   setPaneModel,
   stepTurn,
   store,
+  tagBg,
+  tagColor,
+  tagsOf,
 } from "../state";
 import ChatInput from "./chat-input.vue";
 import FileChangesCard from "./file-changes-card.vue";
 import MessageList from "./message-list.vue";
 
 const pane = computed(() => paneTurn.value);
+
+/** The selected session's tags — identity chips under the pane header. */
+const selectedTags = computed(() => (store.selectedId ? tagsOf(store.selectedId) : []));
 
 const chatInputEl = ref<{ focus: () => void } | null>(null);
 // 新增对话 landed: the fresh session is selected and mounted by now — put the
