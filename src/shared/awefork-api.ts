@@ -75,6 +75,15 @@ export interface AweforkApi {
     response: AgentInteractionResponse,
   ): Promise<void>;
   renameSession(backend: BackendId, sessionId: string, title: string): Promise<void>;
+  /**
+   * Open the session in the backend's native TUI inside a system terminal
+   * (`opencode -s` / `codex resume`, in the session's working directory).
+   * {ok:false,error} surfaces as a toast — the terminal itself is external.
+   */
+  openSessionTerminal(
+    backend: BackendId,
+    sessionId: string,
+  ): Promise<{ ok: boolean; error?: string }>;
   pins(backend: BackendId): Promise<string[]>;
   togglePin(backend: BackendId, sessionId: string): Promise<string[]>;
   trash(backend: BackendId): Promise<TrashEntry[]>;

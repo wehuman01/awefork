@@ -83,6 +83,7 @@ async function bootState(options: { composer?: PersistedComposer | null } = {}) 
     abort: async () => {},
     respondInteraction: async () => {},
     renameSession: async () => {},
+    openSessionTerminal: async () => ({ ok: true }),
     pins: async () => [],
     togglePin: async () => [],
     trash: async () => [],

@@ -23,7 +23,9 @@ import type {
   PromptAttachment,
 } from "../shared/types.js";
 import type { BackendRegistry } from "./backend-registry.js";
+import { codexHomeForSession, DEFAULT_HOME_ID } from "./codex-homes.js";
 import { convertDocumentToText } from "./document-convert.js";
+import { openSessionInTerminal } from "./session-terminal.js";
 import { checkForUpdates, openRelease, skipUpdate } from "./update-check.js";
 
 /**
@@ -46,6 +48,7 @@ import { checkForUpdates, openRelease, skipUpdate } from "./update-check.js";
  *   respondInteraction(backend, requestId, response) -> void  reply to a pending
  *                                                approval/interaction request
  *   renameSession(backend, id, title) -> void
+ *   openSessionTerminal(backend, id) -> {ok, error?}  TUI in a system terminal
  * Overlay-store channels (per-backend files, no adapter spawn):
  *   pins / togglePin / trash / trashAdd / trashRemove / archive / archiveAdd /
  *   archiveRemove / composer / saveComposer — same shapes as before,
@@ -207,6 +210,32 @@ export function registerIpc(registry: BackendRegistry): void {
     async (_event: IpcMainInvokeEvent, backend: BackendId, sessionId: string, title: string) => {
       const adapter = await withAdapter(storeBackend(backend));
       await adapter.renameSession(sessionId, title);
+    },
+  );
+
+  // Open the session's TUI in a system terminal (opencode -s / codex resume).
+  // The session is re-resolved through the adapter rather than trusting the
+  // renderer for the working directory; codex sessions in aweswitch account
+  // homes additionally carry that home's CODEX_HOME so the TUI can see them.
+  ipcMain.handle(
+    "awefork:openSessionTerminal",
+    async (_event: IpcMainInvokeEvent, backend: BackendId, sessionId: string) => {
+      const id = storeBackend(backend);
+      const adapter = await withAdapter(id);
+      const sessions = await adapter.listSessions();
+      const session = sessions.find((entry) => entry.id === sessionId);
+      if (!session) return { ok: false, error: `会话 ${sessionId} 不存在，可能已被删除` };
+      let codexHome: string | null = null;
+      if (id === "codex") {
+        const home = codexHomeForSession(sessionId);
+        codexHome = home !== null && home.id !== DEFAULT_HOME_ID ? home.path : null;
+      }
+      return openSessionInTerminal({
+        backend: id,
+        sessionId,
+        directory: session.directory,
+        codexHome,
+      });
     },
   );
 

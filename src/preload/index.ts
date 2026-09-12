@@ -72,6 +72,11 @@ const api: AweforkApi = {
     ipcRenderer.invoke("awefork:respondInteraction", backend, requestId, response),
   renameSession: (backend: BackendId, sessionId: string, title: string): Promise<void> =>
     ipcRenderer.invoke("awefork:renameSession", backend, sessionId, title),
+  openSessionTerminal: (
+    backend: BackendId,
+    sessionId: string,
+  ): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke("awefork:openSessionTerminal", backend, sessionId),
   pins: (backend: BackendId): Promise<string[]> => ipcRenderer.invoke("awefork:pins", backend),
   togglePin: (backend: BackendId, sessionId: string): Promise<string[]> =>
     ipcRenderer.invoke("awefork:togglePin", backend, sessionId),

@@ -74,3 +74,46 @@ function looksLikeCodexHome(path: string): boolean {
     existsSync(join(path, "sessions"))
   );
 }
+
+/** sessions/<year>/<month>/<day>/rollout-…-<threadId>.jsonl, relative to the home. */
+export function findRolloutRelPath(homePath: string, threadId: string): string | null {
+  const root = join(homePath, "sessions");
+  for (const year of subDirs(root)) {
+    for (const month of subDirs(join(root, year))) {
+      for (const day of subDirs(join(root, year, month))) {
+        const dir = join(root, year, month, day);
+        for (const file of readdirSync(dir)) {
+          if (file.endsWith(`-${threadId}.jsonl`)) return join(year, month, day, file);
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function subDirs(path: string): string[] {
+  try {
+    return readdirSync(path).sort();
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * The home a session's rollout file actually lives in — the honest answer to
+ * "which CODEX_HOME must a terminal codex run under to see this session?".
+ * The default home is searched first, so a session imported into it (the
+ * multihome continue path) reports the default, matching the facade's
+ * "continues run under the default account" semantics. Null when no
+ * discovered home has the rollout.
+ */
+export function codexHomeForSession(
+  sessionId: string,
+  env: { CODEX_HOME?: string } = process.env,
+  userHome: string = homedir(),
+): CodexHome | null {
+  for (const home of discoverCodexHomes(env, userHome)) {
+    if (findRolloutRelPath(home.path, sessionId)) return home;
+  }
+  return null;
+}

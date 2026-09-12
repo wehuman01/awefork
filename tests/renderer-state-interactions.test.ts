@@ -54,6 +54,7 @@ async function bootState(options: { promptError?: Error } = {}) {
       replies.push({ backend, requestId, response });
     },
     renameSession: async () => {},
+    openSessionTerminal: async () => ({ ok: true }),
     pins: async () => [],
     togglePin: async () => [],
     trash: async () => [],

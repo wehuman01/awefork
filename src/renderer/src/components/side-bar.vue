@@ -147,6 +147,7 @@
     >
       <button type="button" class="ctx-menu-item" @click="beginRename">✏️ 重命名</button>
       <button type="button" class="ctx-menu-item" @click="copySessionId">📋 复制会话 ID</button>
+      <button type="button" class="ctx-menu-item" @click="openInTerminal">↗ 在终端中打开</button>
       <button type="button" class="ctx-menu-item" @click="beginArchive">📦 归档会话</button>
       <button type="button" class="ctx-menu-item danger" @click="beginDelete">
         🗑 删除会话…
@@ -179,6 +180,7 @@ import {
   createSession,
   deleteSession,
   favoriteSessions,
+  openSessionTerminal,
   recentAlphaFor,
   refreshSessions,
   renameSession,
@@ -258,6 +260,14 @@ function copySessionId(): void {
   if (!active) return;
   closeMenu();
   void navigator.clipboard.writeText(active.sessionId);
+}
+
+/** Open the session in the agent's own TUI (opencode -s / codex resume). */
+function openInTerminal(): void {
+  const active = menu.value;
+  if (!active) return;
+  closeMenu();
+  void openSessionTerminal(active.sessionId);
 }
 
 /** Same soft delete as the canvas 🗑 chip: instant, the undo toast rules. */

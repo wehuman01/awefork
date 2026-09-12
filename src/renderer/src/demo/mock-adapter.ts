@@ -672,6 +672,8 @@ export function installMockAdapter(): void {
     composer: async () => null,
     saveComposer: async () => undefined,
     openPath: async (target) => ({ ok: false, error: `demo 无法打开本地路径：${target}` }),
+    // No system terminal in a browser tab; the demo only declines politely.
+    openSessionTerminal: async () => ({ ok: false, error: "demo 无法打开系统终端" }),
     convertDocument: async (filename) => `（demo：${filename} 提取出的文本内容）`,
     // The demo app never has anything newer than itself: no banner, no skip.
     checkUpdates: async () => ({

@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readdirSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { createCodexAdapter } from "../shared/codex-adapter.js";
 import type {
@@ -15,6 +15,7 @@ import {
   DEFAULT_HOME_ID,
   defaultCodexHome,
   discoverCodexHomes,
+  findRolloutRelPath,
 } from "./codex-homes.js";
 import { ensureCodexServer } from "./codex-server.js";
 
@@ -291,28 +292,4 @@ export function createCodexMultiHomeAdapter(options: CodexMultiHomeOptions): Age
       owners.clear();
     },
   };
-}
-
-/** sessions/<year>/<month>/<day>/rollout-…-<threadId>.jsonl, relative. */
-function findRolloutRelPath(homePath: string, threadId: string): string | null {
-  const root = join(homePath, "sessions");
-  for (const year of subDirs(root)) {
-    for (const month of subDirs(join(root, year))) {
-      for (const day of subDirs(join(root, year, month))) {
-        const dir = join(root, year, month, day);
-        for (const file of readdirSync(dir)) {
-          if (file.endsWith(`-${threadId}.jsonl`)) return join(year, month, day, file);
-        }
-      }
-    }
-  }
-  return null;
-}
-
-function subDirs(path: string): string[] {
-  try {
-    return readdirSync(path).sort();
-  } catch {
-    return [];
-  }
 }

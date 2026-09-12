@@ -1659,6 +1659,19 @@ export async function renameSession(sessionId: string, title: string): Promise<v
 }
 
 /**
+ * Jump out of awefork into the session's native TUI: a system terminal opens
+ * with `opencode -s` / `codex resume` in the session's working directory.
+ * The terminal lives outside the app, so failure only toasts here.
+ */
+export async function openSessionTerminal(sessionId: string): Promise<void> {
+  state.actionError = null;
+  const result = await window.awefork
+    .openSessionTerminal(state.activeBackend, sessionId)
+    .catch((error: unknown) => ({ ok: false as const, error: String(error) }));
+  if (!result.ok) state.actionError = result.error ?? "无法在终端中打开会话";
+}
+
+/**
  * True when the node sits at the tip of its session (stubs always do): the ＋
  * composer then continues that session in place instead of forking it.
  */

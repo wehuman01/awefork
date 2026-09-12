@@ -8,4 +8,7 @@ dist/
 .DS_Store
 .vitest/
 .superpowers/
+# nested git worktrees (local checkouts of other branches); biome's
+# useIgnoreFile skips them, so their biome.json can't trip the nested-root check
+.worktrees/
 /.zcode

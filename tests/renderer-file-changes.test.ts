@@ -80,6 +80,7 @@ async function bootState(options: { changes?: SessionFileChanges | null } = {}) 
     abort: async () => {},
     respondInteraction: async () => {},
     renameSession: async () => {},
+    openSessionTerminal: async () => ({ ok: true }),
     pins: async () => [],
     togglePin: async () => [],
     trash: async () => [],
