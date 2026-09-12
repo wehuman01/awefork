@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.2.6
+
+The pane gets kinder to both ends of a turn: your own prompts render as markdown, and a failed run grows an always-visible 换模型重跑 entry instead of a hover-only chip. The composer now follows the branch you're on — its model and thinking carry into the draft — and the canvas reads better, keeping the selected session's fork subtree readable and lighting only the turn's own children. Codex takes a round of hardening, spawned CLIs inherit the login shell's full environment, and deleting a whole session asks first.
+
+### Highlights
+
+- **Prompts render as markdown** — the user bubble printed prompts as plain pre-wrapped text, so pasted lists, code, and links read as one wall of characters; it now goes through the same markdown view as replies, with bubble-side tuning (white ink for text and links on the gradient; tables and code blocks keep their light panels).
+- **Retry, visible** — the hover-only ↻ chip hid the retry-with-different-model flow most users never find after a run fails; failed turn cards and failed reply rows now carry an always-visible 换模型重跑 pill that opens the prefilled draft, where the model and reasoning effort can be swapped before resending.
+- **The composer follows the branch** — selecting a session selects its setup with it: an explicit pick (including a deliberate 默认模型) always wins, otherwise the composer mirrors the turn the pane is on and shows the model and variant that wrote it — and a locked pane sends what the composer shows.
+- **The selected session's fork subtree stays readable** — when the canvas dims everything off the active path, sessions forked from the selected one (its whole descendant subtree) keep full ink, so a branch that grew from the selection never reads as an unrelated story.
+- **Highlighting stays in the family** — selecting a turn used to light its whole session's fork subtree, every branch and generation; the descendant tier now covers one generation only — the next turn on the same line plus the first card of each branch forked from the selection — a notch lighter than the active path.
+- **Session deletes confirm** — a card's 🗑 removes the WHOLE session, fork-copied turns and all; one explicit confirm now says so and promises the undo window before the sweep.
+- **Mint means success** — a settled run minted its session's tip even when it ended in error; failed runs (transport errors, prompts that never launched, errored last replies) now settle with no tint and clear any prior one, and the minted 刚刚 timestamp fades its green back to neutral ink as the tint does.
+- **Codex hardening, six reviewed defects** — stdout decodes at the source so a UTF-8 character split across read chunks no longer garbles CJSON frames (CJK text); a missed handshake deadline kills the child instead of leaking a detached orphan app-server; non-directory day entries can't throw ENOTDIR into terminal-open; an imported session's account-home copy is deleted so it stays deleted instead of reappearing on the next list; reasoning summaries snapshot into their own `:summary` part instead of doubling inside the live reasoning part; a dead connection stops reading as "not logged in" and toasting an outage for a first spawn that never came up, and home subscriptions survive a re-subscribe.
+- **The login shell's whole env** — spawned agent CLIs inherit the interactive shell's full export set (probed once per app session, best-effort, macOS), so provider credentials defined in rc files (`~/.zshrc`) work under a GUI launch; launcher identity, terminal cosmetics, and interpreter overrides (`NODE_OPTIONS`, `DYLD_*`) stay out.
+- **A collapsed panel really collapses** — a border-box box cannot shrink below its own padding + border, so a collapsed sidebar still rendered 25px wide; padding and border zero out while collapsed and return on expand (new layout tests cover toggle round-trips, clamping, and persistence).
+- **Windows CI leg green** — path-sensitive tests build their expected values from the same primitives the sources use (host `node:path` joins) instead of hardcoding POSIX separators, so they pin the real contract on every runner.
+
+### Install
+
+This release ships notes only — no installers attached yet. Build them yourself with `npm run dist` (unsigned macOS arm64) or `npm run dist:win` (Windows x64); on first launch on macOS, right-click the app and choose Open (or clear the quarantine flag with `xattr -d com.apple.quarantine /Applications/awefork.app`).
+
 ## v0.2.5
 
 The sidebar reaches into the terminal — any session can jump into its agent's TUI — and a turn's real output, the files it touched, is now recorded and shown. Codex gets a round of honesty fixes (sessions that existed but never appeared, threads readable while another codex owns them), replies render math, and Windows gets its first real pass: CLI probes, PATH repair, and terminal scripts all work.
