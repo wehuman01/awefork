@@ -68,6 +68,18 @@ export function createCodexMultiHomeAdapter(options: CodexMultiHomeOptions): Age
   const interactions = new Map<string, RoutedInteraction>();
   let nextInteractionId = 1;
   let emitEvent: ((event: AgentEvent) => void) | null = null;
+  /**
+   * Sessions this facade created/forked whose rollout codex has not projected
+   * into `thread/list` yet — the listing only carries threads that already
+   * wrote a turn of their own (verified on 0.154: a fresh thread/start and a
+   * just-cut fork with only copied prefix turns are both absent, even after
+   * the rollout loads). listSessions merges these rows so the renderer can
+   * select the session it just made; an entry leaves when the server starts
+   * listing the id (its first own turn) or the session is deleted here. It
+   * lives on the facade, not a home adapter: a crashed app-server rebuilds
+   * its adapter, and the rollout on disk keeps the session alive regardless.
+   */
+  const unlistedSessions = new Map<string, SessionSummary>();
 
   const emit = (event: AgentEvent) => emitEvent?.(event);
 
@@ -187,10 +199,12 @@ export function createCodexMultiHomeAdapter(options: CodexMultiHomeOptions): Age
 
     async listSessions() {
       const homes = homesOf();
-      const merged: SessionSummary[] = [];
-      const seen = new Set<string>();
-      await Promise.all(
-        homes.map(async (home) => {
+      // Fetch in parallel, then merge in homes order (default first): which
+      // home's fetch resolves first must not decide who owns a session id
+      // that exists in two homes — an imported rollout keeps the id in both,
+      // and the default home's copy is the live one.
+      const perHome = await Promise.all(
+        homes.map(async (home): Promise<{ home: CodexHome; sessions: SessionSummary[] }> => {
           let adapter: AgentAdapter;
           if (home.id === DEFAULT_HOME_ID) {
             // The primary home failing is a real backend failure: propagate.
@@ -201,17 +215,29 @@ export function createCodexMultiHomeAdapter(options: CodexMultiHomeOptions): Age
               adapter = await ensureHome(home);
             } catch (error) {
               console.warn(`codex home ${home.id} unavailable: ${String(error)}`);
-              return;
+              return { home, sessions: [] };
             }
           }
-          for (const session of await adapter.listSessions()) {
-            if (seen.has(session.id)) return;
-            seen.add(session.id);
-            owners.set(session.id, home.id);
-            merged.push(session);
-          }
+          return { home, sessions: await adapter.listSessions() };
         }),
       );
+      const merged: SessionSummary[] = [];
+      const seen = new Set<string>();
+      for (const { home, sessions } of perHome) {
+        for (const session of sessions) {
+          // Skip only this row: a duplicate must not drop the rest of its home.
+          if (seen.has(session.id)) continue;
+          seen.add(session.id);
+          owners.set(session.id, home.id);
+          merged.push(session);
+        }
+      }
+      // Retire memo rows the server now lists; merge the rest in so a
+      // zero-own-turn session stays selectable between refreshes.
+      for (const [id, summary] of unlistedSessions) {
+        if (seen.has(id)) unlistedSessions.delete(id);
+        else merged.push(summary);
+      }
       return merged.sort((a, b) => b.updatedAt - a.updatedAt);
     },
 
@@ -230,17 +256,22 @@ export function createCodexMultiHomeAdapter(options: CodexMultiHomeOptions): Age
 
     async createSession(directory) {
       // New sessions always belong to the default home.
-      return (await defaultAdapter()).createSession(directory);
+      const created = await (await defaultAdapter()).createSession(directory);
+      unlistedSessions.set(created.id, created);
+      return created;
     },
 
     async fork(sessionId, atMessageId) {
       importToDefault(sessionId, owners.get(sessionId) ?? DEFAULT_HOME_ID);
-      return (await adapterFor(sessionId)).fork(sessionId, atMessageId);
+      const forked = await (await adapterFor(sessionId)).fork(sessionId, atMessageId);
+      unlistedSessions.set(forked.id, forked);
+      return forked;
     },
 
     async deleteSession(sessionId) {
       await (await adapterFor(sessionId)).deleteSession(sessionId);
       owners.delete(sessionId);
+      unlistedSessions.delete(sessionId);
     },
 
     async deleteMessage(sessionId, messageId) {
