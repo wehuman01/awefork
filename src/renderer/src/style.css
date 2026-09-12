@@ -1765,9 +1765,41 @@ textarea {
   max-width: 85%;
 }
 
-.user-body .message-text {
-  white-space: pre-wrap;
-  word-break: break-word;
+/* the user bubble renders prompts through the same markdown renderer as
+   replies; retune the elements whose palette assumes the card background to
+   the bubble's gradient. Code blocks keep their own light panel — dark code
+   text stays readable on any bubble color. */
+.user-body .md {
+  color: #fff;
+}
+
+.user-body code.md-code {
+  background: rgba(255, 255, 255, 0.22);
+  border-color: rgba(255, 255, 255, 0.35);
+  color: #fff;
+}
+
+.user-body .md-link {
+  color: #fff;
+  text-decoration-color: rgba(255, 255, 255, 0.6);
+}
+
+.user-body .md-link:hover {
+  text-decoration-color: #fff;
+}
+
+.user-body .md-quote {
+  color: rgba(255, 255, 255, 0.85);
+  border-left-color: rgba(255, 255, 255, 0.5);
+}
+
+.user-body .md-hr {
+  border-top-color: rgba(255, 255, 255, 0.4);
+}
+
+.user-body .md-td,
+.user-body .md-table th {
+  color: var(--ink);
 }
 
 .message-body {
