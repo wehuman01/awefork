@@ -39,6 +39,13 @@
             <p v-else-if="message.error" class="message-text run-error">
               ⚠ 运行失败：{{ message.error }}
             </p>
+            <button
+              v-if="message.error"
+              type="button"
+              class="retry-now"
+              title="重跑这个回合（预填原文，可先换模型/档位）"
+              @click="emit('retry')"
+            >↻ 换模型重跑</button>
           </div>
         </div>
       </template>
@@ -92,6 +99,9 @@ const props = defineProps<{
   streamParts: readonly LivePart[];
   error: string | null;
 }>();
+
+/** A failed reply row offers its own retry jump; the host opens the draft. */
+const emit = defineEmits<{ retry: [] }>();
 
 /** Per-part render models: collapse-header summary plus the streaming caret flag. */
 const liveRows = computed(() => {

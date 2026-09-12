@@ -117,6 +117,14 @@
               :title="modelTitle(node)"
             >{{ modelChip(node) }}</span>
           </div>
+          <div v-if="node.error && !isNodeRunning(node)" class="error-acts">
+            <button
+              type="button"
+              class="retry-now"
+              title="重跑这个回合（预填原文，可先换模型/档位）"
+              @click.stop="retryNode(node)"
+            >↻ 换模型重跑</button>
+          </div>
         </template>
         <template v-else>
           <div class="turn-head">

@@ -52,6 +52,7 @@
       :running="isRunning"
       :stream-parts="store.streamParts"
       :error="null"
+      @retry="retry"
     >
       <template v-if="contextTurns.length > 0 || omittedCount > 0" #context>
         <div class="chain">

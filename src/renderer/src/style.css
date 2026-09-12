@@ -2929,6 +2929,43 @@ code.md-code {
   background: #fdeceb;
 }
 
+/* ── always-visible retry entry on failed turns ────────────────────────── */
+
+/* canvas card: a full-bleed row under the foot, pill right-aligned */
+.error-acts {
+  display: flex;
+  justify-content: flex-end;
+  border-top: 1px solid #f6e3e0;
+  margin: 0 -15px;
+  padding: 8px 15px;
+}
+
+.retry-now {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid #f3c8c3;
+  background: transparent;
+  color: var(--danger);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 700;
+  transition:
+    background 0.15s,
+    border-color 0.15s;
+}
+
+.retry-now:hover {
+  background: #fdeceb;
+  border-color: #c4544a;
+}
+
+/* pane: the same pill under a failed reply row */
+.message-body .retry-now {
+  margin-top: 6px;
+}
+
 /* ── per-turn file changes card ─────────────────────────────────────────── */
 
 .fchanges {
