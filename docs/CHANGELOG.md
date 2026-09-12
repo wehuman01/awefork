@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.2.5
+
+The sidebar reaches into the terminal — any session can jump into its agent's TUI — and a turn's real output, the files it touched, is now recorded and shown. Codex gets a round of honesty fixes (sessions that existed but never appeared, threads readable while another codex owns them), replies render math, and Windows gets its first real pass: CLI probes, PATH repair, and terminal scripts all work.
+
+### Highlights
+
+- **Open a session in the agent's TUI** — right-click a session → 在终端中打开: a system terminal runs `opencode -s` / `codex resume` in the session's working directory — the registered `.command` handler (Warp "set as default"), else Warp when installed, else the system default on macOS; `cmd /k` on Windows; the common terminals in turn on Linux. Codex sessions from aweswitch account homes carry their CODEX_HOME so the TUI can see them, and a rollout whose recorded provider has since vanished from `config.toml` (profile switchers rewrite it wholesale) gets the config's current default forced with `-c model_provider=…` instead of dying at bootstrap.
+- **Per-turn file changes** — opencode's edit/write tool parts stream through awefork's SSE connection; a per-session recorder snapshots the before/after content as frames arrive and settles modified/created/deleted entries with +N/−M counts, stored under userData so the diff survives restarts.
+- **Codex sessions that were invisible** — codex 0.154's `thread/list` omits a thread until it writes a turn of its own, so 新增对话 could not land and a just-cloned fork stayed hidden; the facade now memoizes created/forked sessions into the list until the server starts listing them. The multi-home merge also stopped letting a fast-answering foreign home claim a session id that also lives in the default home, and a duplicate row no longer drops the rest of its home.
+- **Reading a codex thread no longer needs the writer lock** — messages load through `thread/read`, so a session another live codex owns (an aweswitch terminal, say) stays readable instead of failing with "already has an active writer". Prompting resumes the thread first and says plainly when another instance owns it; CLIs without `thread/read` fall back to resume, which predates the lock and cannot collide.
+- **Math in replies** — inline and block TeX (`$…$`, `$$…$$`, `\(…\)`, `\[…\]`) render through KaTeX, with fail-safe handling so a bad formula degrades instead of throwing.
+- **Login state, told straight** — `requiresOpenaiAuth` is no longer mistaken for logged-out; only a missing account is.
+- **Windows works** — the switcher's CLI probes went through plain exec, which cannot run npm's `.cmd` shims, so both backends read as "not installed" on Windows; the opencode probe also lacked the PATH repair the server spawn uses, which made packaged builds misreport homebrew installs. Terminal batch scripts switch the console to UTF-8 before `cd`, so Chinese directory names survive cmd's ANSI codepage.
+
+### Install
+
+Installers are attached: `awefork-0.2.5-arm64.dmg` (macOS arm64, unsigned — on first launch right-click the app and choose Open) and `awefork-0.2.5-x64-setup.exe` (Windows x64 — SmartScreen may warn; choose More info → Run anyway).
+
 ## v0.2.2
 
 The composer stops losing work: unsent drafts now survive restarts and backend switches, and a switch between opencode and codex repaints instantly from a parked workspace. Codex learns to see every account home, and the opencode adapter reads its wire facts from a descriptor instead of code.
