@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   openSessionInTerminal,
@@ -144,8 +145,10 @@ describe("sessionBatchBody", () => {
 
 describe("sessionScriptPath", () => {
   it("sanitizes characters that do not belong in a filename", () => {
+    // Expected paths are built with the host's own join, so the assertion
+    // pins directory + filename on every CI platform (win32 join differs).
     expect(sessionScriptPath({ ...OPENCODE, sessionId: "we/ird id" }, "/tmp", ".command")).toBe(
-      "/tmp/awefork-session-we_ird_id.command",
+      join("/tmp", "awefork-session-we_ird_id.command"),
     );
   });
 });
@@ -156,7 +159,7 @@ describe("openSessionInTerminal (darwin)", () => {
     const { files, chmods, deps } = recordingDeps({ exec });
     const result = await openSessionInTerminal(OPENCODE, { ...deps, platform: "darwin" });
     expect(result).toEqual({ ok: true });
-    const file = "/tmp/awefork-test/awefork-session-ses_abc123.command";
+    const file = join("/tmp/awefork-test", "awefork-session-ses_abc123.command");
     expect(files.get(file)).toBe(sessionScriptBody(OPENCODE));
     expect(chmods).toEqual([{ path: file, mode: 0o755 }]);
     expect(calls).toEqual([{ file: "open", args: [file] }]);
@@ -187,7 +190,7 @@ describe("openSessionInTerminal (darwin)", () => {
         args: [
           "-b",
           "com.googlecode.iterm2",
-          "/tmp/awefork-test/awefork-session-ses_abc123.command",
+          join("/tmp/awefork-test", "awefork-session-ses_abc123.command"),
         ],
       },
     ]);
@@ -214,7 +217,7 @@ describe("openSessionInTerminal (win32)", () => {
     const { files, chmods, deps } = recordingDeps({ exec });
     const result = await openSessionInTerminal(OPENCODE, { ...deps, platform: "win32" });
     expect(result).toEqual({ ok: true });
-    const file = "/tmp/awefork-test/awefork-session-ses_abc123.cmd";
+    const file = join("/tmp/awefork-test", "awefork-session-ses_abc123.cmd");
     expect(files.get(file)).toBe(sessionBatchBody(OPENCODE));
     expect(chmods).toEqual([]);
     expect(calls).toEqual([{ file: "cmd.exe", args: ["/c", "start", "", "cmd", "/k", file] }]);
@@ -231,7 +234,7 @@ describe("openSessionInTerminal (linux)", () => {
     expect(calls[2]?.args).toEqual([
       "-x",
       "bash",
-      "/tmp/awefork-test/awefork-session-ses_abc123.sh",
+      join("/tmp/awefork-test", "awefork-session-ses_abc123.sh"),
     ]);
   });
 
