@@ -1184,9 +1184,11 @@ textarea {
   opacity: 0;
 }
 
-/* the minted "刚刚" on a session tip — the text half of the recent tint */
+/* the minted "刚刚" on a session tip — the text half of the recent tint,
+   mixing back to the neutral ink as the tint fades (the 0.6s color
+   transition above smooths each 30s alpha step) */
 .turn.recent .turn-time {
-  color: #4e8f45;
+  color: color-mix(in srgb, #4e8f45 calc(var(--recent-alpha, 0) * 100%), var(--ink-faint));
   font-weight: 800;
 }
 

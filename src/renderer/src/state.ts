@@ -118,9 +118,11 @@ interface AppState {
   /** sessionId → true while an active-backend run is in flight. */
   running: Record<string, boolean>;
   /**
-   * sessionId → epoch ms when its last run settled. The card carries a soft
-   * "刚跑完" tint that fades to neutral over RECENT_MS — helps the user
-   * spot which branches just finished when the canvas is full.
+   * sessionId → epoch ms when its last run settled without error. The card
+   * carries a soft "刚跑完" tint that fades to neutral over RECENT_MS — helps
+   * the user spot which branches just finished when the canvas is full.
+   * Failed runs keep no entry: mint reads as success, and their cards
+   * already carry ⚠ + retry.
    */
   recent: Record<string, number>;
   /** Live stream of the selected session only, as the run's ordered parts. */
@@ -1052,19 +1054,27 @@ function clearRecent(backend: BackendId, sessionId: string): void {
   }
 }
 
-/** Shared run-finished cleanup, driven by event-stream idle or the poll watchdog. */
-function settleRun(backend: BackendId, sessionId: string): void {
+/** Shared run-finished cleanup, driven by event-stream idle, the poll
+ * watchdog, or a failed run (transport/prompt error). */
+function settleRun(backend: BackendId, sessionId: string, failed = false): void {
   stopWatch(backend, sessionId);
   streamBuffers.delete(streamKey(backend, sessionId));
   setStreamTail(backend, sessionId, null);
   setRunning(backend, sessionId, false);
-  const settledAt = Date.now();
-  setRecent(backend, sessionId, settledAt);
-  startRecentTicker();
-  setTimeout(() => {
-    // A newer settle overwrote the entry; the older timer must not clear it.
-    if (getRecent(backend, sessionId) === settledAt) clearRecent(backend, sessionId);
-  }, RECENT_MS);
+  // A failed run carries no tint — mint reads as success, and its card already
+  // shows ⚠ + retry. A prior run's tint goes with it, so a visible tint always
+  // means "the last run completed".
+  if (failed) {
+    clearRecent(backend, sessionId);
+  } else {
+    const settledAt = Date.now();
+    setRecent(backend, sessionId, settledAt);
+    startRecentTicker();
+    setTimeout(() => {
+      // A newer settle overwrote the entry; the older timer must not clear it.
+      if (getRecent(backend, sessionId) === settledAt) clearRecent(backend, sessionId);
+    }, RECENT_MS);
+  }
   if (backend === state.activeBackend && state.selectedId === sessionId) {
     state.streamParts = [];
   }
@@ -1088,11 +1098,15 @@ async function finishRun(backend: BackendId, sessionId: string): Promise<void> {
   // Replace the live bubble only after its persisted counterpart is in state.
   // Both mutations occur before Vue renders, avoiding an empty or duplicated
   // assistant slot at the end of a streamed response.
-  await loadSessionMessages(sessionId, false, backend);
+  const messages = await loadSessionMessages(sessionId, false, backend);
   // The run's file changes settle with it; the card appears without the user
   // reselecting anything.
   refreshFileChanges(sessionId, backend);
-  settleRun(backend, sessionId);
+  // The last assistant row says how the run ended; an errored one settles
+  // without the tint (its card carries ⚠ + retry instead).
+  const assistants = (messages ?? []).filter((m) => m.role === "assistant");
+  const lastRun = assistants[assistants.length - 1];
+  settleRun(backend, sessionId, Boolean(lastRun?.error));
   if (backend === state.activeBackend) void refreshSessions();
 }
 
@@ -1257,7 +1271,7 @@ function handleEvent(backend: BackendId, event: AgentEvent): void {
       // connection-level errors carry no sessionId and only toast.
       if (event.sessionId) {
         stopWatch(backend, event.sessionId);
-        settleRun(backend, event.sessionId);
+        settleRun(backend, event.sessionId, true);
         dropSessionInteractions(backend, event.sessionId);
         if (backend === state.activeBackend) {
           // Reload so the optimistic local prompt row disappears if the
@@ -2081,7 +2095,9 @@ export async function sendDraft(): Promise<void> {
       void window.awefork.saveComposer(backend, null).catch(() => {});
     }
   } catch (error) {
-    if (targetId) settleRun(backend, targetId);
+    // The prompt never reached a run; settle as failed so no success tint
+    // lands on a turn that never happened.
+    if (targetId) settleRun(backend, targetId, true);
     state.actionError = error instanceof Error ? error.message : String(error);
   } finally {
     state.draftSending = false;
