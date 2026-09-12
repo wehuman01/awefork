@@ -428,6 +428,35 @@ textarea {
   color: var(--ink-faint);
 }
 
+/* tag filter shelf — every tag in use, most-used first; multi-select AND */
+.tag-shelf {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: -6px 0 12px;
+}
+
+.tag-filter {
+  flex: 0 0 auto;
+  border: 1px solid var(--tag-c);
+  color: var(--tag-c);
+  background: none;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 9px;
+  line-height: 1.2;
+}
+
+.tag-filter:hover {
+  background: color-mix(in srgb, var(--tag-c) 12%, transparent);
+}
+
+.tag-filter.on {
+  background: var(--tag-c);
+  color: #fff;
+}
+
 .session-list {
   flex: 1;
   overflow-y: auto;
@@ -556,6 +585,23 @@ textarea {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* colored label chip — same look on sidebar rows, favorites and the pane */
+.tag-chip {
+  flex: 0 0 auto;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  padding: 3px 7px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+/* the +N overflow chip when a row carries more labels than it may show */
+.tag-chip.tag-more {
+  color: var(--ink-faint);
+  background: var(--bg);
 }
 
 .sess-row {
@@ -823,6 +869,52 @@ textarea {
   color: var(--danger);
 }
 
+/* tag editor (右键 → 设置标签…) */
+.tag-menu {
+  min-width: 190px;
+}
+
+.tag-menu-head {
+  font-size: 10.5px;
+  font-weight: 800;
+  color: var(--ink-faint);
+  padding: 5px 10px 4px;
+}
+
+.tag-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.tag-opt:hover {
+  background: var(--primary-soft);
+}
+
+.tag-count {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--ink-faint);
+}
+
+.tag-new input {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  padding: 6px 8px;
+  font-size: 12px;
+  outline: none;
+}
+
+.tag-new input:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-soft);
+}
+
 .sess-rename {
   flex: 1;
   min-width: 0;
@@ -938,6 +1030,22 @@ textarea {
     background-color 0.6s,
     transform 0.15s,
     opacity 0.15s;
+}
+
+/* story identity band: the selected session's first tag paints a rounded
+   ribbon on every card of the tree (--story-tag, set on .world; transparent
+   when the story is untagged). A pseudo-element so border/box-shadow states
+   (selected/running/hit) never repaint it. */
+.world .turn::after {
+  content: "";
+  position: absolute;
+  left: -1.5px;
+  top: 12px;
+  bottom: 12px;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--story-tag, transparent);
+  pointer-events: none;
 }
 
 .turn.dimmed {
@@ -1579,6 +1687,14 @@ textarea {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* the selected session's tag chips — the pane's identity line */
+.ctx-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 5px;
 }
 
 .ctx-running {

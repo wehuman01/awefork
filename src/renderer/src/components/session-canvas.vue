@@ -294,6 +294,8 @@ import {
   setDraftVariant,
   store,
   storySearchHits,
+  tagColor,
+  tagsOf,
   turnGraph,
 } from "../state";
 import BranchDigest from "./branch-digest.vue";
@@ -316,7 +318,17 @@ const backendLabel = computed(() => BACKEND_LABELS[store.activeBackend]);
 
 const worldStyle = computed(() => ({
   transform: `translate(${tx.value}px, ${ty.value}px) scale(${scale.value})`,
+  // The story's identity band: the selected session's first tag paints a
+  // left-edge stripe on every card of the tree (see .turn in style.css).
+  "--story-tag": storyTagColor.value ?? "transparent",
 }));
+
+/** First tag color of the selected session; null when the story is untagged. */
+const storyTagColor = computed(() => {
+  const id = store.selectedId;
+  const first = id ? tagsOf(id)[0] : undefined;
+  return first ? tagColor(first) : null;
+});
 
 const svgSize = computed(() => {
   const maxX = Math.max(0, ...graph.value.nodes.map((n) => n.x + NODE_WIDTH + 100));

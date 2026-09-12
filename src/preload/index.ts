@@ -80,6 +80,14 @@ const api: AweforkApi = {
   pins: (backend: BackendId): Promise<string[]> => ipcRenderer.invoke("awefork:pins", backend),
   togglePin: (backend: BackendId, sessionId: string): Promise<string[]> =>
     ipcRenderer.invoke("awefork:togglePin", backend, sessionId),
+  tags: (backend: BackendId): Promise<Record<string, string[]>> =>
+    ipcRenderer.invoke("awefork:tags", backend),
+  setSessionTags: (
+    backend: BackendId,
+    sessionId: string,
+    tags: string[],
+  ): Promise<Record<string, string[]>> =>
+    ipcRenderer.invoke("awefork:setSessionTags", backend, sessionId, tags),
   trash: (backend: BackendId): Promise<TrashEntry[]> =>
     ipcRenderer.invoke("awefork:trash", backend),
   trashAdd: (backend: BackendId, sessionId: string, title: string): Promise<TrashEntry[]> =>
