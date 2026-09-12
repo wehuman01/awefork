@@ -389,6 +389,20 @@ export const paneTurn = computed<{ turn: Turn; index: number; total: number } | 
 });
 
 /**
+ * Model+thinking the pane composer starts from: an explicit pick for this
+ * session — including a deliberate 默认模型 — always wins, otherwise the
+ * composer mirrors the branch itself and shows the model and variant that
+ * wrote the turn the pane is on. Selecting a session therefore selects its
+ * setup with it, and only a hand-picked model ever overrides that.
+ */
+export const paneComposerModel = computed<ModelChoice | null>(() => {
+  const id = state.selectedId;
+  if (!id) return null;
+  if (id in state.paneModels) return state.paneModels[id] ?? null;
+  return paneTurn.value?.turn.model ?? null;
+});
+
+/**
  * Messages of the pane's turn: from its user prompt up to the next one.
  * Assistant rows with neither text nor thinking are dropped — except failed
  * runs, whose error must stay visible. User rows always stay; they anchor the
@@ -2100,8 +2114,11 @@ export async function sendPanePrompt(
   attachments: PromptAttachment[] = [],
 ): Promise<void> {
   if (!state.selectedId || !text.trim()) return;
+  // Read before unlocking the pane: the model the composer shows is the one
+  // that goes out, even when the pane was locked on an earlier turn.
+  const model = paneComposerModel.value;
   state.selectedTurnId = null;
-  await sendPrompt(text, state.paneModels[state.selectedId] ?? null, attachments);
+  await sendPrompt(text, model, attachments);
 }
 
 export async function sendPrompt(

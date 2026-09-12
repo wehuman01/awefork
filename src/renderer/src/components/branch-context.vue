@@ -117,6 +117,7 @@ import {
   abortRun,
   activeChain,
   cloneSelectedSession,
+  paneComposerModel,
   paneMessages,
   paneTurn,
   retryTurn,
@@ -188,9 +189,7 @@ function retry(): void {
   if (current) retryTurn(current.turn);
 }
 
-const paneModel = computed(() =>
-  store.selectedId ? (store.paneModels[store.selectedId] ?? null) : null,
-);
+const paneModel = paneComposerModel;
 
 function onSetModel(model: ModelChoice | null): void {
   if (store.selectedId) setPaneModel(store.selectedId, model);

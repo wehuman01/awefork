@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AweforkApi } from "../src/shared/awefork-api";
 import type { BackendEventEnvelope, BackendId } from "../src/shared/backend";
-import type { ModelChoice, PersistedComposer, SessionSummary } from "../src/shared/types";
+import type {
+  ChatMessage,
+  ModelChoice,
+  PersistedComposer,
+  SessionSummary,
+} from "../src/shared/types";
 
 /**
  * Composer-persistence × backend-switch regression harness: the state module
@@ -56,7 +61,9 @@ function turnNode() {
   };
 }
 
-async function bootState(options: { composer?: PersistedComposer | null } = {}) {
+async function bootState(
+  options: { composer?: PersistedComposer | null; messages?: Record<string, ChatMessage[]> } = {},
+) {
   vi.resetModules();
   const saves: Array<{ backend: BackendId; value: PersistedComposer | null }> = [];
   let forkDeferred: ((session: SessionSummary) => void) | null = null;
@@ -67,7 +74,9 @@ async function bootState(options: { composer?: PersistedComposer | null } = {}) 
         ? { sessions: [CODEX], lineage: {} }
         : { sessions: [OPENCODE], lineage: {} },
     ),
-    messages: vi.fn(async () => []),
+    messages: vi.fn(
+      async (_backend: BackendId, sessionId: string) => options.messages?.[sessionId] ?? [],
+    ),
     models: async () => [],
     messageAttachments: async () => [],
     createSession: async () => OPENCODE,
@@ -124,6 +133,7 @@ async function bootState(options: { composer?: PersistedComposer | null } = {}) 
   await state.init();
   return {
     store: state.store,
+    mod: state,
     api,
     saves,
     resolveFork: (session: SessionSummary = OPENCODE) => forkDeferred?.(session),
@@ -209,5 +219,102 @@ describe("composer persistence × backend switch", () => {
     await vi.advanceTimersByTimeAsync(0);
 
     expect(h.store.paneModels).toEqual({ s1: MODEL });
+  });
+});
+
+/**
+ * Pane composer model following: with no explicit pick the composer mirrors
+ * the selected branch's own last-used model+variant, and only a hand-picked
+ * model (or a deliberate 默认模型) overrides it.
+ */
+describe("pane composer follows the selected session", () => {
+  /** One ChatMessage with only the fields the tests care about. */
+  function row(
+    id: string,
+    role: "user" | "assistant",
+    model: { modelId: string; variant: string | null },
+  ): ChatMessage {
+    return {
+      id,
+      role,
+      text: role === "user" ? "第一轮" : "回复",
+      thinking: "",
+      toolNames: [],
+      modelId: model.modelId,
+      providerId: "oc",
+      variant: model.variant,
+      attachmentNames: [],
+      createdAt: 1,
+      completedAt: role === "assistant" ? 10 : null,
+      finish: null,
+      outputTokens: null,
+      error: null,
+    };
+  }
+
+  it("derives model and thinking variant from the session's last turn", async () => {
+    const h = await bootState({
+      messages: {
+        s1: [
+          row("m1", "user", { modelId: "glm-5.3", variant: null }),
+          row("m2", "assistant", { modelId: "glm-5.3", variant: "high" }),
+        ],
+      },
+    });
+
+    // The pane is on the session's latest turn, so the composer shows what
+    // wrote it — variant included — without the user picking anything.
+    expect(h.mod.paneComposerModel.value).toEqual({
+      providerId: "oc",
+      modelId: "glm-5.3",
+      variant: "high",
+    });
+  });
+
+  it("an explicit pick — model or 默认模型 — wins over the derived one", async () => {
+    const h = await bootState({
+      messages: {
+        s1: [
+          row("m1", "user", { modelId: "glm-5.3", variant: null }),
+          row("m2", "assistant", { modelId: "glm-5.3", variant: "high" }),
+        ],
+      },
+    });
+
+    h.mod.setPaneModel("s1", { providerId: "oc", modelId: "glm-5.3-flash", variant: null });
+    expect(h.mod.paneComposerModel.value).toEqual({
+      providerId: "oc",
+      modelId: "glm-5.3-flash",
+      variant: null,
+    });
+
+    h.mod.setPaneModel("s1", null);
+    expect(h.mod.paneComposerModel.value).toBeNull();
+  });
+
+  it("sends with the derived model when the user never picked one", async () => {
+    const h = await bootState({
+      messages: {
+        s1: [
+          row("m1", "user", { modelId: "glm-5.3", variant: null }),
+          row("m2", "assistant", { modelId: "glm-5.3", variant: "high" }),
+        ],
+      },
+    });
+
+    await h.mod.sendPanePrompt("继续");
+    expect(h.api.prompt).toHaveBeenCalledWith(
+      "opencode",
+      "s1",
+      "继续",
+      { providerId: "oc", modelId: "glm-5.3", variant: "high" },
+      [],
+    );
+  });
+
+  it("falls back to 默认模型 for a session with no model-bearing turns", async () => {
+    const h = await bootState({ messages: { s1: [] } });
+
+    expect(h.mod.paneComposerModel.value).toBeNull();
   });
 });
