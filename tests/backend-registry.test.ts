@@ -2,7 +2,11 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { type BackendRegistry, createBackendRegistry } from "../src/main/backend-registry";
+import {
+  type BackendRegistry,
+  createBackendRegistry,
+  probeOpencode,
+} from "../src/main/backend-registry";
 import type { CodexJsonRpc } from "../src/main/codex-jsonrpc";
 import { readBackendSelection, writeBackendSelection } from "../src/main/settings-store";
 import type { BackendEventEnvelope } from "../src/shared/backend";
@@ -18,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   stopCodexServer: vi.fn(),
   ensureOpencodeServer: vi.fn(),
   stopManagedServer: vi.fn(),
+  resolveSpawnEnv: vi.fn(),
   execFile: vi.fn(),
   discoverCodexHomes: vi.fn(),
 }));
@@ -38,9 +43,10 @@ vi.mock("../src/main/codex-homes.js", async (importOriginal) => ({
 vi.mock("../src/main/opencode-server", () => ({
   ensureOpencodeServer: mocks.ensureOpencodeServer,
   stopManagedServer: mocks.stopManagedServer,
+  resolveSpawnEnv: mocks.resolveSpawnEnv,
 }));
 
-// probeInstalled() execs `opencode --version` through the real execFile; the
+// probeOpencode() execs `opencode --version` through the real execFile; the
 // mock decides whether it is "installed" so listBackends/select stay deterministic.
 // The real execFile carries a util.promisify.custom that resolves to
 // {stdout, stderr}; a bare vi.fn() lacks it, and plain promisify would resolve
@@ -52,19 +58,18 @@ vi.mock("node:child_process", async (importOriginal) => {
     [Symbol.for("nodejs.util.promisify.custom")](
       file: string,
       args: readonly string[],
-      callback: (error: Error | null, stdout: string, stderr: string) => void,
+      options?: unknown,
     ) {
       return new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
         mocks.execFile(
           file,
           args,
-          undefined,
+          options,
           (error: Error | null, stdout: string, stderr: string) => {
             if (error) reject(error);
             else resolve({ stdout, stderr });
           },
         );
-        void callback;
       });
     },
   });
@@ -103,6 +108,8 @@ let registry: BackendRegistry;
 beforeEach(async () => {
   vi.clearAllMocks();
   mockDefaultHomeOnly();
+  // Passthrough so probeOpencode's env handling runs against a stable object.
+  mocks.resolveSpawnEnv.mockImplementation(async (env: unknown) => env);
   userDataDir = await mkdtemp(join(tmpdir(), "awefork-registry-"));
   registry = createBackendRegistry(userDataDir);
   // By default the opencode CLI "is on PATH" with a version inside the
@@ -305,6 +312,48 @@ describe("switcher data and selection", () => {
     expect(result.ok).toBe(false);
     expect(result.error).toMatch(/opencode CLI/);
     expect(await readBackendSelection(join(userDataDir, "settings.json"))).toBe("opencode");
+  });
+});
+
+describe("probeOpencode platform handling", () => {
+  /** Fake exec capturing the options each probe call was launched with. */
+  function probeRecorder(): {
+    options: Array<Record<string, unknown> | undefined>;
+    exec: Parameters<typeof probeOpencode>[0];
+  } {
+    const options: Array<Record<string, unknown> | undefined> = [];
+    const exec = (async (
+      _file: string,
+      _args: readonly string[],
+      opts?: Record<string, unknown>,
+    ) => {
+      options.push(opts);
+      return { stdout: "1.18.30\n", stderr: "" };
+    }) as unknown as Parameters<typeof probeOpencode>[0];
+    return { options, exec };
+  }
+
+  it("shells out and passes a PATH-repaired env on win32 (npm .cmd shims)", async () => {
+    const { options, exec } = probeRecorder();
+    await expect(probeOpencode(exec, "win32")).resolves.toEqual({
+      installed: true,
+      version: "1.18.30",
+    });
+    expect(options[0]).toMatchObject({ shell: true, windowsHide: true });
+    expect(mocks.resolveSpawnEnv).toHaveBeenCalledWith(
+      process.env,
+      expect.any(String),
+      undefined,
+      "win32",
+      "opencode",
+    );
+    expect(options[0]?.env).toBe(process.env);
+  });
+
+  it("stays a plain exec on posix", async () => {
+    const { options, exec } = probeRecorder();
+    await expect(probeOpencode(exec, "darwin")).resolves.toMatchObject({ installed: true });
+    expect(options[0]).not.toHaveProperty("shell");
   });
 });
 

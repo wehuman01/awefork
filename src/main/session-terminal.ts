@@ -100,6 +100,11 @@ export function sessionScriptBody(request: SessionTerminalRequest): string {
 export function sessionBatchBody(request: SessionTerminalRequest): string {
   const lines = [
     "@echo off",
+    // cmd decodes batch files with the ANSI codepage (GBK on Chinese
+    // Windows); the file is written UTF-8, so the console must switch before
+    // the first line that can carry a non-ASCII path, or cd targets mojibake.
+    // cmd re-reads each line after chcp with the new codepage.
+    "@chcp 65001 >nul",
     `cd /d ${batchQuote(request.directory)}`,
     "if errorlevel 1 exit /b 1",
   ];

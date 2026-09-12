@@ -110,12 +110,20 @@ describe("sessionBatchBody", () => {
     expect(sessionBatchBody(OPENCODE)).toBe(
       [
         "@echo off",
+        "@chcp 65001 >nul",
         'cd /d "/Users/tester/repo"',
         "if errorlevel 1 exit /b 1",
         "opencode -s ses_abc123",
         "",
       ].join("\r\n"),
     );
+  });
+
+  it("switches the console to UTF-8 before any path can appear", () => {
+    // The file is written UTF-8; cmd would decode it as GBK on Chinese
+    // Windows and mangle a non-ASCII directory unless chcp ran first.
+    const body = sessionBatchBody({ ...CODEX_FOREIGN, directory: "C:\\Users\\鹏\\项目" });
+    expect(body.indexOf("@chcp 65001 >nul")).toBeLessThan(body.indexOf("cd /d"));
   });
 
   it("sets CODEX_HOME before codex resume for foreign homes", () => {

@@ -28,11 +28,16 @@ export interface EnsureCodexServerResult {
  */
 export async function isCodexInstalled(
   execFn: typeof execFileAsync = execFileAsync,
+  platform: NodeJS.Platform = process.platform,
 ): Promise<boolean> {
   try {
     await execFn("codex", ["--version"], {
       timeout: 5000,
-      env: await resolveSpawnEnv(process.env, homedir(), undefined, process.platform, "codex"),
+      env: await resolveSpawnEnv(process.env, homedir(), undefined, platform, "codex"),
+      // npm's .cmd shims only run under cmd.exe — without shell the probe
+      // reports every npm-installed CLI as missing on Windows (the serve
+      // spawn below carries the same branch).
+      ...(platform === "win32" ? { shell: true, windowsHide: true } : {}),
     });
     return true;
   } catch {

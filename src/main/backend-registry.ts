@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { opencodeDescriptor, parseVersion, versionInRange } from "../shared/agent-descriptor.js";
@@ -16,7 +17,7 @@ import { createOpencodeAdapter } from "../shared/opencode-adapter.js";
 import type { AgentAdapter } from "../shared/types.js";
 import { createCodexMultiHomeAdapter } from "./codex-multihome.js";
 import { isCodexInstalled, stopCodexServer } from "./codex-server.js";
-import { ensureOpencodeServer, stopManagedServer } from "./opencode-server.js";
+import { ensureOpencodeServer, resolveSpawnEnv, stopManagedServer } from "./opencode-server.js";
 import { readBackendSelection, writeBackendSelection } from "./settings-store.js";
 
 const execFileAsync = promisify(execFile);
@@ -194,9 +195,23 @@ interface OpencodeProbe {
   version: string | null;
 }
 
-async function probeOpencode(): Promise<OpencodeProbe> {
+/**
+ * `opencode --version` probe for the switcher. Same two platform repairs the
+ * serve spawn relies on: a GUI-launched app gets a minimal PATH that misses
+ * homebrew/npm-style installs (resolveSpawnEnv), and Windows npm installs are
+ * .cmd shims that only run under cmd.exe (shell). Both probes and both spawns
+ * must stay in lockstep, or the switcher refuses a backend that would work.
+ */
+export async function probeOpencode(
+  execFn: typeof execFileAsync = execFileAsync,
+  platform: NodeJS.Platform = process.platform,
+): Promise<OpencodeProbe> {
   try {
-    const { stdout } = await execFileAsync("opencode", ["--version"], { timeout: 5000 });
+    const { stdout } = await execFn("opencode", ["--version"], {
+      timeout: 5000,
+      env: await resolveSpawnEnv(process.env, homedir(), undefined, platform, "opencode"),
+      ...(platform === "win32" ? { shell: true, windowsHide: true } : {}),
+    });
     return { installed: true, version: parseVersion(stdout) };
   } catch {
     return { installed: false, version: null };

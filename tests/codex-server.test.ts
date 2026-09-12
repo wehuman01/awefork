@@ -1,7 +1,7 @@
 import type { ChildProcess, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { afterEach, describe, expect, it } from "vitest";
-import { ensureCodexServer, stopCodexServer } from "../src/main/codex-server.js";
+import { ensureCodexServer, isCodexInstalled, stopCodexServer } from "../src/main/codex-server.js";
 
 /**
  * In-memory `codex app-server`: stdin is parsed as JSON-RPC requests, each
@@ -133,5 +133,38 @@ describe("ensureCodexServer auth probe", () => {
     });
     const result = await ensureCodexServer(() => {}, spawnFnReturning(child));
     expect(result.authMessage).toMatch(/codex login（no auth credentials）/);
+  });
+});
+
+describe("isCodexInstalled platform handling", () => {
+  /** Fake exec capturing the options each probe call was launched with. */
+  function probeRecorder(): {
+    options: Array<Record<string, unknown> | undefined>;
+    exec: Parameters<typeof isCodexInstalled>[0];
+  } {
+    const options: Array<Record<string, unknown> | undefined> = [];
+    const exec = (async (
+      _file: string,
+      _args: readonly string[],
+      opts?: Record<string, unknown>,
+    ) => {
+      options.push(opts);
+      return { stdout: "codex 0.154.0\n", stderr: "" };
+    }) as unknown as Parameters<typeof isCodexInstalled>[0];
+    return { options, exec };
+  }
+
+  it("shells out and passes a PATH-repaired env on win32 (npm .cmd shims)", async () => {
+    const { options, exec } = probeRecorder();
+    await expect(isCodexInstalled(exec, "win32")).resolves.toBe(true);
+    expect(options[0]).toMatchObject({ shell: true, windowsHide: true });
+    const env = options[0]?.env as { PATH?: string } | undefined;
+    expect(env?.PATH).toBeTypeOf("string");
+  });
+
+  it("stays a plain exec on posix", async () => {
+    const { options, exec } = probeRecorder();
+    await expect(isCodexInstalled(exec, "darwin")).resolves.toBe(true);
+    expect(options[0]).not.toHaveProperty("shell");
   });
 });
