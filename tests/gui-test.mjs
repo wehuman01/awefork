@@ -229,6 +229,100 @@ try {
   // 5. No error toast survived the whole run.
   const errorToast = await cdp.evaluate(`document.querySelector(".toast.banner-error")?.textContent ?? ""`);
   check("no error toast raised", errorToast === "", errorToast);
+
+  // 6. Sidebar panel layout: drag-resize clamps to min/max, the width
+  //    survives a reload, and double-click collapse hands the freed pixels
+  //    to the canvas then gives them back on the next double-click. This
+  //    runs on a live desktop, so every drag re-targets from the measured
+  //    width: a stray real mousemove riding the window-level drag listener
+  //    costs a retry, not the run. Targets beyond the limits (100/500)
+  //    exercise the clamps rather than landing on them by accident.
+  const panelWidth = (selector) =>
+    cdp.evaluate(`(() => {
+      const el = document.querySelector(${JSON.stringify(selector)});
+      if (!el) throw new Error(${JSON.stringify(`${selector} missing from the DOM`)});
+      return el.getBoundingClientRect().width;
+    })()`);
+  const sidebarHandleCenter = () =>
+    cdp.evaluate(`(() => {
+      const r = document.querySelectorAll(".shell .col-handle")[0].getBoundingClientRect();
+      return { x: r.x + r.width / 2, y: r.y + r.height / 2 };
+    })()`);
+  const mouse = (type, params) => cdp.send("Input.dispatchMouseEvent", { type, ...params });
+  async function dragSidebarHandle(dx) {
+    const p = await sidebarHandleCenter();
+    await mouse("mouseMoved", p);
+    await mouse("mousePressed", { button: "left", buttons: 1, clickCount: 1, ...p });
+    await mouse("mouseMoved", { buttons: 1, x: p.x + dx, y: p.y });
+    await mouse("mouseReleased", { button: "left", buttons: 0, clickCount: 1, x: p.x + dx, y: p.y });
+  }
+  async function dblclickSidebarHandle() {
+    const p = await sidebarHandleCenter();
+    await mouse("mouseMoved", p);
+    for (const count of [1, 2]) {
+      await mouse("mousePressed", { button: "left", clickCount: count, ...p });
+      await mouse("mouseReleased", { button: "left", clickCount: count, ...p });
+      if (count === 1) await new Promise((resolve) => setTimeout(resolve, 80));
+    }
+  }
+  const near = (value, expected, tolerance = 2) => Math.abs(value - expected) <= tolerance;
+  /** Drag towards `target`; the rendered width must end at `expected`. */
+  async function dragSidebar(target, expected, label) {
+    await retry(async () => {
+      const before = await panelWidth(".sidebar");
+      await dragSidebarHandle(target - before);
+      const after = await panelWidth(".sidebar");
+      if (!near(after, expected)) throw new Error(`${label}: ${after}px, want ${expected}px`);
+    }, 5000, label);
+    check(label, true);
+  }
+  async function expectWidth(selector, expected, label) {
+    await retry(async () => {
+      const width = await panelWidth(selector);
+      if (!near(width, expected)) throw new Error(`${label}: ${width}px, want ${expected}px`);
+    }, 5000, label);
+    check(label, true);
+  }
+
+  const bootWidth = await panelWidth(".sidebar");
+  check("sidebar boots at the default width", near(bootWidth, 232), `${bootWidth}px`);
+  await dragSidebar(292, 292, "drag widens the sidebar");
+  await dragSidebar(100, 180, "drag below the minimum clamps at 180");
+  await dragSidebar(500, 420, "drag past the maximum clamps at 420");
+
+  // Mark the live page, reload, then wait until the mark is GONE plus the
+  // demo story is back — evaluating against the pre-navigation document
+  // otherwise passes instantly and races the fresh mount.
+  await cdp.evaluate("window.__guiPreReload = true");
+  await cdp.send("Page.reload");
+  await retry(async () => {
+    const reboot = await cdp.evaluate(`({
+      stale: Boolean(window.__guiPreReload),
+      turns: document.querySelectorAll(".turn").length,
+      sidebar: Boolean(document.querySelector(".sidebar")),
+    })`);
+    if (reboot.stale || reboot.turns < 2 || !reboot.sidebar) {
+      throw new Error(`reboot incomplete: ${JSON.stringify(reboot)}`);
+    }
+  }, 30_000, "renderer reboot after reload");
+  const reloadedWidth = await panelWidth(".sidebar");
+  check("reload restores the dragged width", near(reloadedWidth, 420), `${reloadedWidth}px`);
+
+  const canvasBefore = await panelWidth(".viewport");
+  await dblclickSidebarHandle();
+  await expectWidth(".sidebar", 0, "double-click collapses the sidebar");
+  await retry(async () => {
+    const grown = await panelWidth(".viewport");
+    if (!near(grown, canvasBefore + 420, 4)) {
+      throw new Error(`canvas did not absorb the freed pixels: ${grown}px, want ${canvasBefore + 420}px`);
+    }
+  }, 5000, "canvas absorbs the freed pixels");
+  await dblclickSidebarHandle();
+  await expectWidth(".sidebar", 420, "double-click restores the sidebar");
+  await retry(async () => {
+    const back = await panelWidth(".viewport");
+    if (!near(back, canvasBefore, 4)) throw new Error(`canvas did not return the pixels: ${back}px`);
+  }, 5000, "canvas returns the pixels on expand");
 } catch (error) {
   failures += 1;
   console.error(`  ✗ ${error.message}`);

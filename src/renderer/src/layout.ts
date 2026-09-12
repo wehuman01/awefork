@@ -17,7 +17,7 @@ export type PanelSide = "sidebar" | "context";
 
 const LAYOUT_KEY = "awefork:layout";
 
-const DEFAULTS: Record<PanelSide, PanelState> = {
+export const DEFAULTS: Record<PanelSide, PanelState> = {
   sidebar: { width: 232, collapsed: false, saved: 232 },
   context: { width: 336, collapsed: false, saved: 336 },
 };
@@ -78,6 +78,10 @@ export function togglePanel(side: PanelSide): void {
 
 export function panelStyle(side: PanelSide): Record<string, string> {
   const panel = panels[side];
-  const size = panel.collapsed ? "0px" : `${panel.width}px`;
-  return { width: size, flexBasis: size, overflow: "hidden" };
+  if (panel.collapsed) {
+    // border-box boxes cannot shrink below their own padding + border, so a
+    // bare width 0 still leaves a visible stub on the padded panels.
+    return { width: "0px", flexBasis: "0px", overflow: "hidden", padding: "0", borderWidth: "0" };
+  }
+  return { width: `${panel.width}px`, flexBasis: `${panel.width}px`, overflow: "hidden" };
 }
