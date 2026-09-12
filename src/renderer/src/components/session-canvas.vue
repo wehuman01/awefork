@@ -16,6 +16,7 @@
               fork: edge.kind === 'fork',
               active: onActivePath(edge),
               dim: hasActivePath && !onActivePath(edge),
+              desc: isSubtreeEdge(edge),
             }"
           />
           <circle
@@ -23,7 +24,11 @@
             :cy="edge.ey"
             r="3.5"
             class="edge-dot"
-            :class="{ active: onActivePath(edge), dim: hasActivePath && !onActivePath(edge) }"
+            :class="{
+              active: onActivePath(edge),
+              dim: hasActivePath && !onActivePath(edge),
+              desc: isSubtreeEdge(edge),
+            }"
           />
         </g>
         <path v-if="draftEdge" :d="draftEdge.path" class="edge draft-edge" />
@@ -40,7 +45,8 @@
           running: isNodeRunning(node),
           recent: isNodeRecent(node),
           stub: node.kind === 'stub',
-          dimmed: hasActivePath && !activePathIds.has(node.id),
+          dimmed: isDimmed(node),
+          descendant: isSubtreeNode(node),
           hit: searchHitIds.has(node.id),
         }"
         :style="{
@@ -77,6 +83,13 @@
           <div class="turn-head">
             <span class="avatar user">🍑</span>
             <span class="turn-title" :title="node.title">{{ node.title }}</span>
+            <button
+              v-if="forkCountOf(node) > 0"
+              type="button"
+              class="fork-chip"
+              :title="`这个回合分出了 ${forkCountOf(node)} 条子分支 — 点击看整个子树`"
+              @click.stop="focusSubtree"
+            >⎇ {{ forkCountOf(node) }}</button>
             <span
               class="turn-time"
               :class="{ recent: isNodeRecent(node) }"
@@ -109,6 +122,13 @@
           <div class="turn-head">
             <span class="avatar user">🌱</span>
             <span class="turn-title" :title="node.title">{{ node.title }}</span>
+            <button
+              v-if="forkCountOf(node) > 0"
+              type="button"
+              class="fork-chip"
+              :title="`这条空分支分出了 ${forkCountOf(node)} 条子分支 — 点击看整个子树`"
+              @click.stop="focusSubtree"
+            >⎇ {{ forkCountOf(node) }}</button>
           </div>
           <p class="stub-hint">新分支还没有自己的回合 — 点「＋」写下第一步，或者直接在右侧回复。</p>
         </template>
@@ -225,6 +245,7 @@
         :class="{
           stub: n.kind === 'stub',
           on: activePathIds.has(n.id),
+          desc: forkedFromSelection.has(n.sessionId),
           running: isNodeRunning(n),
           recent: isNodeRecent(n),
           hit: searchHitIds.has(n.id),
@@ -250,6 +271,7 @@ import {
   deleteSession,
   deleteTurn,
   dismissDraft,
+  forkedFromSelection,
   isSessionTip,
   isTurnDelete,
   openDraft,
@@ -309,6 +331,53 @@ const searchHitIds = computed(() => new Set(storySearchHits.value.map((h) => h.n
 function onActivePath(edge: { from: string; to: string }): boolean {
   const ids = activePathIds.value;
   return ids.has(edge.from) && ids.has(edge.to);
+}
+
+// ── forked-from-selection subtree ───────────────────────────────────
+// The active path only lights a selection's ancestors, which left every
+// branch that grew FROM the selection as dark as unrelated stories. These
+// three keep the selected session's whole subtree one notch brighter with a
+// lavender tint, so "forked from here" and "somewhere else" read apart.
+
+function isOffPath(node: TurnNode): boolean {
+  return hasActivePath.value && !activePathIds.value.has(node.id);
+}
+
+/** Off the active path but part of the selected session's fork subtree. */
+function isSubtreeNode(node: TurnNode): boolean {
+  return isOffPath(node) && forkedFromSelection.value.has(node.sessionId);
+}
+
+function isDimmed(node: TurnNode): boolean {
+  return isOffPath(node) && !forkedFromSelection.value.has(node.sessionId);
+}
+
+/** Edge into a subtree branch (fork in, or sequence within one). */
+function isSubtreeEdge(edge: { from: string; to: string }): boolean {
+  const to = nodeById.value.get(edge.to);
+  return hasActivePath.value && to != null && forkedFromSelection.value.has(to.sessionId);
+}
+
+/**
+ * Fork-source cards of the selected session: node id → count of branches
+ * leaving it. Drives the ⎇ N badge — deep branches ride their own parents'
+ * badges once those sessions are selected.
+ */
+const directForkCounts = computed<Map<string, number>>(() => {
+  const counts = new Map<string, number>();
+  if (!store.selectedId) return counts;
+  for (const edge of graph.value.edges) {
+    if (edge.kind !== "fork") continue;
+    const from = nodeById.value.get(edge.from);
+    if (from?.sessionId === store.selectedId) {
+      counts.set(edge.from, (counts.get(edge.from) ?? 0) + 1);
+    }
+  }
+  return counts;
+});
+
+function forkCountOf(node: TurnNode): number {
+  return node.sessionId === store.selectedId ? (directForkCounts.value.get(node.id) ?? 0) : 0;
 }
 
 const edgesWithPoints = computed(() =>
@@ -459,13 +528,14 @@ function zoomAt(px: number, py: number, factor: number): void {
   scale.value = next;
 }
 
-function fitView(): void {
+/** Frame exactly these nodes; the shared math behind 全图适配 and subtree focus. */
+function fitTo(nodes: TurnNode[]): void {
   const rect = viewportEl.value?.getBoundingClientRect();
-  if (!rect || graph.value.nodes.length === 0) return;
-  const minX = Math.min(...graph.value.nodes.map((n) => n.x));
-  const minY = Math.min(...graph.value.nodes.map((n) => n.y));
-  const maxX = Math.max(...graph.value.nodes.map((n) => n.x + NODE_WIDTH));
-  const maxY = Math.max(...graph.value.nodes.map((n) => n.y + n.height));
+  if (!rect || nodes.length === 0) return;
+  const minX = Math.min(...nodes.map((n) => n.x));
+  const minY = Math.min(...nodes.map((n) => n.y));
+  const maxX = Math.max(...nodes.map((n) => n.x + NODE_WIDTH));
+  const maxY = Math.max(...nodes.map((n) => n.y + n.height));
   const padding = 48;
   const boundsW = maxX - minX + padding * 2;
   const boundsH = maxY - minY + padding * 2;
@@ -473,6 +543,17 @@ function fitView(): void {
   scale.value = Math.min(1, Math.max(0.2, Math.min(rect.width / boundsW, rect.height / boundsH)));
   tx.value = (rect.width - boundsW * scale.value) / 2 - (minX - padding) * scale.value;
   ty.value = (rect.height - boundsH * scale.value) / 2 - (minY - padding) * scale.value;
+}
+
+function fitView(): void {
+  fitTo(graph.value.nodes);
+}
+
+/** ⎇ badge click: pull the selected session's whole fork subtree into view. */
+function focusSubtree(): void {
+  const ids = new Set(forkedFromSelection.value);
+  if (store.selectedId) ids.add(store.selectedId);
+  fitTo(graph.value.nodes.filter((n) => ids.has(n.sessionId)));
 }
 
 function centerOnSession(sessionId: string): void {

@@ -895,6 +895,11 @@ textarea {
   stroke-opacity: 0.22;
 }
 
+/* edges into the selected session's fork subtree read above unrelated dim */
+.edge.dim.desc {
+  stroke-opacity: 0.55;
+}
+
 /* the open draft composer's connector — dashed like the box it feeds */
 .edge.draft-edge {
   stroke: var(--primary);
@@ -912,6 +917,10 @@ textarea {
 
 .edge-dot.dim {
   fill-opacity: 0.22;
+}
+
+.edge-dot.dim.desc {
+  fill-opacity: 0.55;
 }
 
 /* turn cards */
@@ -978,6 +987,23 @@ textarea {
   opacity: 0.8;
 }
 
+/* forked-from-selection subtree: between the active path and unrelated dim —
+   one notch brighter with the fork line's lavender, so "grew from here"
+   never looks like "somewhere else" */
+.turn.descendant {
+  opacity: 0.72;
+  border-color: #c9b8f0;
+  box-shadow: 0 0 0 3px rgba(201, 184, 240, 0.16);
+}
+
+/* a search hit's butter ring wins over the subtree tint on shared cards */
+.turn.hit.descendant {
+  border-color: var(--butter);
+  box-shadow:
+    0 0 0 4px rgba(255, 209, 102, 0.35),
+    var(--shadow-lift);
+}
+
 .turn.stub {
   border-style: dashed;
   border-color: var(--primary-border);
@@ -1023,6 +1049,27 @@ textarea {
   color: var(--ink-faint);
   font-weight: 600;
   flex: 0 0 auto;
+}
+
+/* ⎇ N badge on the selected session's fork-source cards; click frames the
+   whole subtree. Always visible — it is the answer to "what grew from here" */
+.fork-chip {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  padding: 1.5px 8px;
+  border-radius: 999px;
+  background: var(--lavender-soft);
+  border: 1px solid #d9ccf7;
+  color: #7a66d6;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+
+.fork-chip:hover {
+  background: #e2d9fb;
 }
 
 .turn-body {
@@ -1446,6 +1493,12 @@ textarea {
 
 .mm-node.stub {
   background: #eee6f8;
+  border-color: #c9b8f0;
+}
+
+/* fork-subtree nodes read above the plain dots, below hits and a live run */
+.mm-node.desc {
+  background: #e3d9fa;
   border-color: #c9b8f0;
 }
 

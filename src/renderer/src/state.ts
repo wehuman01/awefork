@@ -15,6 +15,7 @@ import {
 import { selectCanvasSessions } from "../../shared/canvas-scope";
 import {
   buildSessionTree,
+  descendantSessionIds,
   enrichSessions,
   pickNeighborId,
   type SessionGroup,
@@ -356,6 +357,15 @@ export const activeChain = computed<TurnNode[]>(() => {
 
 export const selectedSession = computed<SessionSummary | null>(
   () => visibleSessions.value.find((s) => s.id === state.selectedId) ?? null,
+);
+
+/**
+ * Sessions forked from the selected one — its whole subtree. The canvas keeps
+ * these cards readable while everything else off the active path dims, so a
+ * branch that grew from the selection never looks like an unrelated story.
+ */
+export const forkedFromSelection = computed<Set<string>>(() =>
+  descendantSessionIds(canvasSessions.value, state.lineage, state.selectedId),
 );
 
 const selectedTurns = computed<Turn[]>(() =>

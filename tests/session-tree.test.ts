@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { buildSessionTree, pickNeighborId, withoutArchived } from "../src/shared/session-tree";
+import {
+  buildSessionTree,
+  descendantSessionIds,
+  pickNeighborId,
+  withoutArchived,
+} from "../src/shared/session-tree";
 import type { ArchiveState, LineageMap, SessionSummary } from "../src/shared/types";
 
 function session(partial: Partial<SessionSummary> & { id: string }): SessionSummary {
@@ -61,6 +66,55 @@ describe("buildSessionTree", () => {
       orphan: { parentId: "deleted", atMessageId: null, createdAt: 0 },
     });
     expect(tree[0]?.roots.map((n) => n.session.id)).toEqual(["orphan", "a"]);
+  });
+});
+
+describe("descendantSessionIds", () => {
+  const lineage: LineageMap = {
+    "a-fork": { parentId: "a", atMessageId: "m1", createdAt: 5 },
+    "a-fork-2": { parentId: "a-fork", atMessageId: null, createdAt: 6 },
+    "b-fork": { parentId: "b", atMessageId: null, createdAt: 7 },
+  };
+
+  it("collects the whole subtree below the session — forks of forks included", () => {
+    const sessions = [
+      session({ id: "a" }),
+      session({ id: "a-fork", origin: "fork", parentSessionId: "a" }),
+      session({ id: "a-fork-2", origin: "fork", parentSessionId: "a-fork" }),
+      session({ id: "b" }),
+      session({ id: "b-fork", origin: "fork", parentSessionId: "b" }),
+    ];
+    expect(descendantSessionIds(sessions, lineage, "a")).toEqual(new Set(["a-fork", "a-fork-2"]));
+  });
+
+  it("excludes the session itself and unrelated stories", () => {
+    const sessions = [session({ id: "a" }), session({ id: "b" })];
+    const ids = descendantSessionIds(sessions, lineage, "a");
+    expect(ids.has("a")).toBe(false);
+    expect(ids.has("b")).toBe(false);
+  });
+
+  it("skips subagents so the set matches the rendered cards", () => {
+    const sessions = [
+      session({ id: "a" }),
+      session({ id: "a-fork", origin: "fork", parentSessionId: "a" }),
+      session({ id: "sub", parentSessionId: "a-fork", origin: "subagent" }),
+    ];
+    expect(descendantSessionIds(sessions, lineage, "a")).toEqual(new Set(["a-fork"]));
+  });
+
+  it("treats a fork whose parent is absent as nobody's child", () => {
+    const sessions = [
+      session({ id: "a" }),
+      session({ id: "orphan", origin: "fork", parentSessionId: "deleted" }),
+    ];
+    expect(descendantSessionIds(sessions, lineage, "a")).toEqual(new Set());
+  });
+
+  it("returns empty for a null or unknown root", () => {
+    const sessions = [session({ id: "a" })];
+    expect(descendantSessionIds(sessions, lineage, null)).toEqual(new Set());
+    expect(descendantSessionIds(sessions, lineage, "zzz")).toEqual(new Set());
   });
 });
 

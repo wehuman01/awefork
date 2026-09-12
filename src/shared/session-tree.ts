@@ -83,6 +83,44 @@ export function buildSessionTree(
     .sort((a, b) => latestUpdated(b.roots) - latestUpdated(a.roots));
 }
 
+/**
+ * Sessions strictly below `rootId` in the fork tree — its children and every
+ * deeper descendant. Parents resolve lineage-first, like the canvas graph and
+ * sidebar tree; subagents are skipped so the set matches the rendered cards.
+ * The canvas uses this to keep the selected session's subtree readable while
+ * everything off the active path dims.
+ */
+export function descendantSessionIds(
+  sessions: SessionSummary[],
+  lineage: LineageMap,
+  rootId: string | null,
+): Set<string> {
+  const ids = new Set<string>();
+  if (!rootId) return ids;
+
+  const byId = new Map(sessions.filter((s) => s.origin !== "subagent").map((s) => [s.id, s]));
+  if (!byId.has(rootId)) return ids;
+
+  const childrenOf = new Map<string, string[]>();
+  for (const session of byId.values()) {
+    const parent = lineage[session.id]?.parentId ?? session.parentSessionId;
+    if (parent && parent !== session.id && byId.has(parent)) {
+      const list = childrenOf.get(parent);
+      if (list) list.push(session.id);
+      else childrenOf.set(parent, [session.id]);
+    }
+  }
+
+  const queue = childrenOf.get(rootId) ?? [];
+  for (let i = 0; i < queue.length; i += 1) {
+    const id = queue[i];
+    if (id === undefined || ids.has(id)) continue;
+    ids.add(id);
+    queue.push(...(childrenOf.get(id) ?? []));
+  }
+  return ids;
+}
+
 function addRootBucket(rootsByDir: Map<string, SessionTreeNode[]>, directory: string) {
   const bucket: SessionTreeNode[] = [];
   rootsByDir.set(directory, bucket);
