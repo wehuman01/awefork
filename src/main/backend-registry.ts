@@ -209,7 +209,7 @@ export async function probeOpencode(
   try {
     const { stdout } = await execFn("opencode", ["--version"], {
       timeout: 5000,
-      env: await resolveSpawnEnv(process.env, homedir(), undefined, platform, "opencode"),
+      env: await resolveSpawnEnv(process.env, homedir(), undefined, platform),
       ...(platform === "win32" ? { shell: true, windowsHide: true } : {}),
     });
     return { installed: true, version: parseVersion(stdout) };

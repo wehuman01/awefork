@@ -143,38 +143,76 @@ describe("buildSpawnEnv", () => {
 describe("resolveSpawnEnv", () => {
   // The login-shell probe is darwin-only in production; pin "darwin" so these
   // cases exercise the POSIX path on every CI OS.
-  test("asks the login shell for PATH when opencode is nowhere on it", async () => {
+  test("fills launcher-missing exports from the login shell and unions its PATH", async () => {
     const home = mkdtempSync(join(tmpdir(), "awefork-noopencode-"));
-    let probed = false;
     const env = await resolveSpawnEnv(
       { PATH: "/usr/bin:/bin" },
       home,
-      async () => {
-        probed = true;
-        return "/Users/x/.nvm/versions/node/v22.0.0/bin";
-      },
+      async () => ({
+        PATH: "/Users/x/.nvm/versions/node/v22.0.0/bin",
+        AWESHARE_CONSUMER_TOKEN: "asc_test",
+      }),
       "darwin",
     );
-    expect(probed).toBe(true);
+    // GUI launches never source rc files — the provider key opencode's
+    // `{env:NAME}` options resolve against must come from the probe.
+    expect(env.AWESHARE_CONSUMER_TOKEN).toBe("asc_test");
     // Machine-wide candidate dirs (/opt/homebrew/bin …) may also be prepended,
-    // so assert membership, not order.
+    // so assert membership, not order. The probed PATH is a union, not a
+    // replacement — the server child still needs git & friends.
     expect(env.PATH).toContain("/Users/x/.nvm/versions/node/v22.0.0/bin");
-    // The probed PATH is a union, not a replacement — the server child still
-    // needs git & friends from the original entries.
     expect(env.PATH).toContain("/usr/bin:/bin");
   });
 
-  test("skips the login shell when candidates already resolve opencode", async () => {
+  test("never overrides vars the app itself was started with", async () => {
+    const home = mkdtempSync(join(tmpdir(), "awefork-envfill-"));
+    const env = await resolveSpawnEnv(
+      { PATH: "/usr/bin:/bin", OPENAI_API_KEY: "app-value" },
+      home,
+      async () => ({ OPENAI_API_KEY: "shell-value" }),
+      "darwin",
+    );
+    expect(env.OPENAI_API_KEY).toBe("app-value");
+  });
+
+  test("keeps launcher identity, terminal cosmetics and interpreter overrides out", async () => {
+    const home = mkdtempSync(join(tmpdir(), "awefork-envfill-"));
+    const env = await resolveSpawnEnv(
+      { PATH: "/usr/bin:/bin" },
+      home,
+      async () => ({
+        HOME: "/Users/x",
+        USER: "x",
+        TMPDIR: "/Users/x/tmp",
+        TERM: "xterm-256color",
+        TERM_PROGRAM: "iTerm.app",
+        NODE_OPTIONS: "--require=/x.js",
+        LD_LIBRARY_PATH: "/opt/x/lib",
+        EMPTY_TOKEN: "",
+      }),
+      "darwin",
+    );
+    expect(env.HOME).toBeUndefined();
+    expect(env.USER).toBeUndefined();
+    expect(env.TMPDIR).toBeUndefined();
+    expect(env.TERM).toBeUndefined();
+    expect(env.TERM_PROGRAM).toBeUndefined();
+    expect(env.NODE_OPTIONS).toBeUndefined();
+    expect(env.LD_LIBRARY_PATH).toBeUndefined();
+    expect(env.EMPTY_TOKEN).toBeUndefined();
+  });
+
+  test("unions the probed PATH even when candidates already resolve the CLI", async () => {
     const home = fakeHome();
     const env = await resolveSpawnEnv(
       { PATH: "/usr/bin:/bin" },
       home,
-      async () => {
-        throw new Error("probe must not run");
-      },
+      async () => ({ PATH: "/Users/x/.nvm/versions/node/v22.0.0/bin" }),
       "darwin",
     );
     expect(env.PATH?.startsWith(join(home, ".deskclaw", "node", "bin"))).toBe(true);
+    expect(env.PATH).toContain("/Users/x/.nvm/versions/node/v22.0.0/bin");
+    expect(env.PATH).toContain("/usr/bin:/bin");
   });
 
   test("falls back to the merged PATH when the probe finds nothing", async () => {

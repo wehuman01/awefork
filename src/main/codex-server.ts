@@ -33,7 +33,7 @@ export async function isCodexInstalled(
   try {
     await execFn("codex", ["--version"], {
       timeout: 5000,
-      env: await resolveSpawnEnv(process.env, homedir(), undefined, platform, "codex"),
+      env: await resolveSpawnEnv(process.env, homedir(), undefined, platform),
       // npm's .cmd shims only run under cmd.exe — without shell the probe
       // reports every npm-installed CLI as missing on Windows (the serve
       // spawn below carries the same branch).
@@ -77,13 +77,7 @@ export async function ensureCodexServer(
   if (existing?.alive) return existing.result;
   if (existing) stopCodexServer(key);
 
-  const spawnEnv = await resolveSpawnEnv(
-    process.env,
-    homedir(),
-    undefined,
-    process.platform,
-    "codex",
-  );
+  const spawnEnv = await resolveSpawnEnv(process.env, homedir(), undefined, process.platform);
   const child = spawnFn("codex", ["app-server"], {
     stdio: ["pipe", "pipe", "ignore"],
     cwd: homedir(),

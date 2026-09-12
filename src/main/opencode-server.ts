@@ -1,5 +1,5 @@
 import { type ChildProcess, execFile, spawn } from "node:child_process";
-import { accessSync, constants, existsSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -65,26 +65,80 @@ function candidateBinDirs(
 }
 
 /**
- * The candidate list above can't cover versioned install dirs
- * (~/.nvm/versions/node/vX/bin). When the merged PATH still has no `opencode`,
- * ask the user's login shell for its PATH — once, best-effort, macOS only
- * (Windows has no equivalent; its candidate dirs cover the common installs).
+ * Env names the login shell must not hand to the agent child: launcher
+ * identity the app already provides, terminal cosmetics a server process has
+ * no use for, and interpreter overrides that would change how the CLI itself
+ * runs (a developer's NODE_OPTIONS/DYLD_* belong to their shell, not to the
+ * spawned opencode/codex).
  */
-async function loginShellPath(): Promise<string | null> {
+const SHELL_ENV_KEEP_OUT = new Set([
+  "HOME",
+  "USER",
+  "LOGNAME",
+  "SHELL",
+  "TMPDIR",
+  "PWD",
+  "OLDPWD",
+  "SHLVL",
+  "_",
+  "COLORTERM",
+  "LINES",
+  "COLUMNS",
+  "GPG_TTY",
+  "NODE_ENV",
+  "NODE_OPTIONS",
+  "NODE_PATH",
+]);
+
+const SHELL_ENV_KEEP_OUT_PREFIXES = ["TERM", "DYLD_", "LD_"];
+
+function shellMayProvide(key: string): boolean {
+  if (SHELL_ENV_KEEP_OUT.has(key)) return false;
+  return !SHELL_ENV_KEEP_OUT_PREFIXES.some((prefix) => key.startsWith(prefix));
+}
+
+/**
+ * The interactive shell's full export set, probed once per app session.
+ * Agent configs resolve credentials from the environment (opencode's
+ * `{env:NAME}` provider keys), and those exports usually live in rc files
+ * (~/.zshrc) that a Finder/Dock launch never sources — so the probe is what
+ * makes provider auth work under a GUI launch. Best-effort, macOS only:
+ * Windows GUI apps inherit the user-profile environment from the registry,
+ * and the candidate dirs cover its common installs.
+ */
+function loginShellEnv(): Promise<Record<string, string> | null> {
+  loginShellEnvPromise ??= probeLoginShellEnv();
+  return loginShellEnvPromise;
+}
+
+let loginShellEnvPromise: Promise<Record<string, string> | null> | null = null;
+
+async function probeLoginShellEnv(): Promise<Record<string, string> | null> {
   if (process.platform !== "darwin") return null;
   const shell = process.env.SHELL;
   if (!shell) return null;
   try {
     // -i: nvm and friends initialize in .zshrc, which zsh sources for
-    // interactive shells only. PATH can't contain newlines, so rc noise on
-    // earlier stdout lines is discarded by taking the last non-empty line.
-    const { stdout } = await execFileAsync(shell, ["-ilc", "echo $PATH"], { timeout: 3000 });
-    const probed = stdout.trim().split("\n").filter(Boolean).at(-1) ?? "";
-    return probed.includes("/") ? probed : null;
+    // interactive shells only. printenv emits KEY=VALUE lines; rc noise on
+    // earlier stdout lines lacks the shape and is dropped by the parser, and
+    // a value with embedded newlines truncates at its first line — tokens
+    // and paths never contain them.
+    const { stdout } = await execFileAsync(shell, ["-ilc", "printenv"], { timeout: 3000 });
+    const vars = parsePrintenv(stdout);
+    return Object.keys(vars).length > 0 ? vars : null;
   } catch {
-    // Broken rc files, timeout, no shell — fall back to the merged PATH.
+    // Broken rc files, timeout, no shell — the launcher env is used as-is.
     return null;
   }
+}
+
+function parsePrintenv(stdout: string): Record<string, string> {
+  const vars: Record<string, string> = {};
+  for (const line of stdout.split("\n")) {
+    const hit = line.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+    if (hit?.[1] !== undefined) vars[hit[1]] = hit[2] ?? "";
+  }
+  return vars;
 }
 
 function splitPath(pathValue: string | undefined, platform: NodeJS.Platform): string[] {
@@ -92,38 +146,35 @@ function splitPath(pathValue: string | undefined, platform: NodeJS.Platform): st
   return (pathValue ?? "").split(delimiter).filter(Boolean);
 }
 
-function dirHasBinary(dir: string, name: string): boolean {
-  try {
-    accessSync(join(dir, name), constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** Spawn env for the opencode child, with the login-shell PATH as fallback. */
+/**
+ * Spawn env for the agent child under a GUI launch. Candidate bin dirs are
+ * prepended so the CLI resolves, and exports the login shell provides fill
+ * every gap the launcher left (API tokens exported in rc files) without ever
+ * overriding values the app itself was started with. PATH unions rather than
+ * replaces: the spawned server also shells out to git and friends that live
+ * on the original (Finder-minimal) PATH.
+ */
 export async function resolveSpawnEnv(
   env: { PATH?: string; [key: string]: string | undefined } = process.env,
   home: string = homedir(),
-  shellPathProbe: () => Promise<string | null> = loginShellPath,
+  shellEnvProbe: () => Promise<Record<string, string> | null> = loginShellEnv,
   platform: NodeJS.Platform = process.platform,
-  binaryName: "opencode" | "codex" = "opencode",
 ): Promise<{ PATH?: string; [key: string]: string | undefined }> {
-  const merged = buildSpawnEnv(env, home, platform);
-  // Check the sources, not the merged PATH string: re-splitting it with ':'
-  // would shred Windows drive-letter paths when POSIX behavior is emulated
-  // (tests) — and the probe below is darwin-only in production anyway.
-  const dirs = [...splitPath(env.PATH, platform), ...candidateBinDirs(env, home, platform)];
-  if (dirs.some((dir) => dirHasBinary(dir, binaryName))) return merged;
-  const probed = await shellPathProbe();
-  if (!probed) return merged;
-  // Union, not replace: the spawned server also shells out to git and friends
-  // that live on the original (Finder-minimal) PATH.
-  return buildSpawnEnv(
-    { ...env, PATH: [probed, env.PATH ?? ""].filter(Boolean).join(":") },
-    home,
-    platform,
-  );
+  const probed = await shellEnvProbe();
+  const merged: { PATH?: string; [key: string]: string | undefined } = { ...env };
+  if (probed) {
+    for (const [key, value] of Object.entries(probed)) {
+      if (key === "PATH" || !shellMayProvide(key) || value === "" || merged[key] !== undefined) {
+        continue;
+      }
+      merged[key] = value;
+    }
+  }
+  // Union the probed PATH ahead of the launcher's (versioned install dirs
+  // like ~/.nvm/... aren't in the candidate list). POSIX joining is safe:
+  // the probe never runs on win32.
+  const path = probed?.PATH ? [probed.PATH, env.PATH ?? ""].filter(Boolean).join(":") : env.PATH;
+  return path === undefined ? merged : buildSpawnEnv({ ...merged, PATH: path }, home, platform);
 }
 
 /**

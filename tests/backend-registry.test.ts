@@ -345,7 +345,6 @@ describe("probeOpencode platform handling", () => {
       expect.any(String),
       undefined,
       "win32",
-      "opencode",
     );
     expect(options[0]?.env).toBe(process.env);
   });
