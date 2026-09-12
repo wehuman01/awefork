@@ -343,7 +343,7 @@ export const storySearchHits = computed<TurnSearchHit[]>(() =>
  * matching the pane's follow-latest behavior. The canvas highlights this
  * path and the pane renders the turns before it as context.
  */
-export const activeChain = computed<TurnNode[]>(() => {
+const activeTipNode = computed<TurnNode | null>(() => {
   const graph = turnGraph.value;
   const nodeById = new Map(graph.nodes.map((n) => [n.id, n]));
   const selected = state.selectedTurnId;
@@ -352,7 +352,27 @@ export const activeChain = computed<TurnNode[]>(() => {
     const nodes = graph.nodes.filter((n) => n.sessionId === state.selectedId);
     tip = nodes.length > 0 ? (nodes[nodes.length - 1] ?? null) : null;
   }
-  return chainToTip(graph, tip?.id ?? null);
+  return tip;
+});
+
+export const activeChain = computed<TurnNode[]>(() =>
+  chainToTip(turnGraph.value, activeTipNode.value?.id ?? null),
+);
+
+/**
+ * The selected turn's direct children — one generation only: the next turn
+ * in the same session plus the first card of every branch forked from it.
+ * The canvas tints these a notch lighter than the active path; deeper
+ * generations and sibling branches keep the plain card style.
+ */
+export const childTurnIds = computed<Set<string>>(() => {
+  const tip = activeTipNode.value;
+  const ids = new Set<string>();
+  if (!tip) return ids;
+  for (const edge of turnGraph.value.edges) {
+    if (edge.from === tip.id) ids.add(edge.to);
+  }
+  return ids;
 });
 
 export const selectedSession = computed<SessionSummary | null>(
@@ -360,9 +380,9 @@ export const selectedSession = computed<SessionSummary | null>(
 );
 
 /**
- * Sessions forked from the selected one — its whole subtree. The canvas keeps
- * these cards readable while everything else off the active path dims, so a
- * branch that grew from the selection never looks like an unrelated story.
+ * Sessions forked from the selected one — its whole subtree. No longer a
+ * highlight; the ⎇ badge's 子树取景 still frames these to put the whole
+ * fork tree in view.
  */
 export const forkedFromSelection = computed<Set<string>>(() =>
   descendantSessionIds(canvasSessions.value, state.lineage, state.selectedId),

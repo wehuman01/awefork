@@ -253,7 +253,7 @@
         :class="{
           stub: n.kind === 'stub',
           on: activePathIds.has(n.id),
-          desc: forkedFromSelection.has(n.sessionId),
+          desc: childTurnIds.has(n.id),
           running: isNodeRunning(n),
           recent: isNodeRecent(n),
           hit: searchHitIds.has(n.id),
@@ -276,6 +276,7 @@ import { formatDuration, formatTokens } from "../format";
 import {
   activeChain,
   cardHeights,
+  childTurnIds,
   deleteSession,
   deleteTurn,
   dismissDraft,
@@ -341,29 +342,30 @@ function onActivePath(edge: { from: string; to: string }): boolean {
   return ids.has(edge.from) && ids.has(edge.to);
 }
 
-// ── forked-from-selection subtree ───────────────────────────────────
-// The active path only lights a selection's ancestors, which left every
-// branch that grew FROM the selection as dark as unrelated stories. These
-// three keep the selected session's whole subtree one notch brighter with a
-// lavender tint, so "forked from here" and "somewhere else" read apart.
+// ── direct children of the selected turn ──────────────────────────────
+// The active path lights a selection's ancestors; everything else used to
+// dim except the selected session's whole fork subtree, which swept in
+// branches unrelated to the picked turn. Now only the selected turn's
+// direct children — the next turn on the same line plus the first card of
+// each branch forked from it — keep a notch of highlight; sibling forks
+// and deeper generations sit at the plain card style.
 
 function isOffPath(node: TurnNode): boolean {
   return hasActivePath.value && !activePathIds.value.has(node.id);
 }
 
-/** Off the active path but part of the selected session's fork subtree. */
+/** Off the active path but a direct child of the selected turn. */
 function isSubtreeNode(node: TurnNode): boolean {
-  return isOffPath(node) && forkedFromSelection.value.has(node.sessionId);
+  return isOffPath(node) && childTurnIds.value.has(node.id);
 }
 
 function isDimmed(node: TurnNode): boolean {
-  return isOffPath(node) && !forkedFromSelection.value.has(node.sessionId);
+  return isOffPath(node) && !childTurnIds.value.has(node.id);
 }
 
-/** Edge into a subtree branch (fork in, or sequence within one). */
+/** Edge into a direct child — sequence or fork, the card it lands on decides. */
 function isSubtreeEdge(edge: { from: string; to: string }): boolean {
-  const to = nodeById.value.get(edge.to);
-  return hasActivePath.value && to != null && forkedFromSelection.value.has(to.sessionId);
+  return hasActivePath.value && childTurnIds.value.has(edge.to);
 }
 
 /**
