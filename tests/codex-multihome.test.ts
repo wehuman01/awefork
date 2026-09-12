@@ -123,6 +123,116 @@ describe("codex multi-home facade", () => {
     expect(sessions.map((s) => s.id)).toEqual(["new", "old"]);
   });
 
+  it("keeps a colliding id owned by the default home even when its fetch lands last", async () => {
+    // Dedupe must follow homes order, not fetch-completion order: a foreign
+    // home that answers first would otherwise claim the shared id (an
+    // imported rollout keeps the id in both homes) and route reads to its
+    // staler copy.
+    const homes: CodexHome[] = [
+      { id: "default", path: "/homes/default", label: "Codex" },
+      { id: "cxo", path: "/homes/cxo", label: "cxo" },
+    ];
+    const slowDefault = fakeHomeAdapter(homes[0], []);
+    (slowDefault.listSessions as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return [{ ...makeSummary("shared", 200), title: "default copy" }];
+    });
+    const foreign = fakeHomeAdapter(homes[1], []);
+    (foreign.listSessions as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { ...makeSummary("shared", 100), title: "foreign copy" },
+    ]);
+    const byHome = new Map<string, AgentAdapter>([
+      ["default", slowDefault],
+      ["cxo", foreign],
+    ]);
+    const facade = createCodexMultiHomeAdapter({
+      lineagePath: join(makeDir(), "lineage.json"),
+      homes: () => homes,
+      createHomeAdapter: (home) => Promise.resolve(byHome.get(home.id)!),
+      defaultHomePath: () => "/homes/default",
+    });
+    const sessions = await facade.listSessions();
+    expect(sessions.find((s) => s.id === "shared")?.title).toBe("default copy");
+    await facade.messages("shared");
+    expect(byHome.get("default")!.messages).toHaveBeenCalledWith("shared");
+    expect(byHome.get("cxo")!.messages).not.toHaveBeenCalled();
+  });
+
+  it("does not drop a foreign home's later sessions after an id collision", async () => {
+    // A duplicate id must skip only its own row, not end the home's loop. The
+    // foreign home answers last, so its duplicate is mid-list when it lands.
+    const homes: CodexHome[] = [
+      { id: "default", path: "/homes/default", label: "Codex" },
+      { id: "cxo", path: "/homes/cxo", label: "cxo" },
+    ];
+    const foreign = fakeHomeAdapter(homes[1], []);
+    (foreign.listSessions as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return [makeSummary("shared", 100), makeSummary("other", 100)];
+    });
+    const byHome = new Map<string, AgentAdapter>([
+      ["default", fakeHomeAdapter(homes[0], ["shared"])],
+      ["cxo", foreign],
+    ]);
+    const facade = createCodexMultiHomeAdapter({
+      lineagePath: join(makeDir(), "lineage.json"),
+      homes: () => homes,
+      createHomeAdapter: (home) => Promise.resolve(byHome.get(home.id)!),
+      defaultHomePath: () => "/homes/default",
+    });
+    const sessions = await facade.listSessions();
+    expect(sessions.map((s) => s.id).sort()).toEqual(["other", "shared"]);
+  });
+
+  it("keeps a created session listed until thread/list carries it", async () => {
+    // codex 0.154 lists only threads that wrote a turn of their own, so a
+    // fresh thread/start is invisible to every listSessions until its first
+    // prompt — without the memo the renderer could never select the session
+    // it just made.
+    let serverListsFresh = false;
+    const { facade, byHome } = makeFacade({ default: [] });
+    (byHome.get("default")!.listSessions as ReturnType<typeof vi.fn>).mockImplementation(
+      async () => (serverListsFresh ? [makeSummary("fresh", 300)] : [makeSummary("older", 100)]),
+    );
+    (byHome.get("default")!.createSession as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeSummary("fresh", 200),
+    );
+
+    await facade.createSession("/repo");
+    const before = await facade.listSessions();
+    expect(before.map((s) => s.id)).toEqual(["fresh", "older"]);
+
+    // The first own turn lands: the server now lists the id, so the memo row
+    // retires instead of duplicating.
+    serverListsFresh = true;
+    const after = await facade.listSessions();
+    expect(after.filter((s) => s.id === "fresh")).toHaveLength(1);
+    expect(after.find((s) => s.id === "fresh")?.updatedAt).toBe(300);
+  });
+
+  it("keeps a just-cut fork listed before its first own turn", async () => {
+    const { facade, byHome } = makeFacade({ default: ["parent"] });
+    (byHome.get("default")!.fork as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...makeSummary("fork-1", 300),
+      origin: "fork",
+      parentSessionId: "parent",
+    });
+    const forked = await facade.fork("parent", null);
+    expect(forked).toMatchObject({ id: "fork-1", origin: "fork", parentSessionId: "parent" });
+    const sessions = await facade.listSessions();
+    expect(sessions.map((s) => s.id)).toEqual(["fork-1", "parent"]);
+  });
+
+  it("drops the memo row when the session is deleted before the server lists it", async () => {
+    const { facade, byHome } = makeFacade({ default: [] });
+    (byHome.get("default")!.createSession as ReturnType<typeof vi.fn>).mockResolvedValue(
+      makeSummary("fresh", 200),
+    );
+    await facade.createSession("/repo");
+    await facade.deleteSession("fresh");
+    expect(await facade.listSessions()).toEqual([]);
+  });
+
   it("still lists the default home when a foreign home cannot spawn", async () => {
     const homes: CodexHome[] = [
       { id: "default", path: "/homes/default", label: "Codex" },
