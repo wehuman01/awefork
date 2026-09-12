@@ -24,6 +24,10 @@
   </p>
 </div>
 
+<p align="center">
+  <img src="assets/images/app-overview.png" alt="awefork 主界面：分支会话画布" width="860" />
+</p>
+
 > 任意一轮，随时分叉。每条分支，都留着。
 
 awefork 是本地编程 agent 的非线性工作台。当前支持 [opencode](https://opencode.ai)，围绕一个核心动作构建：**节点级分叉** —— 选中会话里的任意一条用户消息，从那一轮长出一个新会话，在全新的上下文里继续，原会话毫发无损。

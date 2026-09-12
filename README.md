@@ -24,6 +24,10 @@
   </p>
 </div>
 
+<p align="center">
+  <img src="assets/images/app-overview.png" alt="awefork app window: a canvas of branching sessions" width="860" />
+</p>
+
 > Fork any turn. Keep every branch.
 
 awefork is a non-linear workbench for local coding agents. Today it supports [opencode](https://opencode.ai) and is built around one move: **node-level forking** — pick any user message in a session, branch a new session from that exact turn, and continue in a fresh context while the original stays untouched.
