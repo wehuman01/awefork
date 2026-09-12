@@ -351,6 +351,85 @@ describe("codex multi-home facade", () => {
     expect(existsSync(join(defaultHome, rel, `rollout-${threadId}.jsonl`))).toBe(true);
   });
 
+  it("deletes an imported session's account-home original too, so it stays deleted", async () => {
+    // Regression: deleteSession only hit the owning (default) home, so the
+    // aweswitch account home's original rollout re-listed the session on
+    // the next refresh — a deleted session that came back.
+    const foreignHome = makeDir();
+    const defaultHome = makeDir();
+    const threadId = "01a08d8f-del-test";
+    const rel = join("sessions", "2026", "09", "11");
+    for (const base of [foreignHome, defaultHome]) {
+      mkdirSync(join(base, rel), { recursive: true });
+      writeFileSync(join(base, rel, `rollout-${threadId}.jsonl`), "{}\n");
+    }
+    const homes: CodexHome[] = [
+      { id: "default", path: defaultHome, label: "Codex" },
+      { id: "cxo", path: foreignHome, label: "cxo" },
+    ];
+    const byHome = new Map<string, AgentAdapter>([
+      ["default", fakeHomeAdapter(homes[0], [threadId])],
+      ["cxo", fakeHomeAdapter(homes[1], [threadId])],
+    ]);
+    // thread/delete removes that home's rollout file, like the real server.
+    for (const [id, adapter] of byHome) {
+      const base = id === "default" ? defaultHome : foreignHome;
+      adapter.deleteSession.mockImplementation(async (sessionId: string) => {
+        rmSync(join(base, rel, `rollout-${sessionId}.jsonl`));
+      });
+    }
+    const { facade } = makeFacade(
+      { default: [threadId], cxo: [threadId] },
+      {
+        homes: () => homes,
+        createHomeAdapter: (home) => Promise.resolve(byHome.get(home.id)!),
+        defaultHomePath: () => defaultHome,
+      },
+    );
+    await facade.listSessions(); // default wins the collision, owns the id
+    await facade.deleteSession(threadId);
+
+    expect(byHome.get("default")!.deleteSession).toHaveBeenCalledWith(threadId);
+    expect(byHome.get("cxo")!.deleteSession).toHaveBeenCalledWith(threadId);
+    expect(existsSync(join(defaultHome, rel, `rollout-${threadId}.jsonl`))).toBe(false);
+    expect(existsSync(join(foreignHome, rel, `rollout-${threadId}.jsonl`))).toBe(false);
+  });
+
+  it("keeps the delete successful when a copy in another home cannot be removed", async () => {
+    const foreignHome = makeDir();
+    const defaultHome = makeDir();
+    const threadId = "01a08d8f-del-fail";
+    const rel = join("sessions", "2026", "09", "11");
+    mkdirSync(join(foreignHome, rel), { recursive: true });
+    writeFileSync(join(foreignHome, rel, `rollout-${threadId}.jsonl`), "{}\n");
+    const homes: CodexHome[] = [
+      { id: "default", path: defaultHome, label: "Codex" },
+      { id: "cxo", path: foreignHome, label: "cxo" },
+    ];
+    const byHome = new Map<string, AgentAdapter>([
+      ["default", fakeHomeAdapter(homes[0], [threadId])],
+      ["cxo", fakeHomeAdapter(homes[1], [])],
+    ]);
+    byHome.get("cxo")!.deleteSession.mockRejectedValue(new Error("spawn failed"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { facade } = makeFacade(
+      { default: [threadId], cxo: [] },
+      {
+        homes: () => homes,
+        createHomeAdapter: (home) => Promise.resolve(byHome.get(home.id)!),
+        defaultHomePath: () => defaultHome,
+      },
+    );
+    try {
+      await facade.listSessions();
+      await expect(facade.deleteSession(threadId)).resolves.toBeUndefined();
+      expect(byHome.get("default")!.deleteSession).toHaveBeenCalledWith(threadId);
+      expect(warn).toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("re-mints interaction request ids so replies reach the right home", async () => {
     const homes: CodexHome[] = [
       { id: "default", path: "/homes/default", label: "Codex" },
@@ -400,5 +479,29 @@ describe("codex multi-home facade", () => {
       decision: "allow",
     });
     expect(byHome.get("default")!.respondInteraction).not.toHaveBeenCalled();
+  });
+
+  it("delivers events again after a re-subscribe", async () => {
+    // Regression: unsubscribe used to tear down the cached home adapters'
+    // subscriptions, and a later subscribe only swapped the sink — the
+    // cached adapters kept their handlers detached, so every event after a
+    // resubscribe was silently dropped.
+    const { facade, byHome } = makeFacade({ default: ["own"] });
+    await facade.listSessions();
+    const first: AgentEvent[] = [];
+    const unsubscribe = await facade.subscribe((event) => first.push(event));
+    const adapter = byHome.get("default") as unknown as {
+      subscribe: ReturnType<typeof vi.fn>;
+    };
+    const handler = adapter.subscribe.mock.calls[0][0] as (event: AgentEvent) => void;
+    handler({ type: "session.updated", sessionId: "own" });
+    unsubscribe();
+
+    const second: AgentEvent[] = [];
+    await facade.subscribe((event) => second.push(event));
+    handler({ type: "session.updated", sessionId: "own" });
+
+    expect(first).toHaveLength(1);
+    expect(second).toEqual([{ type: "session.updated", sessionId: "own" }]);
   });
 });

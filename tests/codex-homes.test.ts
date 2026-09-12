@@ -7,6 +7,7 @@ import {
   DEFAULT_HOME_ID,
   defaultCodexHome,
   discoverCodexHomes,
+  findRolloutRelPath,
 } from "../src/main/codex-homes.js";
 
 const roots: string[] = [];
@@ -63,6 +64,31 @@ describe("discoverCodexHomes", () => {
     expect(homes[0]).toMatchObject({ id: DEFAULT_HOME_ID, path: resolve("/custom") });
     expect(homes.slice(1).map((home) => home.id)).toEqual(["cxo-heck", "cxo-peng"]);
     expect(homes[1].path).toBe(join(accounts, "cxo-heck"));
+  });
+});
+
+describe("findRolloutRelPath", () => {
+  const sessionId = "9c1drollout-abc";
+
+  it("finds the rollout under its date path", () => {
+    const home = join(makeRoot(), ".codex");
+    const day = join(home, "sessions", "2026", "09", "12");
+    mkdirSync(day, { recursive: true });
+    writeFileSync(join(day, `rollout-2026-09-12T08-42-31-${sessionId}.jsonl`), "");
+    expect(findRolloutRelPath(home, sessionId)).toBe(
+      join("2026", "09", "12", `rollout-2026-09-12T08-42-31-${sessionId}.jsonl`),
+    );
+  });
+
+  it("skips a non-directory at the day position instead of throwing", () => {
+    // Regression: a stray file (or a day dir pruned between the month
+    // listing and the read) used to escape as ENOTDIR/ENOENT and take the
+    // whole terminal-open or continue path down with it.
+    const home = join(makeRoot(), ".codex");
+    const month = join(home, "sessions", "2026", "09");
+    mkdirSync(month, { recursive: true });
+    writeFileSync(join(month, "stray-file"), "not a day dir");
+    expect(findRolloutRelPath(home, sessionId)).toBeNull();
   });
 });
 

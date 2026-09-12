@@ -227,6 +227,23 @@ describe("event envelopes", () => {
     expect(mocks.ensureCodexServer).toHaveBeenCalledTimes(2);
     expect(envelopes.filter((e) => e.event.type === "server.reconnected")).toHaveLength(1);
   });
+
+  it("does not toast an outage when the first spawn itself fails", async () => {
+    // Regression: a failed first spawn (CLI missing, say) fired the
+    // "connection interrupted" toast on top of the spawn error — an outage
+    // for a connection that never existed. Production fires onExit from
+    // markDead before the spawn error rejects the handshake.
+    mocks.ensureCodexServer.mockImplementation((callback: () => void) => {
+      callback();
+      return Promise.reject(new Error("Could not start codex app-server"));
+    });
+    const envelopes: BackendEventEnvelope[] = [];
+    registry.forward((envelope) => envelopes.push(envelope));
+
+    const adapter = await registry.get("codex");
+    await expect(adapter.listSessions()).rejects.toThrow("Could not start codex app-server");
+    expect(envelopes).toEqual([]);
+  });
 });
 
 describe("switcher data and selection", () => {

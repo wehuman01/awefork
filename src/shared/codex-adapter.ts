@@ -146,9 +146,13 @@ export function createCodexAdapter(options: CodexAdapterOptions): AgentAdapter {
       }
       return null;
     } catch (error) {
-      return `${CODEX_NOT_LOGGED_IN_MESSAGE}（${
-        error instanceof Error ? error.message : String(error)
-      }）`;
+      const message = error instanceof Error ? error.message : String(error);
+      // A probe that died with the connection says nothing about login
+      // state — the raw failure (and the outage toast) tells that story;
+      // wrapping it as "not logged in" would send the user after codex
+      // login for a crashed app-server.
+      if (message.includes("connection lost") || message.includes("not connected")) return null;
+      return `${CODEX_NOT_LOGGED_IN_MESSAGE}（${message}）`;
     }
   };
 
@@ -731,16 +735,36 @@ function emitCodexNotification(
           endedAt: method === "item/completed" ? (p.completedAtMs ?? null) : null,
         });
       } else if (item.type === "reasoning") {
+        const startedAt = method === "item/started" ? (p.startedAtMs ?? null) : null;
+        const endedAt = method === "item/completed" ? (p.completedAtMs ?? null) : null;
+        // The snapshot pair mirrors the delta pair above: raw content in the
+        // item's own part, summaries in the :summary part. Folding the
+        // summary into the main part's snapshot too would render it twice
+        // for as long as the live stream is on screen (the idle reload
+        // joins them into one thinking field).
         emit({
           type: "message.part",
           sessionId: threadId,
           messageId: p.turnId,
           partId: item.id,
           kind: "thinking",
-          text: reasoningTextOf(item),
-          startedAt: method === "item/started" ? (p.startedAtMs ?? null) : null,
-          endedAt: method === "item/completed" ? (p.completedAtMs ?? null) : null,
+          text: reasoningContentOf(item),
+          startedAt,
+          endedAt,
         });
+        const summary = reasoningSummaryOf(item);
+        if (summary) {
+          emit({
+            type: "message.part",
+            sessionId: threadId,
+            messageId: p.turnId,
+            partId: `${item.id}:summary`,
+            kind: "thinking",
+            text: summary,
+            startedAt,
+            endedAt,
+          });
+        }
       }
       break;
     }
@@ -761,14 +785,23 @@ function emitCodexNotification(
 }
 
 /**
- * Reasoning text of one item. Codex 0.154's `content` is string[] (older
- * builds sent {text}[] — both accepted); summaries are always string[].
+ * Reasoning text helpers. Codex 0.154's `content` is string[] (older builds
+ * sent {text}[] — both accepted); summaries are always string[]. The join for
+ * the persisted thinking field keeps content and summary in that order.
  */
+function reasoningContentOf(item: CodexItem): string {
+  return (item.content ?? [])
+    .map((part) => (typeof part === "string" ? part : (part.text ?? "")))
+    .join("\n\n")
+    .trim();
+}
+
+function reasoningSummaryOf(item: CodexItem): string {
+  return (item.summary ?? []).join("\n\n").trim();
+}
+
 function reasoningTextOf(item: CodexItem): string {
-  const content = (item.content ?? []).map((part) =>
-    typeof part === "string" ? part : (part.text ?? ""),
-  );
-  return [...content, ...(item.summary ?? [])].join("\n\n").trim();
+  return [reasoningContentOf(item), reasoningSummaryOf(item)].filter(Boolean).join("\n\n");
 }
 
 function interactionRequest(

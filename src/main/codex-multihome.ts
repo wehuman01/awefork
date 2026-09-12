@@ -38,6 +38,8 @@ interface HomeEntry {
   adapterPromise?: Promise<AgentAdapter>;
   /** Set when the home's child died; cleared by the next successful spawn. */
   crashed: boolean;
+  /** True once this home's adapter ever came up — gates the outage toast. */
+  connected: boolean;
 }
 
 /** A pending interaction: facade id → the home adapter holding the inner one. */
@@ -57,6 +59,8 @@ interface RoutedInteraction {
  * home's logged-in account — codex can only resume a rollout that lives in
  * its own CODEX_HOME, so the first continue copies the rollout file into the
  * default home ("imports" it) and the session routes there from then on.
+ * Deleting removes every home's copy, or the imported session would
+ * reappear from its account home on the next list.
  */
 export function createCodexMultiHomeAdapter(options: CodexMultiHomeOptions): AgentAdapter {
   const homesOf = options.homes ?? (() => discoverCodexHomes());
@@ -64,7 +68,6 @@ export function createCodexMultiHomeAdapter(options: CodexMultiHomeOptions): Age
   /** sessionId → owning home id, populated by listSessions. */
   const owners = new Map<string, string>();
   const entries = new Map<string, HomeEntry>();
-  const unsubs: Array<() => void> = [];
   /** facade requestId → inner home adapter + its own id. */
   const interactions = new Map<string, RoutedInteraction>();
   let nextInteractionId = 1;
@@ -109,9 +112,11 @@ export function createCodexMultiHomeAdapter(options: CodexMultiHomeOptions): Age
     entry.adapterPromise = undefined;
     if (entry.crashed) return;
     entry.crashed = true;
-    // A foreign home dying is invisible unless the user opens one of its
-    // sessions; only the primary home is worth a toast.
-    if (homeId === DEFAULT_HOME_ID) {
+    // A home that never came up (a failed first spawn, say) is reported by
+    // the failed call itself; only a real outage is worth the toast. A
+    // foreign home dying is invisible unless the user opens one of its
+    // sessions; only the primary home is worth interrupting for.
+    if (homeId === DEFAULT_HOME_ID && entry.connected) {
       emit({
         type: "server.error",
         message: "codex app-server 连接中断，将在下次操作时重启",
@@ -137,14 +142,18 @@ export function createCodexMultiHomeAdapter(options: CodexMultiHomeOptions): Age
   async function ensureHome(home: CodexHome): Promise<AgentAdapter> {
     let entry = entries.get(home.id);
     if (!entry) {
-      entry = { home, crashed: false };
+      entry = { home, crashed: false, connected: false };
       entries.set(home.id, entry);
     }
     if (entry.adapterPromise) return entry.adapterPromise;
     const promise = buildHomeAdapter(home)
       .then(async (adapter) => {
-        const unsub = await adapter.subscribe((event) => emit(retagInteraction(event, adapter)));
-        unsubs.push(unsub);
+        // The subscription outlives facade unsubscribe on purpose: emit
+        // drops events while no subscriber is attached, and a re-subscribe
+        // picks the cached adapter's stream back up instead of finding its
+        // handlers torn down (dispose tears them down with the adapter).
+        await adapter.subscribe((event) => emit(retagInteraction(event, adapter)));
+        entry.connected = true;
         if (entry.crashed) {
           entry.crashed = false;
           if (home.id === DEFAULT_HOME_ID) {
@@ -270,9 +279,23 @@ export function createCodexMultiHomeAdapter(options: CodexMultiHomeOptions): Age
     },
 
     async deleteSession(sessionId) {
+      const ownerId = owners.get(sessionId) ?? DEFAULT_HOME_ID;
       await (await adapterFor(sessionId)).deleteSession(sessionId);
       owners.delete(sessionId);
       unlistedSessions.delete(sessionId);
+      // An imported session's rollout still sits in its account home, and a
+      // leftover copy would resurrect the row on the next list. Delete every
+      // remaining copy through its own home's server, best effort — the
+      // primary delete already succeeded and must not fail over a copy.
+      for (const home of homesOf()) {
+        if (home.id === ownerId) continue;
+        if (findRolloutRelPath(home.path, sessionId) === null) continue;
+        try {
+          await (await ensureHome(home)).deleteSession(sessionId);
+        } catch (error) {
+          console.warn(`codex home ${home.id} could not delete ${sessionId}: ${String(error)}`);
+        }
+      }
     },
 
     async deleteMessage(sessionId, messageId) {
@@ -302,15 +325,12 @@ export function createCodexMultiHomeAdapter(options: CodexMultiHomeOptions): Age
 
     async subscribe(handler) {
       emitEvent = handler;
+      // Detaching the sink is all unsubscribe does: home servers keep
+      // running (their cache in entries never depended on a subscriber),
+      // events are dropped while detached, and a later subscribe resumes
+      // delivery through the still-attached home subscriptions.
       return () => {
         emitEvent = null;
-        for (const unsub of unsubs.splice(0)) {
-          try {
-            unsub();
-          } catch {
-            // A dead home's stream may already be gone.
-          }
-        }
       };
     },
 

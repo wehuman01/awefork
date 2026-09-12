@@ -71,6 +71,7 @@ export async function ensureCodexServer(
   onExit: () => void = () => {},
   spawnFn: typeof spawn = spawn,
   home?: string,
+  handshakeTimeoutMs = 30_000,
 ): Promise<EnsureCodexServerResult> {
   const key = home ?? DEFAULT_KEY;
   const existing = servers.get(key);
@@ -121,7 +122,7 @@ export async function ensureCodexServer(
     onDisconnect: markDead,
   });
 
-  const deadline = Date.now() + 30_000;
+  const deadline = Date.now() + handshakeTimeoutMs;
   for (;;) {
     if (spawnFailure.error) {
       client.dispose();
@@ -175,6 +176,10 @@ export async function ensureCodexServer(
       // the deadline; the spawn/exit checks above break the loop early.
       if (Date.now() > deadline) {
         client.dispose();
+        // This slot never reaches `servers`, so stopCodexServer will never
+        // come for the child — kill it here or the detached app-server
+        // outlives both the failure and the app itself.
+        killChild(child);
         markDead();
         throw new Error(
           `codex app-server did not complete its handshake: ${
@@ -194,14 +199,14 @@ export function stopCodexServer(home?: string): void {
     const current = servers.get(key);
     if (!current) continue;
     servers.delete(key);
-    stopSlot(current);
+    killChild(current.child);
   }
 }
 
-function stopSlot(current: ServerSlot): void {
-  if (current.child.exitCode !== null) return;
-  if (process.platform === "win32" && current.child.pid) {
-    spawn("taskkill", ["/pid", String(current.child.pid), "/T", "/F"], {
+function killChild(child: ChildProcess): void {
+  if (child.exitCode !== null) return;
+  if (process.platform === "win32" && child.pid) {
+    spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
       stdio: "ignore",
       windowsHide: true,
     });
@@ -209,9 +214,9 @@ function stopSlot(current: ServerSlot): void {
   }
   try {
     // Negative pid = the whole process group (npm shim + real binary).
-    if (current.child.pid) process.kill(-current.child.pid, "SIGTERM");
+    if (child.pid) process.kill(-child.pid, "SIGTERM");
   } catch {
-    current.child.kill("SIGTERM");
+    child.kill("SIGTERM");
   }
 }
 

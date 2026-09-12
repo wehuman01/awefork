@@ -81,8 +81,16 @@ export function findRolloutRelPath(homePath: string, threadId: string): string |
   for (const year of subDirs(root)) {
     for (const month of subDirs(join(root, year))) {
       for (const day of subDirs(join(root, year, month))) {
-        const dir = join(root, year, month, day);
-        for (const file of readdirSync(dir)) {
+        // A non-directory at the day position (or a dir pruned by codex's
+        // retention between the listing and this read) must not throw its
+        // way out of a browse or a continue — there is simply nothing here.
+        let files: string[];
+        try {
+          files = readdirSync(join(root, year, month, day));
+        } catch {
+          continue;
+        }
+        for (const file of files) {
           if (file.endsWith(`-${threadId}.jsonl`)) return join(year, month, day, file);
         }
       }

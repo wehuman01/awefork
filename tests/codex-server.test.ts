@@ -1,6 +1,6 @@
 import type { ChildProcess, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ensureCodexServer, isCodexInstalled, stopCodexServer } from "../src/main/codex-server.js";
 
 /**
@@ -69,6 +69,37 @@ describe("ensureCodexServer per-home slots", () => {
     await ensureCodexServer(() => {}, spawnFn, "/homes/b");
     await ensureCodexServer(() => {}, spawnFn, "/homes/a"); // cached per home
     expect(spawns).toBe(2);
+  });
+
+  it("kills the child when the handshake deadline passes (no orphan app-server)", async () => {
+    // Regression: the deadline path used to dispose the client and throw
+    // without killing the child — and the never-registered slot meant
+    // stopCodexServer would not come for it either, so a detached
+    // app-server outlived the app and piled up on repeated failures.
+    const child = fakeCodexChild({ initialize: { __error__: "stuck warming up" } });
+    child.pid = 4321;
+    const kills: unknown[][] = [];
+    const killSpy = vi.spyOn(process, "kill").mockImplementation((...args: unknown[]) => {
+      kills.push(args);
+      return true;
+    });
+    let exits = 0;
+    try {
+      await expect(
+        ensureCodexServer(
+          () => {
+            exits += 1;
+          },
+          spawnFnReturning(child),
+          undefined,
+          40,
+        ),
+      ).rejects.toThrow("did not complete its handshake");
+    } finally {
+      killSpy.mockRestore();
+    }
+    expect(kills).toEqual([[-4321, "SIGTERM"]]);
+    expect(exits).toBe(1);
   });
 });
 

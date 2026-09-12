@@ -2,9 +2,10 @@
  * Minimal JSON-RPC 2.0 client over a child process's stdio.
  *
  * `codex app-server` speaks newline-delimited JSON; a frame can split across
- * read chunks at any byte, so the reader buffers a partial line until the
- * next chunk. Responses may omit the `jsonrpc` field — correlation keys on
- * `id` alone. The server also pushes notifications and server-originated
+ * read chunks at any byte, so the reader decodes once at the source (keeping
+ * multi-byte characters split across chunks intact) and buffers a partial
+ * line until the next chunk. Responses may omit the `jsonrpc` field —
+ * correlation keys on `id` alone. The server also pushes notifications and server-originated
  * requests (approvals, tool user input); a request with an `id` MUST get
  * some reply or the server blocks on it. Approval requests get an explicit
  * deny decision (see `REQUEST_REPLIES`); anything we do not know is answered
@@ -189,6 +190,11 @@ export function createCodexJsonRpc(
   };
   const onEnd = () => notifyDisconnect();
 
+  // Decode at the source, not per chunk: Node's string decoder keeps a
+  // multi-byte character split across read chunks intact, where per-chunk
+  // toString would turn both halves into U+FFFD and silently garble CJK
+  // frames. Test doubles push plain EventBuffers, hence the guard.
+  if (typeof stdout.setEncoding === "function") stdout.setEncoding("utf8");
   stdout.on("data", onData);
   stdout.on("end", onEnd);
   stdout.on("error", onEnd);

@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { PassThrough } from "node:stream";
 import { describe, expect, it, vi } from "vitest";
 import { createCodexJsonRpc, splitLines } from "../src/main/codex-jsonrpc";
 
@@ -68,6 +69,29 @@ describe("createCodexJsonRpc", () => {
     stdout.emit("data", frame.slice(cut, cut * 2));
     stdout.emit("data", frame.slice(cut * 2));
     await expect(pending).resolves.toEqual({ userAgent: "codex/0.154.0" });
+    rpc.dispose();
+  });
+
+  it("keeps a multi-byte character split across chunks intact (real stream)", async () => {
+    // Regression: per-chunk toString turned each half of a character split
+    // across read chunks into U+FFFD, silently garbling CJK payloads. A real
+    // stream decodes via setEncoding, whose string decoder buffers the
+    // partial sequence — the production child.stdout path.
+    const stdout = new PassThrough();
+    const notifications: unknown[] = [];
+    const rpc = createCodexJsonRpc({ write: () => true }, stdout, {
+      onNotification: (_method, params) => notifications.push(params),
+    });
+    const frame = Buffer.from(
+      `${JSON.stringify({ method: "item/agentMessage/delta", params: { delta: "你好，世界" } })}\n`,
+      "utf8",
+    );
+    // Cut inside the first multi-byte character, not at a char boundary.
+    const cut = frame.indexOf(Buffer.from("好", "utf8")) + 1;
+    stdout.write(frame.subarray(0, cut));
+    stdout.write(frame.subarray(cut));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(notifications).toEqual([{ delta: "你好，世界" }]);
     rpc.dispose();
   });
 

@@ -795,6 +795,9 @@ describe("createCodexAdapter notification mapping", () => {
       completedAtMs: 1726000009876,
       item: { type: "reasoning", id: "r1", content: ["实时思考"], summary: ["完成"] },
     });
+    // The summary snapshot lands in its own :summary part, mirroring the
+    // summary deltas — folding it into the main part's snapshot too would
+    // render it twice while the live stream is on screen.
     expect(events).toEqual([
       {
         type: "message.part",
@@ -812,7 +815,17 @@ describe("createCodexAdapter notification mapping", () => {
         messageId: "turn-5",
         partId: "r1",
         kind: "thinking",
-        text: "实时思考\n\n完成",
+        text: "实时思考",
+        startedAt: null,
+        endedAt: 1726000009876,
+      },
+      {
+        type: "message.part",
+        sessionId: "s1",
+        messageId: "turn-5",
+        partId: "r1:summary",
+        kind: "thinking",
+        text: "完成",
         startedAt: null,
         endedAt: 1726000009876,
       },
@@ -941,6 +954,33 @@ describe("createCodexAdapter auth recovery", () => {
         type: "server.error",
         sessionId: "s1",
         message: `${CODEX_NOT_LOGGED_IN_MESSAGE}（no fixture for account/read）`,
+      },
+    ]);
+  });
+
+  it("keeps the raw failure when the probe died with the connection", async () => {
+    // Regression: a dead app-server failed both turn/start and account/read,
+    // and the dead probe used to win the toast as "not logged in" — login
+    // advice for a crash. A connection-loss probe says nothing about auth.
+    const { client } = fakeClient({
+      "thread/resume": () => ({ thread: THREAD_FIXTURE }),
+      "turn/start": () => {
+        throw new Error("codex app-server connection lost");
+      },
+      "account/read": () => {
+        throw new Error("codex app-server not connected");
+      },
+    });
+    const adapter = createCodexAdapter({ client, lineagePath: await tempLineagePath() });
+    const events: AgentEvent[] = [];
+    adapter.subscribe((event) => events.push(event));
+
+    await expect(adapter.prompt("s1", "hi")).rejects.toThrow("connection lost");
+    expect(events).toEqual([
+      {
+        type: "server.error",
+        sessionId: "s1",
+        message: "codex prompt failed: codex app-server connection lost",
       },
     ]);
   });
