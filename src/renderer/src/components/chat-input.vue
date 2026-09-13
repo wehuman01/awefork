@@ -17,14 +17,20 @@
       <span v-if="notice" class="att-notice">{{ notice }}</span>
     </div>
     <textarea
+      v-if="!previewing"
       ref="textareaEl"
       v-model="text"
       :placeholder="inputPlaceholder"
       :disabled="running"
       rows="2"
       @keydown.enter.exact="onEnterKey"
+      @keydown.tab.prevent="onTabKey"
       @paste="onPaste"
     ></textarea>
+    <div v-else class="chat-input-preview">
+      <MarkdownView v-if="text.trim()" :source="text" user />
+      <p v-else class="chat-input-preview-empty">输入内容后，这里显示发送后的 Markdown 效果</p>
+    </div>
     <div class="chat-input-foot">
       <input
         ref="fileInputEl"
@@ -43,6 +49,13 @@
       >
         📎
       </button>
+      <button
+        type="button"
+        class="preview"
+        :class="{ on: previewing }"
+        :title="previewing ? '回到编辑' : '预览发送后的 Markdown 效果'"
+        @click="togglePreview"
+      >{{ previewing ? "✎ 编辑" : "👁 预览" }}</button>
       <ModelPicker
         :model-value="model"
         :models="models"
@@ -61,6 +74,14 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { ATTACHMENT_ACCEPT } from "../../../shared/attachment-kinds";
 import type { ModelChoice, ModelOption, PromptAttachment } from "../../../shared/types";
 import { type DraftAttachment, readAttachments, toPromptAttachments } from "../attachments";
+import {
+  indentLines,
+  looksLikeCode,
+  outdentLines,
+  type TextEdit,
+  wrapCodeFence,
+} from "../input-editing";
+import { MarkdownView } from "./markdown-view";
 import ModelPicker from "./model-picker.vue";
 import VariantPicker from "./variant-picker.vue";
 
@@ -86,6 +107,7 @@ const fileInputEl = ref<HTMLInputElement | null>(null);
 const attachments = ref<DraftAttachment[]>([]);
 const dragOver = ref(false);
 const notice = ref("");
+const previewing = ref(false);
 let noticeTimer: ReturnType<typeof setTimeout> | null = null;
 
 // Grow the box with the draft instead of scrolling inside it; two rows is the
@@ -162,12 +184,60 @@ function removeAttachment(id: string): void {
 }
 
 function onPaste(event: ClipboardEvent): void {
-  const files = event.clipboardData?.files;
-  if (!files || files.length === 0) return;
-  // Swallow the paste either way: a pasted file would otherwise land as
-  // nothing (or garbage) in the textarea once we refuse it.
+  const data = event.clipboardData;
+  const files = data?.files;
+  if (files && files.length > 0) {
+    // Swallow the paste either way: a pasted file would otherwise land as
+    // nothing (or garbage) in the textarea once we refuse it.
+    event.preventDefault();
+    addFiles(files);
+    return;
+  }
+  const el = textareaEl.value;
+  const pasted = data?.getData("text/plain") ?? "";
+  if (!el || !looksLikeCode(pasted)) return;
+  // An odd number of ``` markers above the caret means the user is already
+  // typing inside their own fence — placing the code there verbatim.
+  const fences = (text.value.slice(0, el.selectionStart).match(/```/g) ?? []).length;
+  if (fences % 2 === 1) return;
   event.preventDefault();
-  addFiles(files);
+  insertAtCaret(el, wrapCodeFence(pasted));
+  flashNotice("识别到多行代码，已包成 ``` 围栏（⌘Z 可撤销）");
+}
+
+/** Splice an edit in through insertText so it stays on the undo stack. */
+function applyTextEdit(el: HTMLTextAreaElement, edit: TextEdit): void {
+  el.focus();
+  el.setSelectionRange(edit.from, edit.to);
+  if (document.execCommand("insertText", false, edit.insert)) {
+    el.setSelectionRange(edit.start, edit.end);
+    return;
+  }
+  text.value = text.value.slice(0, edit.from) + edit.insert + text.value.slice(edit.to);
+  void nextTick(() => el.setSelectionRange(edit.start, edit.end));
+}
+
+/** execCommand-less fallback path for insertText; caret lands after the text. */
+function insertAtCaret(el: HTMLTextAreaElement, insert: string): void {
+  el.focus();
+  if (document.execCommand("insertText", false, insert)) return;
+  const from = el.selectionStart;
+  const to = el.selectionEnd;
+  text.value = text.value.slice(0, from) + insert + text.value.slice(to);
+}
+
+function onTabKey(event: KeyboardEvent): void {
+  const el = textareaEl.value;
+  if (!el || event.isComposing) return;
+  const edit = event.shiftKey
+    ? outdentLines(text.value, el.selectionStart, el.selectionEnd)
+    : indentLines(text.value, el.selectionStart, el.selectionEnd);
+  applyTextEdit(el, edit);
+}
+
+function togglePreview(): void {
+  previewing.value = !previewing.value;
+  if (!previewing.value) void nextTick(() => textareaEl.value?.focus());
 }
 
 function onDragOver(): void {
@@ -222,6 +292,7 @@ function submit(): void {
   emit("send", value, toPromptAttachments(attachments.value));
   text.value = "";
   attachments.value = [];
+  previewing.value = false;
 }
 
 /** Pane host pulls this after 新增对话 so the first prompt starts typing at once. */

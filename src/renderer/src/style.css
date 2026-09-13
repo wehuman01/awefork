@@ -1886,9 +1886,11 @@ textarea {
 }
 
 /* the user bubble renders prompts through the same markdown renderer as
-   replies; retune the elements whose palette assumes the card background to
-   the bubble's gradient. Code blocks keep their own light panel — dark code
-   text stays readable on any bubble color. */
+   replies, downgraded for prompt-shaped input (headings flatten, tables and
+   math collapse to text — see downgradeUserBlocks); retune the elements
+   whose palette assumes the card background to the bubble's gradient. Code
+   blocks keep their own light panel — dark code text stays readable on any
+   bubble color. */
 .user-body .md {
   color: #fff;
 }
@@ -2337,6 +2339,43 @@ code.md-code {
 .chat-input .attach:hover {
   color: var(--ink-soft);
   background: var(--mint-soft);
+}
+
+.chat-input .preview {
+  font-size: 13px;
+  color: var(--ink-faint);
+  padding: 4px 7px;
+  border-radius: 8px;
+}
+
+.chat-input .preview:hover,
+.chat-input .preview.on {
+  color: var(--ink-soft);
+  background: var(--mint-soft);
+}
+
+/* Draft preview: same card, padding and font as the textarea so switching
+   between editing and previewing doesn't jump; active-state border matches
+   the focused textarea. */
+.chat-input-preview {
+  width: 100%;
+  border: 1.5px solid var(--primary);
+  border-radius: 14px;
+  background: var(--card);
+  padding: 10px 12px;
+  font-size: 13px;
+  min-height: 51px;
+  max-height: 200px;
+  overflow-y: auto;
+  box-shadow: 0 0 0 3px var(--primary-soft);
+}
+
+.chat-input-preview .md > :last-child {
+  margin-bottom: 0;
+}
+
+.chat-input-preview-empty {
+  color: var(--ink-faint);
 }
 
 .chat-input .send {

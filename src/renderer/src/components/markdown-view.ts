@@ -11,6 +11,7 @@
 import { defineComponent, h, type VNode, type VNodeChild } from "vue";
 import { isLocalPath } from "../../../shared/local-path";
 import {
+  downgradeUserBlocks,
   type MdBlock,
   type MdInline,
   type MdListBlock,
@@ -147,10 +148,20 @@ export const MarkdownView = defineComponent({
   name: "MarkdownView",
   props: {
     source: { type: String, default: "" },
+    /** Render as the user's own prompt: downgrade headings/tables/math to
+     *  plain content (downgradeUserBlocks) instead of reply typography. */
+    user: { type: Boolean, default: false },
   },
   setup(props) {
     // Re-parsing per render is O(reply length) with a tiny constant — fine
     // even for every streamed frame of a long reply.
-    return () => h("div", { class: "md" }, parseMarkdown(props.source).map(renderBlock));
+    return () => {
+      const blocks = parseMarkdown(props.source);
+      return h(
+        "div",
+        { class: "md" },
+        (props.user ? downgradeUserBlocks(blocks) : blocks).map(renderBlock),
+      );
+    };
   },
 });

@@ -5,7 +5,7 @@
       <template v-if="message.role === 'user'">
         <div class="message-row user-row">
           <div class="user-body">
-            <MarkdownView :source="message.text" />
+            <MarkdownView :source="message.text" user />
             <p v-if="message.attachmentNames.length > 0" class="att-row">
               <span v-for="(name, i) in message.attachmentNames" :key="i" class="att-chip">
                 📎 {{ name }}

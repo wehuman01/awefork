@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseInline, parseMarkdown } from "../src/renderer/src/markdown";
+import { downgradeUserBlocks, parseInline, parseMarkdown } from "../src/renderer/src/markdown";
 import { renderTex } from "../src/renderer/src/math";
 
 describe("parseMarkdown blocks", () => {
@@ -396,5 +396,82 @@ describe("math", () => {
     expect(ok).toContain("katex");
     expect(ok).toContain("katex-display");
     expect(renderTex("\\notacommand{", false)).toContain("katex-error");
+  });
+});
+
+describe("downgradeUserBlocks", () => {
+  it("flattens a heading into a bold paragraph", () => {
+    expect(downgradeUserBlocks(parseMarkdown("## Plan *now*"))).toEqual([
+      {
+        kind: "paragraph",
+        inline: [
+          {
+            kind: "strong",
+            children: [
+              { kind: "text", text: "Plan " },
+              { kind: "em", children: [{ kind: "text", text: "now" }] },
+            ],
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("renders math spans back as their source text", () => {
+    const blocks = downgradeUserBlocks(parseMarkdown("costs $x_i + 1$ today"));
+    if (blocks[0]?.kind !== "paragraph") throw new Error("expected paragraph");
+    expect(blocks[0].inline).toContainEqual({ kind: "text", text: "$x_i + 1$" });
+  });
+
+  it("unwraps a display math block into its $$ source", () => {
+    expect(downgradeUserBlocks(parseMarkdown("$$\nx^2\n$$"))).toEqual([
+      { kind: "paragraph", inline: [{ kind: "text", text: "$$\nx^2\n$$" }] },
+    ]);
+  });
+
+  it("collapses a table into pipe-joined lines", () => {
+    expect(downgradeUserBlocks(parseMarkdown("| a | b |\n| :- | -: |\n| 1 | 2 |"))).toEqual([
+      {
+        kind: "paragraph",
+        inline: [
+          { kind: "text", text: "a" },
+          { kind: "text", text: " | " },
+          { kind: "text", text: "b" },
+          { kind: "text", text: "\n" },
+          { kind: "text", text: "1" },
+          { kind: "text", text: " | " },
+          { kind: "text", text: "2" },
+        ],
+      },
+    ]);
+  });
+
+  it("recurses into quotes and lists", () => {
+    expect(downgradeUserBlocks(parseMarkdown("> # quoted"))).toEqual([
+      {
+        kind: "quote",
+        children: [
+          {
+            kind: "paragraph",
+            inline: [{ kind: "strong", children: [{ kind: "text", text: "quoted" }] }],
+          },
+        ],
+      },
+    ]);
+    const list = downgradeUserBlocks(parseMarkdown("- costs $x$"));
+    if (list[0]?.kind !== "list") throw new Error("expected list");
+    expect(list[0].items[0]?.inline).toEqual([
+      { kind: "text", text: "costs " },
+      { kind: "text", text: "$x$" },
+    ]);
+  });
+
+  it("leaves code blocks, code spans, links and rules untouched", () => {
+    const fenced = parseMarkdown("```ts\nconst x = 1;\n```");
+    expect(downgradeUserBlocks(fenced)).toEqual(fenced);
+    const plain = parseMarkdown("see [docs](https://a) and `code`");
+    expect(downgradeUserBlocks(plain)).toEqual(plain);
+    const hr = parseMarkdown("a\n\n---\n\nb");
+    expect(downgradeUserBlocks(hr)).toEqual(hr);
   });
 });

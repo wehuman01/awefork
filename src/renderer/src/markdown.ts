@@ -567,3 +567,78 @@ function splitRow(line: string): string[] {
   const trimmed = line.trim().replace(/^\|/, "").replace(/\|$/, "");
   return trimmed.split("|");
 }
+
+// ── user-message downgrade ───────────────────────────────────────────
+
+/**
+ * Rewrite a parsed message for the user's own bubble (and the composer
+ * preview). Prompts are typed or pasted, not authored as markdown, so the
+ * reply-tuned rules misfire on them: pasted config comments and log lines
+ * explode into headings, a stray $…$ turns into math, tables bring their
+ * heavy chrome. Here headings flatten to bold paragraphs, tables collapse
+ * to " | "-joined lines, and math falls back to its source text — what the
+ * model received, minus the reply typography. Code spans, fenced code,
+ * links and line breaks pass through untouched.
+ */
+export function downgradeUserBlocks(blocks: readonly MdBlock[]): MdBlock[] {
+  return blocks.map(downgradeBlock);
+}
+
+function downgradeBlock(block: MdBlock): MdBlock {
+  switch (block.kind) {
+    case "heading":
+      return { kind: "paragraph", inline: [{ kind: "strong", children: block.inline }] };
+    case "mathBlock":
+      return { kind: "paragraph", inline: [{ kind: "text", text: `$$\n${block.tex}\n$$` }] };
+    case "quote":
+      return { kind: "quote", children: block.children.map(downgradeBlock) };
+    case "paragraph":
+      return { kind: "paragraph", inline: downgradeInline(block.inline) };
+    case "list":
+      return downgradeList(block);
+    case "table": {
+      const inline: MdInline[] = [];
+      const pushRow = (cells: readonly MdInline[][]): void => {
+        for (const [i, cell] of cells.entries()) {
+          if (i > 0) inline.push({ kind: "text", text: " | " });
+          inline.push(...downgradeInline(cell));
+        }
+      };
+      pushRow(block.head);
+      for (const row of block.rows) {
+        inline.push({ kind: "text", text: "\n" });
+        pushRow(row);
+      }
+      return { kind: "paragraph", inline };
+    }
+    default:
+      return block;
+  }
+}
+
+function downgradeList(list: MdListBlock): MdListBlock {
+  return {
+    ...list,
+    items: list.items.map((item) => ({
+      inline: downgradeInline(item.inline),
+      sublist: item.sublist ? downgradeList(item.sublist) : null,
+    })),
+  };
+}
+
+function downgradeInline(nodes: readonly MdInline[]): MdInline[] {
+  return nodes.map((node) => {
+    if (node.kind === "math") {
+      return { kind: "text", text: node.display ? `\\[${node.tex}\\]` : `$${node.tex}$` };
+    }
+    if (
+      node.kind === "strong" ||
+      node.kind === "em" ||
+      node.kind === "del" ||
+      node.kind === "link"
+    ) {
+      return { ...node, children: downgradeInline(node.children) };
+    }
+    return node;
+  });
+}
